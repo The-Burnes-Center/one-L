@@ -26,10 +26,4 @@ OneLStack(app, "OneLStack",
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
     )
 
-# Add the storage stack
-S3BucketStack(app, "S3BucketStack",
-    # Same environment configuration as the main stack
-    #env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
-)
-
 app.synth()
