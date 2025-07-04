@@ -4,6 +4,7 @@ import os
 import aws_cdk as cdk
 
 from one_l.one_l_stack import OneLStack
+from one_l.storage.storage_stack import S3BucketStack
 
 
 app = cdk.App()
@@ -24,5 +25,11 @@ OneLStack(app, "OneLStack",
 
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
     )
+
+# Add the storage stack
+S3BucketStack(app, "S3BucketStack",
+    # Same environment configuration as the main stack
+    #env=cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION')),
+)
 
 app.synth()
