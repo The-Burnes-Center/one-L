@@ -1,6 +1,4 @@
-<<<<<<< HEAD
 # one-L
-=======
 
 # Welcome to your CDK Python project!
 
