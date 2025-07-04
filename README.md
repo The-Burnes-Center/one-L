@@ -57,4 +57,4 @@ command.
  * `cdk docs`        open CDK documentation
 
 Enjoy!
->>>>>>> d505ed5 (Initial commit)
+
