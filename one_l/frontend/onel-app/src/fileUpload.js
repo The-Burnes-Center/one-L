@@ -15,8 +15,8 @@ const FileUpload = () => {
 
   // Configure AWS SDK
   AWS.config.update({
-    accessKeyId: 'AKIA3YCD2VRXLL37AEVK', // Replace with your access key
-    secretAccessKey: 'F8gVVYv3Sv0DGZe3c/4i+c0HcaBDyiE+oi1ngM5W', // Replace with your secret key
+    accessKeyId: '', // Replace with your access key
+    secretAccessKey: '', // Replace with your secret key
     region: 'us-east-1' // Replace with your bucket's region
   });
 
