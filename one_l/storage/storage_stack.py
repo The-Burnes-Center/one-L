@@ -43,25 +43,29 @@ class S3BucketStack(Stack):
             export_name="KnowledgeBucketArn",
         )
         # Custom files upload bucket
+                # Custom files upload bucket
         self.custom_files_upload_bucket = s3.Bucket(
             self,
             "CustomFilesUploadBucket",
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
             enforce_ssl=True,
-            removal_policy=RemovalPolicy.RETAIN,  # Change to RETAIN if you don't want to auto-delete
+            removal_policy=RemovalPolicy.RETAIN,
             cors=[
                 s3.CorsRule(
                     allowed_methods=[
                         s3.HttpMethods.GET,
+                        s3.HttpMethods.HEAD,     # optional, but often useful
                         s3.HttpMethods.POST,
                         s3.HttpMethods.PUT,
+                        s3.HttpMethods.DELETE  # if you ever delete
                     ],
-                    allowed_origins=["*"],
+                    allowed_origins=["http://localhost:3000"],
                     allowed_headers=["*"],
+                    exposed_headers=["ETag"],  # if you need to read ETag in JS
+                    max_age=3000,             # cache preflight for 50 minutes
                 )
             ],
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
         # Export the custom files upload bucket ARN to CloudFormation Outputs
@@ -70,4 +74,11 @@ class S3BucketStack(Stack):
             "CustomFilesUploadBucketArn",
             value=self.custom_files_upload_bucket.bucket_arn,
             export_name="CustomFilesUploadBucketArn",
+        )
+
+        CfnOutput(
+            self,
+            "CustomFilesUploadBucketName",
+            value=self.custom_files_upload_bucket.bucket_name,
+            export_name="CustomFilesUploadBucketName",
         )
