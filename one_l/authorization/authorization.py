@@ -1,0 +1,182 @@
+"""
+AWS CDK Construct for Cognito-based Authorization System.
+"""
+
+from typing import Optional
+from constructs import Construct
+from aws_cdk import (
+    aws_cognito as cognito,
+    aws_lambda as _lambda,
+    aws_iam as iam,
+    aws_logs as logs,
+    Duration,
+    RemovalPolicy,
+    Stack,
+    CfnOutput
+)
+
+
+class AuthorizationConstruct(Construct):
+    """
+    Authorization construct using AWS Cognito.
+    Provides user pool, user pool client, and authentication lambda.
+    """
+    
+    def __init__(
+        self, 
+        scope: Construct, 
+        construct_id: str,
+        user_pool_name: Optional[str] = None,
+        **kwargs
+    ) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+        
+        # Instance variables
+        self.user_pool = None
+        self.user_pool_client = None
+        self.auth_lambda = None
+        
+        # Configuration
+        self._user_pool_name = user_pool_name or f"{Stack.of(self).stack_name}-user-pool"
+        
+        # Create the authorization infrastructure
+        self.create_user_pool()
+        self.create_user_pool_client()
+        self.create_auth_lambda()
+        self.create_outputs()
+    
+    def create_user_pool(self):
+        """Create the Cognito User Pool."""
+        self.user_pool = cognito.UserPool(
+            self, "UserPool",
+            user_pool_name=self._user_pool_name,
+            self_sign_up_enabled=True,
+            sign_in_case_sensitive=False,
+            auto_verify=cognito.AutoVerifiedAttrs(email=True),
+            sign_in_aliases=cognito.SignInAliases(
+                email=True,
+                username=True
+            ),
+            standard_attributes=cognito.StandardAttributes(
+                email=cognito.StandardAttribute(
+                    required=True,
+                    mutable=True
+                ),
+                given_name=cognito.StandardAttribute(
+                    required=True,
+                    mutable=True
+                ),
+                family_name=cognito.StandardAttribute(
+                    required=True,
+                    mutable=True
+                )
+            ),
+            password_policy=cognito.PasswordPolicy(
+                min_length=8,
+                require_lowercase=True,
+                require_uppercase=True,
+                require_digits=True,
+                require_symbols=True,
+                temp_password_validity=Duration.days(7)
+            ),
+            account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+    
+    def create_user_pool_client(self):
+        """Create the User Pool Client."""
+        self.user_pool_client = cognito.UserPoolClient(
+            self, "UserPoolClient",
+            user_pool=self.user_pool,
+            user_pool_client_name=f"{self._user_pool_name}-client",
+            generate_secret=False,
+            auth_flows=cognito.AuthFlow(
+                user_password=True,
+                user_srp=True,
+                admin_user_password=True
+            ),
+            supported_identity_providers=[
+                cognito.UserPoolClientIdentityProvider.COGNITO
+            ],
+            read_attributes=cognito.ClientAttributes(
+                email=True,
+                given_name=True,
+                family_name=True
+            ),
+            write_attributes=cognito.ClientAttributes(
+                email=True,
+                given_name=True,
+                family_name=True
+            ),
+            token_validity=cognito.TokenValidity(
+                access_token=Duration.hours(1),
+                id_token=Duration.hours(1),
+                refresh_token=Duration.days(30)
+            ),
+            prevent_user_existence_errors=True
+        )
+    
+    def create_auth_lambda(self):
+        """Create the authentication Lambda function."""
+        self.auth_lambda = _lambda.Function(
+            self, "AuthLambda",
+            function_name=f"{Stack.of(self).stack_name}-auth-handler",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset("one_l/services/functions/authorization"),
+            timeout=Duration.seconds(30),
+            memory_size=128,
+            environment={
+                "USER_POOL_ID": self.user_pool.user_pool_id,
+                "USER_POOL_CLIENT_ID": self.user_pool_client.user_pool_client_id,
+                "LOG_LEVEL": "INFO"
+            },
+            log_retention=logs.RetentionDays.ONE_WEEK
+        )
+        
+        # Grant Lambda permissions to access Cognito
+        self.auth_lambda.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "cognito-idp:AdminGetUser",
+                    "cognito-idp:AdminInitiateAuth",
+                    "cognito-idp:GetUser",
+                    "cognito-idp:AdminUpdateUserAttributes",
+                    "cognito-idp:ListUsers"
+                ],
+                resources=[self.user_pool.user_pool_arn]
+            )
+        )
+    
+    def create_outputs(self):
+        """Create CloudFormation outputs."""
+        CfnOutput(
+            self, "UserPoolId",
+            value=self.user_pool.user_pool_id,
+            description="Cognito User Pool ID",
+            export_name=f"{Stack.of(self).stack_name}-UserPoolId"
+        )
+        
+        CfnOutput(
+            self, "UserPoolClientId", 
+            value=self.user_pool_client.user_pool_client_id,
+            description="Cognito User Pool Client ID",
+            export_name=f"{Stack.of(self).stack_name}-UserPoolClientId"
+        )
+        
+        CfnOutput(
+            self, "AuthLambdaArn",
+            value=self.auth_lambda.function_arn,
+            description="Authentication Lambda Function ARN",
+            export_name=f"{Stack.of(self).stack_name}-AuthLambdaArn"
+        )
+    
+    def add_user_group(self, group_name: str, description: str = None):
+        """Add a user group to the user pool."""
+        return cognito.CfnUserPoolGroup(
+            self, f"{group_name}Group",
+            user_pool_id=self.user_pool.user_pool_id,
+            group_name=group_name,
+            description=description or f"{group_name} user group"
+        ) 
