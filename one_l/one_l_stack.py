@@ -1,6 +1,7 @@
 from aws_cdk import Stack
 from constructs import Construct
 from authorization.authorization import AuthorizationConstruct
+from services.services import ServicesConstruct
 
 class OneLStack(Stack):
 
@@ -11,4 +12,9 @@ class OneLStack(Stack):
         self.authorization = AuthorizationConstruct(
             self, "Authorization",
             user_pool_name="OneL-UserPool"
+        )
+        
+        # Create services construct
+        self.services = ServicesConstruct(
+            self, "Services"
         )
