@@ -112,22 +112,19 @@ class AuthorizationConstruct(Construct):
             supported_identity_providers=[
                 cognito.UserPoolClientIdentityProvider.COGNITO
             ],
-            read_attributes=cognito.ClientAttributes(
+            read_attributes=cognito.ClientAttributes().with_standard_attributes(
                 email=True,
                 given_name=True,
                 family_name=True
             ),
-            write_attributes=cognito.ClientAttributes(
+            write_attributes=cognito.ClientAttributes().with_standard_attributes(
                 email=True,
                 given_name=True,
                 family_name=True
             ),
-            token_validity=cognito.TokenValidity(
-                access_token=Duration.hours(1),
-                id_token=Duration.hours(1),
-                refresh_token=Duration.days(30)
-            ),
-            prevent_user_existence_errors=True
+            access_token_validity=Duration.hours(1),
+            id_token_validity=Duration.hours(1),
+            refresh_token_validity=Duration.days(30)
         )
     
     def create_auth_lambda(self):

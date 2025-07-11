@@ -8,12 +8,12 @@ class OneLStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # # Create authorization construct
-        # self.authorization = AuthorizationConstruct(
-        #     self, "Authorization"
-        # )
+        # Create authorization construct
+        self.authorization = AuthorizationConstruct(
+            self, "Authorization"
+        )
         
-        # # Create agent API construct
-        # self.agent_api = AgentApiConstruct(
-        #     self, "AgentApi"
-        # )
+        # Create agent API construct
+        self.agent_api = AgentApiConstruct(
+            self, "AgentApi"
+        )
