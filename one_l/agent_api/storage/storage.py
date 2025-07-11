@@ -7,7 +7,8 @@ from constructs import Construct
 from aws_cdk import (
     aws_s3 as s3,
     RemovalPolicy,
-    Stack
+    Stack,
+    CfnOutput
 )
 
 
@@ -31,13 +32,15 @@ class StorageConstruct(Construct):
         self.knowledge_bucket = None
         self.user_documents_bucket = None
         
-        # Configuration
-        self._knowledge_bucket_name = knowledge_bucket_name or f"{Stack.of(self).stack_name}-knowledge-source"
-        self._user_documents_bucket_name = user_documents_bucket_name or f"{Stack.of(self).stack_name}-user-documents"
+        # Configuration - ensure all names start with stack name
+        self._stack_name = Stack.of(self).stack_name
+        self._knowledge_bucket_name = knowledge_bucket_name or f"{self._stack_name.lower()}-knowledge-source"
+        self._user_documents_bucket_name = user_documents_bucket_name or f"{self._stack_name.lower()}-user-documents"
         
         # Create the storage infrastructure
         self.create_knowledge_bucket()
         self.create_user_documents_bucket()
+        self.create_outputs()
     
     def create_knowledge_bucket(self):
         """Create the knowledge source bucket."""
@@ -90,6 +93,36 @@ class StorageConstruct(Construct):
                 )
             ],
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        )
+    
+    def create_outputs(self):
+        """Create CloudFormation outputs."""
+        CfnOutput(
+            self, "KnowledgeBucketName",
+            value=self.knowledge_bucket.bucket_name,
+            description="S3 Knowledge Source Bucket Name",
+            export_name=f"{self._stack_name}-KnowledgeBucketName"
+        )
+        
+        CfnOutput(
+            self, "UserDocumentsBucketName",
+            value=self.user_documents_bucket.bucket_name,
+            description="S3 User Documents Bucket Name",
+            export_name=f"{self._stack_name}-UserDocumentsBucketName"
+        )
+        
+        CfnOutput(
+            self, "KnowledgeBucketArn",
+            value=self.knowledge_bucket.bucket_arn,
+            description="S3 Knowledge Source Bucket ARN",
+            export_name=f"{self._stack_name}-KnowledgeBucketArn"
+        )
+        
+        CfnOutput(
+            self, "UserDocumentsBucketArn",
+            value=self.user_documents_bucket.bucket_arn,
+            description="S3 User Documents Bucket ARN",
+            export_name=f"{self._stack_name}-UserDocumentsBucketArn"
         )
     
     def grant_read_access(self, principal, bucket_name: str = "both"):

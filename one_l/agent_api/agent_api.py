@@ -1,15 +1,18 @@
+##TODO: 1. API Gateway  2. lambda functions
+
 """
-Services construct that combines all service-level constructs.
+Agent API construct that combines all service-level constructs.
 """
 
 from typing import Optional
 from constructs import Construct
-from storage.storage import StorageConstruct
+from aws_cdk import Stack
+from .storage.storage import StorageConstruct
 
 
-class ServicesConstruct(Construct):
+class AgentApiConstruct(Construct):
     """
-    Services construct that combines all service-level constructs.
+    Agent API construct that combines all service-level constructs.
     """
     
     def __init__(
@@ -23,6 +26,9 @@ class ServicesConstruct(Construct):
         # Instance variables for service constructs
         self.storage = None
         
+        # Configuration - ensure all names start with stack name
+        self._stack_name = Stack.of(self).stack_name
+        
         # Create service constructs
         self.create_storage()
     
@@ -30,6 +36,6 @@ class ServicesConstruct(Construct):
         """Create the storage construct."""
         self.storage = StorageConstruct(
             self, "Storage",
-            knowledge_bucket_name="onel-knowledge-source",
-            user_documents_bucket_name="onel-user-documents"
+            knowledge_bucket_name=f"{self._stack_name.lower()}-knowledge-source",
+            user_documents_bucket_name=f"{self._stack_name.lower()}-user-documents"
         )

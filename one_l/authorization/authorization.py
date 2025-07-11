@@ -14,6 +14,7 @@ from aws_cdk import (
     Stack,
     CfnOutput
 )
+from constants import COGNITO_DOMAIN_NAME
 
 
 class AuthorizationConstruct(Construct):
@@ -34,13 +35,16 @@ class AuthorizationConstruct(Construct):
         # Instance variables
         self.user_pool = None
         self.user_pool_client = None
+        self.user_pool_domain = None
         self.auth_lambda = None
         
-        # Configuration
-        self._user_pool_name = user_pool_name or f"{Stack.of(self).stack_name}-user-pool"
+        # Configuration - ensure all names start with stack name
+        self._stack_name = Stack.of(self).stack_name
+        self._user_pool_name = user_pool_name or f"{self._stack_name}-user-pool"
         
         # Create the authorization infrastructure
         self.create_user_pool()
+        self.create_user_pool_domain()
         self.create_user_pool_client()
         self.create_auth_lambda()
         self.create_outputs()
@@ -83,12 +87,22 @@ class AuthorizationConstruct(Construct):
             removal_policy=RemovalPolicy.DESTROY
         )
     
+    def create_user_pool_domain(self):
+        """Create the Cognito User Pool Domain."""
+        self.user_pool_domain = cognito.UserPoolDomain(
+            self, "UserPoolDomain",
+            user_pool=self.user_pool,
+            cognito_domain=cognito.CognitoDomainOptions(
+                domain_prefix=f"{self._stack_name.lower()}-{COGNITO_DOMAIN_NAME}"
+            )
+        )
+    
     def create_user_pool_client(self):
         """Create the User Pool Client."""
         self.user_pool_client = cognito.UserPoolClient(
             self, "UserPoolClient",
             user_pool=self.user_pool,
-            user_pool_client_name=f"{self._user_pool_name}-client",
+            user_pool_client_name=f"{self._stack_name}-user-pool-client",
             generate_secret=False,
             auth_flows=cognito.AuthFlow(
                 user_password=True,
@@ -120,10 +134,10 @@ class AuthorizationConstruct(Construct):
         """Create the authentication Lambda function."""
         self.auth_lambda = _lambda.Function(
             self, "AuthLambda",
-            function_name=f"{Stack.of(self).stack_name}-auth-handler",
+            function_name=f"{self._stack_name}-auth-lambda",
             runtime=_lambda.Runtime.PYTHON_3_9,
             handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset("one_l/services/functions/authorization"),
+            code=_lambda.Code.from_asset("one_l/authorization"),
             timeout=Duration.seconds(30),
             memory_size=128,
             environment={
@@ -155,21 +169,28 @@ class AuthorizationConstruct(Construct):
             self, "UserPoolId",
             value=self.user_pool.user_pool_id,
             description="Cognito User Pool ID",
-            export_name=f"{Stack.of(self).stack_name}-UserPoolId"
+            export_name=f"{self._stack_name}-UserPoolId"
         )
         
         CfnOutput(
             self, "UserPoolClientId", 
             value=self.user_pool_client.user_pool_client_id,
             description="Cognito User Pool Client ID",
-            export_name=f"{Stack.of(self).stack_name}-UserPoolClientId"
+            export_name=f"{self._stack_name}-UserPoolClientId"
+        )
+        
+        CfnOutput(
+            self, "UserPoolDomainUrl",
+            value=self.user_pool_domain.domain_name,
+            description="Cognito User Pool Domain URL",
+            export_name=f"{self._stack_name}-UserPoolDomainUrl"
         )
         
         CfnOutput(
             self, "AuthLambdaArn",
             value=self.auth_lambda.function_arn,
             description="Authentication Lambda Function ARN",
-            export_name=f"{Stack.of(self).stack_name}-AuthLambdaArn"
+            export_name=f"{self._stack_name}-AuthLambdaArn"
         )
     
     def add_user_group(self, group_name: str, description: str = None):
@@ -177,6 +198,6 @@ class AuthorizationConstruct(Construct):
         return cognito.CfnUserPoolGroup(
             self, f"{group_name}Group",
             user_pool_id=self.user_pool.user_pool_id,
-            group_name=group_name,
-            description=description or f"{group_name} user group"
+            group_name=f"{self._stack_name}-{group_name}",
+            description=description or f"{group_name} user group for {self._stack_name}"
         ) 

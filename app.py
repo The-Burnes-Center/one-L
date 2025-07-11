@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 import os
-
 import aws_cdk as cdk
-
 from one_l.one_l_stack import OneLStack
-from one_l.storage.storage_stack import S3BucketStack
-
+from constants import STACK_NAME
 
 app = cdk.App()
-OneLStack(app, "OneLStack",
+
+OneLStack(app, STACK_NAME,
     # If you don't specify 'env', this stack will be environment-agnostic.
     # Account/Region-dependent features and context lookups will not work,
     # but a single synthesized template can be deployed anywhere.
