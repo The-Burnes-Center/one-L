@@ -2,6 +2,7 @@ from aws_cdk import Stack
 from constructs import Construct
 from .authorization.authorization import AuthorizationConstruct
 from .agent_api.agent_api import AgentApiConstruct
+from .api_gateway.api_gateway import ApiGatewayConstruct
 
 class OneLStack(Stack):
 
@@ -16,4 +17,9 @@ class OneLStack(Stack):
         # Create agent API construct
         self.agent_api = AgentApiConstruct(
             self, "AgentApi"
+        )
+
+        # Create API Gateway construct
+        self.api_gateway = ApiGatewayConstruct(
+            self, "ApiGateway"
         )
