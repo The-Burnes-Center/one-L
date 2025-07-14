@@ -1,21 +1,27 @@
+"""
+Lambda function for uploading files to S3.
+"""
+
 import json
 import boto3
 import base64
 import uuid
+import os
 from typing import Dict, Any
 import logging
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
 s3_client = boto3.client('s3')
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Lambda function to handle S3 file uploads via API Gateway.
+    Lambda function to upload files to S3.
     
-    Expected request body format:
+    Expected event format:
     {
-        "bucket_name": "your-bucket-name",
+        "bucket_type": "knowledge" | "user_documents",
         "files": [
             {
                 "filename": "example.txt",
@@ -28,29 +34,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     
     try:
-        # Parse request body
-        if event.get('isBase64Encoded', False):
-            body = base64.b64decode(event['body']).decode('utf-8')
-        else:
-            body = event.get('body', '{}')
-        
-        request_data = json.loads(body)
+        logger.info(f"Upload request received: {json.dumps(event, default=str)}")
         
         # Extract parameters
-        bucket_name = request_data.get('bucket_name')
-        files = request_data.get('files', [])
-        prefix = request_data.get('prefix', '')
+        bucket_type = event.get('bucket_type', 'user_documents')
+        files = event.get('files', [])
+        prefix = event.get('prefix', '')
+        
+        # Get bucket name from environment
+        bucket_name = get_bucket_name(bucket_type)
         
         # Validate parameters
-        if not bucket_name:
-            return create_error_response(400, "bucket_name is required")
-        
         if not files:
             return create_error_response(400, "files array is required")
-        
-        # Validate bucket exists
-        if not bucket_exists(bucket_name):
-            return create_error_response(404, f"Bucket '{bucket_name}' does not exist")
         
         # Process uploads
         upload_results = []
@@ -73,8 +69,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         })
         
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Error in upload_to_s3 function: {str(e)}")
         return create_error_response(500, f"Internal server error: {str(e)}")
+
+
+def get_bucket_name(bucket_type: str) -> str:
+    """Get the appropriate bucket name based on type."""
+    if bucket_type == "knowledge":
+        return os.environ.get("KNOWLEDGE_BUCKET")
+    elif bucket_type == "user_documents":
+        return os.environ.get("USER_DOCUMENTS_BUCKET")
+    else:
+        raise ValueError(f"Invalid bucket_type: {bucket_type}")
 
 
 def upload_file_to_s3(file_data: Dict[str, Any], bucket_name: str, prefix: str) -> Dict[str, Any]:
@@ -91,11 +97,14 @@ def upload_file_to_s3(file_data: Dict[str, Any], bucket_name: str, prefix: str) 
                 'error': 'filename and content are required'
             }
         
+        # Generate unique filename
         unique_filename = f"{uuid.uuid4().hex}_{filename}"
         s3_key = f"{prefix.rstrip('/')}/{unique_filename}" if prefix else unique_filename
         
+        # Decode content
         file_content = base64.b64decode(content)
         
+        # Upload to S3
         s3_client.put_object(
             Bucket=bucket_name,
             Key=s3_key,
@@ -107,12 +116,14 @@ def upload_file_to_s3(file_data: Dict[str, Any], bucket_name: str, prefix: str) 
             }
         )
         
+        logger.info(f"Successfully uploaded {filename} to {bucket_name}/{s3_key}")
+        
         return {
             'success': True,
             'filename': filename,
             'unique_filename': unique_filename,
             's3_key': s3_key,
-            's3_url': f"https://{bucket_name}.s3.amazonaws.com/{s3_key}",
+            'bucket_name': bucket_name,
             'content_type': content_type
         }
         
@@ -125,26 +136,10 @@ def upload_file_to_s3(file_data: Dict[str, Any], bucket_name: str, prefix: str) 
         }
 
 
-def bucket_exists(bucket_name: str) -> bool:
-    """Check if S3 bucket exists and is accessible."""
-    try:
-        s3_client.head_bucket(Bucket=bucket_name)
-        return True
-    except Exception as e:
-        logger.error(f"Bucket check failed for {bucket_name}: {str(e)}")
-        return False
-
-
 def create_success_response(data: Dict[str, Any]) -> Dict[str, Any]:
     """Create successful response."""
     return {
         'statusCode': 200,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key'
-        },
         'body': json.dumps(data)
     }
 
@@ -157,11 +152,5 @@ def create_error_response(status_code: int, message: str, data: Dict[str, Any] =
     
     return {
         'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key'
-        },
         'body': json.dumps(error_body)
     }

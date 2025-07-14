@@ -3,6 +3,7 @@ from constructs import Construct
 from .authorization.authorization import AuthorizationConstruct
 from .agent_api.agent_api import AgentApiConstruct
 from .api_gateway.api_gateway import ApiGatewayConstruct
+from .user_interface.user_interface import UserInterfaceConstruct
 
 class OneLStack(Stack):
 
@@ -19,7 +20,15 @@ class OneLStack(Stack):
             self, "AgentApi"
         )
 
-        # Create API Gateway construct
+        # Create API Gateway construct with reference to functions
         self.api_gateway = ApiGatewayConstruct(
-            self, "ApiGateway"
+            self, "ApiGateway",
+            functions_construct=self.agent_api.functions
+        )
+        
+        # Create user interface construct with references to authorization and API Gateway
+        self.user_interface = UserInterfaceConstruct(
+            self, "UserInterface",
+            authorization_construct=self.authorization,
+            api_gateway_construct=self.api_gateway
         )
