@@ -135,6 +135,20 @@ class UserInterfaceConstruct(Construct):
             "stackName": self._stack_name
         }
         
+        # Add specific function endpoint URLs from API Gateway
+        if self.api_gateway and self.api_gateway.functions:
+            function_definitions = self.api_gateway.functions.get_function_routes()
+            
+            for category, functions in function_definitions.items():
+                for func_name, func_config in functions.items():
+                    # Create endpoint URL
+                    endpoint_url = f"{self.api_gateway.main_api.url}{category}/{func_config['path']}"
+                    
+                    # Create config key (e.g., knowledgeManagementUploadEndpointUrl)
+                    config_key = f"{category}{''.join(word.capitalize() for word in func_name.split('_'))}EndpointUrl"
+                    
+                    config_data[config_key] = endpoint_url
+        
         # Write config to a file that will be included in the build
         import json
         import os

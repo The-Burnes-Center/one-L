@@ -13,24 +13,55 @@ const loadConfig = async () => {
     return config;
   }
   
-  try {
-    const response = await fetch('/config.json');
-    if (!response.ok) {
-      throw new Error('Failed to load configuration');
-    }
-    config = await response.json();
-    return config;
-  } catch (error) {
-    console.error('Error loading configuration:', error);
-    
-    // Fallback configuration for development
+  // Check if we're in development mode
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  
+  if (isDevelopment) {
+    // Use environment variables directly in development
+    console.log('Development mode: using environment variables');
     config = {
       apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
       userPoolId: process.env.REACT_APP_USER_POOL_ID || '',
       userPoolClientId: process.env.REACT_APP_USER_POOL_CLIENT_ID || '',
       userPoolDomain: process.env.REACT_APP_USER_POOL_DOMAIN || '',
       region: process.env.REACT_APP_REGION || 'us-east-1',
-      stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack'
+      stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack-Dev',
+      knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
+      knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
+      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
+    };
+    return config;
+  }
+  
+  // Production: try to load from config.json (CDK-generated)
+  try {
+    const response = await fetch('/config.json');
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error('Invalid content type - expected JSON');
+    }
+    
+    config = await response.json();
+    return config;
+  } catch (error) {
+    console.error('Failed to load production config, falling back to environment variables:', error);
+    
+    // Fallback to environment variables even in production
+    config = {
+      apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
+      userPoolId: process.env.REACT_APP_USER_POOL_ID || '',
+      userPoolClientId: process.env.REACT_APP_USER_POOL_CLIENT_ID || '',
+      userPoolDomain: process.env.REACT_APP_USER_POOL_DOMAIN || '',
+      region: process.env.REACT_APP_REGION || 'us-east-1',
+      stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack',
+      knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
+      knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
+      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
     };
     
     return config;
