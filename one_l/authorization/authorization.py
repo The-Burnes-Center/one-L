@@ -112,6 +112,18 @@ class AuthorizationConstruct(Construct):
             supported_identity_providers=[
                 cognito.UserPoolClientIdentityProvider.COGNITO
             ],
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(
+                    authorization_code_grant=True
+                ),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.PROFILE
+                ],
+                callback_urls=["http://localhost:3000"],  # Will be updated with CloudFront URL
+                logout_urls=["http://localhost:3000"]  # Will be updated with CloudFront URL
+            ),
             read_attributes=cognito.ClientAttributes().with_standard_attributes(
                 email=True,
                 given_name=True,

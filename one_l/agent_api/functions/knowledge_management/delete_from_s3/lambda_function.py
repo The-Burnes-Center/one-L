@@ -118,6 +118,12 @@ def create_success_response(data: Dict[str, Any]) -> Dict[str, Any]:
     """Create successful response."""
     return {
         'statusCode': 200,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key, X-Amz-Security-Token'
+        },
         'body': json.dumps(data)
     }
 
@@ -130,5 +136,11 @@ def create_error_response(status_code: int, message: str, data: Dict[str, Any] =
     
     return {
         'statusCode': status_code,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key, X-Amz-Security-Token'
+        },
         'body': json.dumps(error_body)
     }

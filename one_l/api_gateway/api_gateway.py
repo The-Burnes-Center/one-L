@@ -108,17 +108,11 @@ class ApiGatewayConstruct(Construct):
         # Create function resource
         function_resource = parent_resource.add_resource(path)
         
-        # Create Lambda integration
+        # Create Lambda proxy integration
+        # The Lambda function handles all response formatting including CORS headers
         integration = apigateway.LambdaIntegration(
             lambda_function,
-            integration_responses=[
-                apigateway.IntegrationResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": "'*'"
-                    },
-                )
-            ],
+            proxy=True,  # Use Lambda proxy integration
         )
         
         # Add methods to the resource
@@ -126,14 +120,6 @@ class ApiGatewayConstruct(Construct):
             function_resource.add_method(
                 method,
                 integration,
-                method_responses=[
-                    apigateway.MethodResponse(
-                        status_code="200",
-                        response_parameters={
-                            "method.response.header.Access-Control-Allow-Origin": True
-                        },
-                    )
-                ],
             )
     
     def create_outputs(self):

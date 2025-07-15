@@ -47,13 +47,14 @@ const apiCall = async (endpoint, options = {}) => {
  */
 const knowledgeManagementAPI = {
   /**
-   * Upload files to S3
+   * Upload files to S3 using presigned URLs
    */
   uploadFiles: async (files, bucketType = 'user_documents', prefix = '') => {
+    // Step 1: Request presigned URLs from the backend
     const filesData = files.map(file => ({
       filename: file.name,
-      content: file.base64Content,
-      content_type: file.type
+      content_type: file.type,
+      file_size: file.size
     }));
     
     const payload = {
@@ -62,10 +63,76 @@ const knowledgeManagementAPI = {
       prefix: prefix
     };
     
-    return await apiCall('/knowledge_management/upload', {
+    const presignedResponse = await apiCall('/knowledge_management/upload', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+    
+    // Parse the response to get presigned URLs
+    const responseData = typeof presignedResponse.body === 'string' 
+      ? JSON.parse(presignedResponse.body) 
+      : presignedResponse.body || presignedResponse;
+    
+    const presignedUrls = responseData.presigned_urls || [];
+    
+    // Step 2: Upload files directly to S3 using presigned URLs
+    const uploadResults = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const urlData = presignedUrls[i];
+      
+      if (!urlData || !urlData.success) {
+        uploadResults.push({
+          success: false,
+          filename: file.name,
+          error: urlData?.error || 'Failed to get presigned URL'
+        });
+        continue;
+      }
+      
+      try {
+        // Upload directly to S3
+        const uploadResponse = await fetch(urlData.presigned_url, {
+          method: 'PUT',
+          body: file,
+          headers: {
+            'Content-Type': file.type
+          }
+        });
+        
+        if (uploadResponse.ok) {
+          uploadResults.push({
+            success: true,
+            filename: file.name,
+            unique_filename: urlData.unique_filename,
+            s3_key: urlData.s3_key,
+            bucket_name: urlData.bucket_name
+          });
+        } else {
+          uploadResults.push({
+            success: false,
+            filename: file.name,
+            error: `S3 upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`
+          });
+        }
+      } catch (error) {
+        uploadResults.push({
+          success: false,
+          filename: file.name,
+          error: `Upload error: ${error.message}`
+        });
+      }
+    }
+    
+    // Return results in the same format as before
+    const successfulUploads = uploadResults.filter(r => r.success);
+    return {
+      body: JSON.stringify({
+        message: `${successfulUploads.length} of ${files.length} files uploaded successfully`,
+        upload_results: uploadResults,
+        uploaded_count: successfulUploads.length
+      })
+    };
   },
   
   /**
@@ -105,7 +172,8 @@ const knowledgeManagementAPI = {
  */
 const fileUtils = {
   /**
-   * Convert File object to base64
+   * Convert File object to base64 (DEPRECATED - not needed with presigned URLs)
+   * @deprecated Use presigned URLs for direct S3 upload instead
    */
   fileToBase64: (file) => {
     return new Promise((resolve, reject) => {
@@ -120,23 +188,21 @@ const fileUtils = {
   },
   
   /**
-   * Prepare files for upload
+   * Prepare files for upload (no base64 conversion needed for presigned URLs)
    */
   prepareFilesForUpload: async (files) => {
     const preparedFiles = [];
     
     for (const file of files) {
       try {
-        const base64Content = await fileUtils.fileToBase64(file);
-        preparedFiles.push({
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          base64Content: base64Content
-        });
+        // Validate the file
+        fileUtils.validateFile(file);
+        
+        // No base64 conversion needed - just pass the file object
+        preparedFiles.push(file);
       } catch (error) {
         console.error(`Error preparing file ${file.name}:`, error);
-        throw new Error(`Failed to prepare file ${file.name} for upload`);
+        throw new Error(`Failed to prepare file ${file.name} for upload: ${error.message}`);
       }
     }
     

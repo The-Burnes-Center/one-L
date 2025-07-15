@@ -1,10 +1,13 @@
 """
-Lambda function for uploading files to S3.
+Lambda function for generating presigned URLs for direct S3 upload.
+This approach is more efficient than uploading through Lambda as it:
+- Supports larger files (not limited by Lambda memory/payload size)
+- Reduces Lambda execution time and costs
+- Provides faster uploads by going directly to S3
 """
 
 import json
 import boto3
-import base64
 import uuid
 import os
 from typing import Dict, Any
@@ -17,7 +20,7 @@ s3_client = boto3.client('s3')
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Lambda function to upload files to S3.
+    Lambda function to generate presigned URLs for direct S3 upload.
     
     Expected event format:
     {
@@ -25,8 +28,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         "files": [
             {
                 "filename": "example.txt",
-                "content": "base64-encoded-content",
-                "content_type": "text/plain"
+                "content_type": "text/plain",
+                "file_size": 1024
             }
         ],
         "prefix": "optional/path/prefix/"
@@ -34,7 +37,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     
     try:
-        logger.info(f"Upload request received: {json.dumps(event, default=str)}")
+        logger.info(f"Presigned URL request received: {json.dumps(event, default=str)}")
         
         # Extract parameters
         bucket_type = event.get('bucket_type', 'user_documents')
@@ -48,24 +51,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not files:
             return create_error_response(400, "files array is required")
         
-        # Process uploads
-        upload_results = []
+        # Generate presigned URLs
+        presigned_urls = []
         for file_data in files:
-            result = upload_file_to_s3(file_data, bucket_name, prefix)
-            upload_results.append(result)
+            result = generate_presigned_url(file_data, bucket_name, prefix)
+            presigned_urls.append(result)
         
-        failed_uploads = [r for r in upload_results if not r['success']]
+        failed_generations = [r for r in presigned_urls if not r['success']]
         
-        if failed_uploads:
-            return create_error_response(500, "Some files failed to upload", {
-                "upload_results": upload_results,
-                "failed_count": len(failed_uploads)
+        if failed_generations:
+            return create_error_response(500, "Some presigned URLs failed to generate", {
+                "presigned_urls": presigned_urls,
+                "failed_count": len(failed_generations)
             })
         
         return create_success_response({
-            "message": "All files uploaded successfully",
-            "upload_results": upload_results,
-            "uploaded_count": len(upload_results)
+            "message": "Presigned URLs generated successfully",
+            "presigned_urls": presigned_urls,
+            "generated_count": len(presigned_urls)
         })
         
     except Exception as e:
@@ -83,40 +86,49 @@ def get_bucket_name(bucket_type: str) -> str:
         raise ValueError(f"Invalid bucket_type: {bucket_type}")
 
 
-def upload_file_to_s3(file_data: Dict[str, Any], bucket_name: str, prefix: str) -> Dict[str, Any]:
-    """Upload a single file to S3."""
+def generate_presigned_url(file_data: Dict[str, Any], bucket_name: str, prefix: str) -> Dict[str, Any]:
+    """Generate a presigned URL for direct S3 upload."""
     try:
         filename = file_data.get('filename')
-        content = file_data.get('content')
         content_type = file_data.get('content_type', 'application/octet-stream')
+        file_size = file_data.get('file_size', 0)
         
-        if not filename or not content:
+        if not filename:
             return {
                 'success': False,
                 'filename': filename,
-                'error': 'filename and content are required'
+                'error': 'filename is required'
+            }
+        
+        # Validate file size (10MB limit)
+        max_file_size = 10 * 1024 * 1024  # 10MB
+        if file_size > max_file_size:
+            return {
+                'success': False,
+                'filename': filename,
+                'error': f'File size ({file_size} bytes) exceeds maximum allowed size ({max_file_size} bytes)'
             }
         
         # Generate unique filename
         unique_filename = f"{uuid.uuid4().hex}_{filename}"
         s3_key = f"{prefix.rstrip('/')}/{unique_filename}" if prefix else unique_filename
         
-        # Decode content
-        file_content = base64.b64decode(content)
-        
-        # Upload to S3
-        s3_client.put_object(
-            Bucket=bucket_name,
-            Key=s3_key,
-            Body=file_content,
-            ContentType=content_type,
-            Metadata={
-                'original_filename': filename,
-                'upload_timestamp': str(uuid.uuid4())
-            }
+        # Generate presigned URL for PUT operation
+        presigned_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': s3_key,
+                'ContentType': content_type,
+                'Metadata': {
+                    'original_filename': filename,
+                    'upload_timestamp': str(uuid.uuid4())
+                }
+            },
+            ExpiresIn=3600  # URL expires in 1 hour
         )
         
-        logger.info(f"Successfully uploaded {filename} to {bucket_name}/{s3_key}")
+        logger.info(f"Generated presigned URL for {filename} -> {bucket_name}/{s3_key}")
         
         return {
             'success': True,
@@ -124,11 +136,13 @@ def upload_file_to_s3(file_data: Dict[str, Any], bucket_name: str, prefix: str) 
             'unique_filename': unique_filename,
             's3_key': s3_key,
             'bucket_name': bucket_name,
-            'content_type': content_type
+            'content_type': content_type,
+            'presigned_url': presigned_url,
+            'expires_in': 3600
         }
         
     except Exception as e:
-        logger.error(f"Error uploading file {filename}: {str(e)}")
+        logger.error(f"Error generating presigned URL for {filename}: {str(e)}")
         return {
             'success': False,
             'filename': filename,
@@ -140,6 +154,12 @@ def create_success_response(data: Dict[str, Any]) -> Dict[str, Any]:
     """Create successful response."""
     return {
         'statusCode': 200,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key, X-Amz-Security-Token'
+        },
         'body': json.dumps(data)
     }
 
@@ -152,5 +172,11 @@ def create_error_response(status_code: int, message: str, data: Dict[str, Any] =
     
     return {
         'statusCode': status_code,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key, X-Amz-Security-Token'
+        },
         'body': json.dumps(error_body)
     }

@@ -19,39 +19,10 @@ const loadConfig = async () => {
   if (isDevelopment) {
     // Use environment variables directly in development
     console.log('Development mode: using environment variables');
-    config = {
-      apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
-      userPoolId: process.env.REACT_APP_USER_POOL_ID || '',
-      userPoolClientId: process.env.REACT_APP_USER_POOL_CLIENT_ID || '',
-      userPoolDomain: process.env.REACT_APP_USER_POOL_DOMAIN || '',
-      region: process.env.REACT_APP_REGION || 'us-east-1',
-      stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack-Dev',
-      knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
-      knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
-      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
-    };
-    return config;
-  }
-  
-  // Production: try to load from config.json (CDK-generated)
-  try {
-    const response = await fetch('/config.json');
+    console.log('REACT_APP_API_GATEWAY_URL:', process.env.REACT_APP_API_GATEWAY_URL);
+    console.log('REACT_APP_USER_POOL_ID:', process.env.REACT_APP_USER_POOL_ID);
+    console.log('REACT_APP_USER_POOL_CLIENT_ID:', process.env.REACT_APP_USER_POOL_CLIENT_ID);
     
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      throw new Error('Invalid content type - expected JSON');
-    }
-    
-    config = await response.json();
-    return config;
-  } catch (error) {
-    console.error('Failed to load production config, falling back to environment variables:', error);
-    
-    // Fallback to environment variables even in production
     config = {
       apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
       userPoolId: process.env.REACT_APP_USER_POOL_ID || '',
@@ -63,6 +34,114 @@ const loadConfig = async () => {
       knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
       knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
     };
+    console.log('Development config:', config);
+    return config;
+  }
+  
+  // Production: first try cached config, then config.json
+  try {
+    // Check for cached valid config first
+    const cachedConfig = localStorage.getItem('oneL_validConfig');
+    if (cachedConfig) {
+      try {
+        const parsed = JSON.parse(cachedConfig);
+        if (parsed.apiGatewayUrl && parsed.userPoolId && parsed.userPoolClientId) {
+          console.info('Using cached valid configuration');
+          config = parsed;
+          return config;
+        }
+      } catch (e) {
+        localStorage.removeItem('oneL_validConfig');
+      }
+    }
+    
+    // Try to load from config.json
+    const response = await fetch('/config.json');
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error('Invalid content type - expected JSON');
+    }
+    
+    const configData = await response.json();
+    
+    // Check if config contains unresolved CDK tokens
+    const configString = JSON.stringify(configData);
+    if (configString.includes('${Token[') || configString.includes('${AWS.')) {
+      console.error('Config file contains unresolved CDK tokens:', configData);
+      throw new Error('Config file contains unresolved CDK tokens - deployment may be incomplete');
+    }
+    
+    // Validate that essential config values are present and not empty
+    if (!configData.apiGatewayUrl || !configData.userPoolId || !configData.userPoolClientId) {
+      throw new Error('Config file is missing essential values');
+    }
+    
+    console.log('Successfully loaded config from config.json:', configData);
+    config = configData;
+    
+    // Cache this valid config for future use
+    try {
+      localStorage.setItem('oneL_validConfig', JSON.stringify(config));
+      console.debug('Cached valid configuration from config.json');
+    } catch (err) {
+      console.warn('Could not cache config:', err.message);
+    }
+    
+    return config;
+  } catch (error) {
+    console.error('Failed to load production config, falling back to environment variables:', error);
+    
+    // Fallback to environment variables even in production
+    console.warn('Using environment variables for configuration due to config.json issues');
+    
+    // Log all environment variables for debugging
+    console.log('Environment variables loaded:');
+    console.log('REACT_APP_API_GATEWAY_URL:', process.env.REACT_APP_API_GATEWAY_URL);
+    console.log('REACT_APP_USER_POOL_ID:', process.env.REACT_APP_USER_POOL_ID);
+    console.log('REACT_APP_USER_POOL_CLIENT_ID:', process.env.REACT_APP_USER_POOL_CLIENT_ID);
+    console.log('REACT_APP_USER_POOL_DOMAIN:', process.env.REACT_APP_USER_POOL_DOMAIN);
+    console.log('REACT_APP_REGION:', process.env.REACT_APP_REGION);
+    console.log('REACT_APP_STACK_NAME:', process.env.REACT_APP_STACK_NAME);
+    
+    config = {
+      apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
+      userPoolId: process.env.REACT_APP_USER_POOL_ID || '',
+      userPoolClientId: process.env.REACT_APP_USER_POOL_CLIENT_ID || '',
+      userPoolDomain: process.env.REACT_APP_USER_POOL_DOMAIN || '',
+      region: process.env.REACT_APP_REGION || 'us-east-1',
+      stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack',
+      knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
+      knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
+      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
+    };
+    
+    console.log('Final config object:', config);
+    
+    // Check if fallback config is valid
+    const missingEnvVars = [];
+    if (!config.apiGatewayUrl) missingEnvVars.push('REACT_APP_API_GATEWAY_URL');
+    if (!config.userPoolId) missingEnvVars.push('REACT_APP_USER_POOL_ID');
+    if (!config.userPoolClientId) missingEnvVars.push('REACT_APP_USER_POOL_CLIENT_ID');
+    
+    if (missingEnvVars.length > 0) {
+      console.error('Missing essential environment variables:', missingEnvVars);
+      console.error('Application may not function correctly without these values');
+    } else {
+      console.info('Successfully loaded configuration from environment variables');
+      
+      // Cache valid config in localStorage for faster future loads
+      try {
+        localStorage.setItem('oneL_validConfig', JSON.stringify(config));
+        console.debug('Cached valid configuration in localStorage');
+      } catch (err) {
+        console.warn('Could not cache config in localStorage:', err.message);
+      }
+    }
     
     return config;
   }
