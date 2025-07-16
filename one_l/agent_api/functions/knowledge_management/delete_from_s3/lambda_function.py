@@ -17,7 +17,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda function to delete files from S3.
     
-    Expected event format:
+    Expected event format from API Gateway:
+    {
+        "body": "{\"bucket_type\": \"user_documents\", \"s3_keys\": [\"...\"]}"
+    }
+    
+    Expected direct invocation format:
     {
         "bucket_type": "knowledge" | "user_documents",
         "s3_keys": ["path/to/file1.txt", "path/to/file2.txt"]
@@ -27,9 +32,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
         logger.info(f"Delete request received: {json.dumps(event, default=str)}")
         
-        # Extract parameters
-        bucket_type = event.get('bucket_type', 'user_documents')
-        s3_keys = event.get('s3_keys', [])
+        # Parse request body - handle both API Gateway proxy and direct invocation
+        if 'body' in event and event['body']:
+            # API Gateway proxy integration format
+            try:
+                body_data = json.loads(event['body'])
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse request body: {e}")
+                return create_error_response(400, "Invalid JSON in request body")
+        else:
+            # Direct invocation format
+            body_data = event
+        
+        # Extract parameters from parsed body
+        bucket_type = body_data.get('bucket_type', 'user_documents')
+        s3_keys = body_data.get('s3_keys', [])
+        
+        logger.info(f"Parsed parameters - bucket_type: {bucket_type}, s3_keys count: {len(s3_keys)}")
         
         # Get bucket name from environment
         bucket_name = get_bucket_name(bucket_type)

@@ -1,8 +1,0 @@
-{
-  "apiGatewayUrl": "https://${Token[TOKEN.233]}.execute-api.${Token[AWS.Region.8]}.${Token[AWS.URLSuffix.5]}/${Token[TOKEN.241]}/",
-  "userPoolId": "${Token[TOKEN.18]}",
-  "userPoolClientId": "${Token[TOKEN.28]}",
-  "userPoolDomain": "${Token[TOKEN.22]}",
-  "region": "${Token[AWS.Region.8]}",
-  "stackName": "OneLStack"
-}

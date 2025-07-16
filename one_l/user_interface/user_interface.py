@@ -13,9 +13,10 @@ from aws_cdk import (
     RemovalPolicy,
     Stack,
     CfnOutput,
-    Duration
+    Duration,
+    CustomResource,
+    custom_resources as cr
 )
-import json
 
 
 class UserInterfaceConstruct(Construct):
@@ -111,11 +112,14 @@ class UserInterfaceConstruct(Construct):
     def deploy_website(self):
         """Deploy the React app to S3."""
         
-        # Configure frontend deployment settings
+        # Update Cognito settings
         self.create_frontend_config()
         
+        # Create custom resource to generate config.json at deployment time
+        config_generator = self.create_config_generator()
+        
         # Deploy the built React app to S3
-        s3_deployment.BucketDeployment(
+        website_deployment = s3_deployment.BucketDeployment(
             self, "WebsiteDeployment",
             sources=[s3_deployment.Source.asset("one_l/user_interface/build")],
             destination_bucket=self.website_bucket,
@@ -123,15 +127,74 @@ class UserInterfaceConstruct(Construct):
             distribution_paths=["/*"],
             retain_on_delete=False,
         )
+        
+        # Ensure website deployment happens after config.json is generated
+        website_deployment.node.add_dependency(config_generator)
     
-
     def create_frontend_config(self):
-        """Configure frontend deployment settings."""
+        """Update Cognito settings for frontend deployment."""
         
         # Update Cognito callback URLs with CloudFront URL
         if self.authorization:
             cloudfront_url = f"https://{self.cloudfront_distribution.distribution_domain_name}"
             self.update_cognito_callback_urls(cloudfront_url)
+    
+    def create_config_generator(self):
+        """Create Custom Resource to generate config.json at deployment time."""
+        
+        if not self.authorization or not self.api_gateway:
+            raise ValueError("Authorization and API Gateway constructs are required for config generation")
+        
+        # Build config JSON string with CDK token substitution
+        config_json_body = f'''{{
+  "apiGatewayUrl": "{self.api_gateway.main_api.url}",
+  "userPoolId": "{self.authorization.user_pool.user_pool_id}",
+  "userPoolClientId": "{self.authorization.user_pool_client.user_pool_client_id}",
+  "userPoolDomain": "https://{self.authorization.user_pool_domain.domain_name}.auth.{Stack.of(self).region}.amazoncognito.com",
+  "region": "{Stack.of(self).region}",
+  "stackName": "{self._stack_name}",
+  "knowledgeManagementUploadEndpointUrl": "{self.api_gateway.main_api.url}knowledge_management/upload",
+  "knowledgeManagementRetrieveEndpointUrl": "{self.api_gateway.main_api.url}knowledge_management/retrieve",
+  "knowledgeManagementDeleteEndpointUrl": "{self.api_gateway.main_api.url}knowledge_management/delete"
+}}'''
+        
+        # Create Custom Resource to generate config.json
+        config_generator = cr.AwsCustomResource(
+            self, "ConfigGenerator",
+            on_create=cr.AwsSdkCall(
+                service="S3",
+                action="putObject",
+                parameters={
+                    "Bucket": self.website_bucket.bucket_name,
+                    "Key": "config.json",
+                    "Body": config_json_body,
+                    "ContentType": "application/json"
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("ConfigGeneratorResource")
+            ),
+            on_update=cr.AwsSdkCall(
+                service="S3",
+                action="putObject",
+                parameters={
+                    "Bucket": self.website_bucket.bucket_name,
+                    "Key": "config.json",
+                    "Body": config_json_body,
+                    "ContentType": "application/json"
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("ConfigGeneratorResource")
+            ),
+            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                resources=[f"{self.website_bucket.bucket_arn}/config.json"]
+            )
+        )
+        
+        # Ensure config is generated after all dependencies are created
+        config_generator.node.add_dependency(self.website_bucket)
+        config_generator.node.add_dependency(self.api_gateway.main_api)
+        config_generator.node.add_dependency(self.authorization.user_pool)
+        config_generator.node.add_dependency(self.authorization.user_pool_client)
+        config_generator.node.add_dependency(self.authorization.user_pool_domain)
+        return config_generator
     
     def update_cognito_callback_urls(self, cloudfront_url: str):
         """Update Cognito user pool client with CloudFront callback URLs."""

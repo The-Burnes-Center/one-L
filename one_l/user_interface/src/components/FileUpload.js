@@ -64,11 +64,9 @@ const FileUpload = () => {
         'uploads/'
       );
       
-      // Parse response
-      const result = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-      
-      if (result.uploaded_count > 0) {
-        setMessage(`Successfully uploaded ${result.uploaded_count} file(s)!`);
+      // Response is now direct (no body parsing needed)
+      if (response.uploaded_count > 0) {
+        setMessage(`Successfully uploaded ${response.uploaded_count} file(s)!`);
         setMessageType('success');
         
         // Clear selection
@@ -77,7 +75,7 @@ const FileUpload = () => {
           fileInputRef.current.value = '';
         }
       } else {
-        setMessage('Upload failed. Please try again.');
+        setMessage(response.message || 'Upload failed. Please try again.');
         setMessageType('error');
       }
       

@@ -22,7 +22,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda function to generate presigned URLs for direct S3 upload.
     
-    Expected event format:
+    Expected event format from API Gateway:
+    {
+        "body": "{\"bucket_type\": \"user_documents\", \"files\": [...], \"prefix\": \"...\"}"
+    }
+    
+    Expected direct invocation format:
     {
         "bucket_type": "knowledge" | "user_documents",
         "files": [
@@ -39,10 +44,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
         logger.info(f"Presigned URL request received: {json.dumps(event, default=str)}")
         
-        # Extract parameters
-        bucket_type = event.get('bucket_type', 'user_documents')
-        files = event.get('files', [])
-        prefix = event.get('prefix', '')
+        # Parse request body - handle both API Gateway proxy and direct invocation
+        if 'body' in event and event['body']:
+            # API Gateway proxy integration format
+            try:
+                body_data = json.loads(event['body'])
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse request body: {e}")
+                return create_error_response(400, "Invalid JSON in request body")
+        else:
+            # Direct invocation format
+            body_data = event
+        
+        # Extract parameters from parsed body
+        bucket_type = body_data.get('bucket_type', 'user_documents')
+        files = body_data.get('files', [])
+        prefix = body_data.get('prefix', '')
+        
+        logger.info(f"Parsed parameters - bucket_type: {bucket_type}, files count: {len(files)}, prefix: {prefix}")
         
         # Get bucket name from environment
         bucket_name = get_bucket_name(bucket_type)

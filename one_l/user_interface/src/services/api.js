@@ -50,89 +50,107 @@ const knowledgeManagementAPI = {
    * Upload files to S3 using presigned URLs
    */
   uploadFiles: async (files, bucketType = 'user_documents', prefix = '') => {
-    // Step 1: Request presigned URLs from the backend
-    const filesData = files.map(file => ({
-      filename: file.name,
-      content_type: file.type,
-      file_size: file.size
-    }));
-    
-    const payload = {
-      bucket_type: bucketType,
-      files: filesData,
-      prefix: prefix
-    };
-    
-    const presignedResponse = await apiCall('/knowledge_management/upload', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-    
-    // Parse the response to get presigned URLs
-    const responseData = typeof presignedResponse.body === 'string' 
-      ? JSON.parse(presignedResponse.body) 
-      : presignedResponse.body || presignedResponse;
-    
-    const presignedUrls = responseData.presigned_urls || [];
-    
-    // Step 2: Upload files directly to S3 using presigned URLs
-    const uploadResults = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const urlData = presignedUrls[i];
+    try {
+      // Step 1: Request presigned URLs from the backend
+      const filesData = files.map(file => ({
+        filename: file.name,
+        content_type: file.type,
+        file_size: file.size
+      }));
       
-      if (!urlData || !urlData.success) {
-        uploadResults.push({
-          success: false,
-          filename: file.name,
-          error: urlData?.error || 'Failed to get presigned URL'
-        });
-        continue;
+      const payload = {
+        bucket_type: bucketType,
+        files: filesData,
+        prefix: prefix
+      };
+      
+      const presignedResponse = await apiCall('/knowledge_management/upload', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      
+      // Parse the response to get presigned URLs
+      const responseData = typeof presignedResponse.body === 'string' 
+        ? JSON.parse(presignedResponse.body) 
+        : presignedResponse.body || presignedResponse;
+      
+      const presignedUrls = responseData.presigned_urls || [];
+      
+      if (!presignedUrls.length) {
+        throw new Error('No presigned URLs received from server');
       }
       
-      try {
-        // Upload directly to S3
-        const uploadResponse = await fetch(urlData.presigned_url, {
-          method: 'PUT',
-          body: file,
-          headers: {
-            'Content-Type': file.type
-          }
-        });
+      // Step 2: Upload files directly to S3 using presigned URLs
+      const uploadResults = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const urlData = presignedUrls[i];
         
-        if (uploadResponse.ok) {
-          uploadResults.push({
-            success: true,
-            filename: file.name,
-            unique_filename: urlData.unique_filename,
-            s3_key: urlData.s3_key,
-            bucket_name: urlData.bucket_name
-          });
-        } else {
+        if (!urlData || !urlData.success) {
           uploadResults.push({
             success: false,
             filename: file.name,
-            error: `S3 upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`
+            error: urlData?.error || 'Failed to get presigned URL'
+          });
+          continue;
+        }
+        
+        try {
+          // Upload directly to S3
+          const uploadResponse = await fetch(urlData.presigned_url, {
+            method: 'PUT',
+            body: file,
+            headers: {
+              'Content-Type': file.type
+            }
+          });
+          
+          if (uploadResponse.ok) {
+            uploadResults.push({
+              success: true,
+              filename: file.name,
+              unique_filename: urlData.unique_filename,
+              s3_key: urlData.s3_key,
+              bucket_name: urlData.bucket_name
+            });
+          } else {
+            uploadResults.push({
+              success: false,
+              filename: file.name,
+              error: `S3 upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`
+            });
+          }
+        } catch (error) {
+          uploadResults.push({
+            success: false,
+            filename: file.name,
+            error: `Upload error: ${error.message}`
           });
         }
-      } catch (error) {
-        uploadResults.push({
-          success: false,
-          filename: file.name,
-          error: `Upload error: ${error.message}`
-        });
       }
-    }
-    
-    // Return results in the same format as before
-    const successfulUploads = uploadResults.filter(r => r.success);
-    return {
-      body: JSON.stringify({
+      
+      // Return results directly (not wrapped in body)
+      const successfulUploads = uploadResults.filter(r => r.success);
+      return {
         message: `${successfulUploads.length} of ${files.length} files uploaded successfully`,
         upload_results: uploadResults,
-        uploaded_count: successfulUploads.length
-      })
-    };
+        uploaded_count: successfulUploads.length,
+        total_count: files.length,
+        success: successfulUploads.length > 0
+      };
+      
+    } catch (error) {
+      console.error('Upload files error:', error);
+      // Return consistent error structure
+      return {
+        message: `Upload failed: ${error.message}`,
+        upload_results: [],
+        uploaded_count: 0,
+        total_count: files.length,
+        success: false,
+        error: error.message
+      };
+    }
   },
   
   /**

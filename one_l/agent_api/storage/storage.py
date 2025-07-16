@@ -24,6 +24,7 @@ class StorageConstruct(Construct):
         construct_id: str,
         knowledge_bucket_name: Optional[str] = None,
         user_documents_bucket_name: Optional[str] = None,
+        additional_cors_origins: Optional[list] = None,
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -36,6 +37,7 @@ class StorageConstruct(Construct):
         self._stack_name = Stack.of(self).stack_name
         self._knowledge_bucket_name = knowledge_bucket_name or f"{self._stack_name.lower()}-knowledge-source"
         self._user_documents_bucket_name = user_documents_bucket_name or f"{self._stack_name.lower()}-user-documents"
+        self._additional_cors_origins = additional_cors_origins or []
         
         # Create the storage infrastructure
         self.create_knowledge_bucket()
@@ -44,6 +46,18 @@ class StorageConstruct(Construct):
     
     def create_knowledge_bucket(self):
         """Create the knowledge source bucket."""
+        
+        # Build CORS allowed origins list  
+        cors_origins = [
+            "http://localhost:3000",    # Local development
+            "https://localhost:3000",   # Local development with HTTPS
+        ]
+        cors_origins.extend(self._additional_cors_origins)
+        
+        # If no additional origins provided, allow all origins for CloudFront compatibility
+        if not self._additional_cors_origins:
+            cors_origins = ["*"]
+        
         self.knowledge_bucket = s3.Bucket(
             self, "KnowledgeSourceBucket",
             bucket_name=self._knowledge_bucket_name,
@@ -60,7 +74,7 @@ class StorageConstruct(Construct):
                         s3.HttpMethods.PUT,
                         s3.HttpMethods.DELETE,
                     ],
-                    allowed_origins=["*"],
+                    allowed_origins=cors_origins,
                     allowed_headers=["*"],
                 )
             ],
@@ -69,6 +83,18 @@ class StorageConstruct(Construct):
     
     def create_user_documents_bucket(self):
         """Create the user documents upload bucket."""
+        
+        # Build CORS allowed origins list
+        cors_origins = [
+            "http://localhost:3000",    # Local development
+            "https://localhost:3000",   # Local development with HTTPS
+        ]
+        cors_origins.extend(self._additional_cors_origins)
+        
+        # If no additional origins provided, allow all origins for CloudFront compatibility
+        if not self._additional_cors_origins:
+            cors_origins = ["*"]
+        
         self.user_documents_bucket = s3.Bucket(
             self, "UserDocumentsBucket",
             bucket_name=self._user_documents_bucket_name,
@@ -86,7 +112,7 @@ class StorageConstruct(Construct):
                         s3.HttpMethods.PUT,
                         s3.HttpMethods.DELETE
                     ],
-                    allowed_origins=["http://localhost:3000"],
+                    allowed_origins=cors_origins,
                     allowed_headers=["*"],
                     exposed_headers=["ETag"],
                     max_age=3000,

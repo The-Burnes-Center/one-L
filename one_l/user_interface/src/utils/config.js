@@ -40,21 +40,6 @@ const loadConfig = async () => {
   
   // Production: first try cached config, then config.json
   try {
-    // Check for cached valid config first
-    const cachedConfig = localStorage.getItem('oneL_validConfig');
-    if (cachedConfig) {
-      try {
-        const parsed = JSON.parse(cachedConfig);
-        if (parsed.apiGatewayUrl && parsed.userPoolId && parsed.userPoolClientId) {
-          console.info('Using cached valid configuration');
-          config = parsed;
-          return config;
-        }
-      } catch (e) {
-        localStorage.removeItem('oneL_validConfig');
-      }
-    }
-    
     // Try to load from config.json
     const response = await fetch('/config.json');
     
@@ -83,14 +68,6 @@ const loadConfig = async () => {
     
     console.log('Successfully loaded config from config.json:', configData);
     config = configData;
-    
-    // Cache this valid config for future use
-    try {
-      localStorage.setItem('oneL_validConfig', JSON.stringify(config));
-      console.debug('Cached valid configuration from config.json');
-    } catch (err) {
-      console.warn('Could not cache config:', err.message);
-    }
     
     return config;
   } catch (error) {
@@ -133,14 +110,6 @@ const loadConfig = async () => {
       console.error('Application may not function correctly without these values');
     } else {
       console.info('Successfully loaded configuration from environment variables');
-      
-      // Cache valid config in localStorage for faster future loads
-      try {
-        localStorage.setItem('oneL_validConfig', JSON.stringify(config));
-        console.debug('Cached valid configuration in localStorage');
-      } catch (err) {
-        console.warn('Could not cache config in localStorage:', err.message);
-      }
     }
     
     return config;
