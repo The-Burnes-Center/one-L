@@ -18,10 +18,26 @@ bedrock_client = boto3.client('bedrock-agent')
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda function to manually trigger Knowledge Base synchronization.
+    Can be triggered by:
+    1. API Gateway (manual sync)
+    2. S3 event notifications (automatic sync on upload)
     
     Expected event format from API Gateway:
     {
         "body": "{\"action\": \"start_sync\", \"data_source\": \"knowledge\" | \"user_documents\" | \"all\"}"
+    }
+    
+    Expected event format from S3:
+    {
+        "Records": [
+            {
+                "eventName": "ObjectCreated:Put",
+                "s3": {
+                    "bucket": {"name": "bucket-name"},
+                    "object": {"key": "uploads/file.pdf"}
+                }
+            }
+        ]
     }
     
     Expected direct invocation format:
@@ -34,6 +50,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     
     try:
         logger.info(f"Sync Knowledge Base request received: {json.dumps(event, default=str)}")
+        
+        # Check if this is an S3 event notification
+        if 'Records' in event and event['Records']:
+            return handle_s3_event(event)
         
         # Parse request body - handle both API Gateway proxy and direct invocation
         if 'body' in event and event['body']:
@@ -75,6 +95,57 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error in sync_knowledge_base function: {str(e)}")
         return create_error_response(500, f"Internal server error: {str(e)}")
+
+
+def handle_s3_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle S3 event notifications for automatic sync."""
+    try:
+        logger.info("Processing S3 event notification for automatic sync")
+        
+        # Get Knowledge Base ID from environment
+        knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
+        
+        if not knowledge_base_id:
+            return create_error_response(500, "Knowledge Base ID not configured")
+        
+        # Process S3 records
+        uploaded_files = []
+        for record in event.get('Records', []):
+            if record.get('eventName', '').startswith('ObjectCreated:'):
+                bucket_name = record['s3']['bucket']['name']
+                object_key = record['s3']['object']['key']
+                uploaded_files.append({
+                    'bucket': bucket_name,
+                    'key': object_key
+                })
+                logger.info(f"File uploaded: {bucket_name}/{object_key}")
+        
+        if not uploaded_files:
+            logger.info("No file uploads found in S3 event")
+            return create_success_response({
+                "message": "No file uploads to process",
+                "processed_files": 0
+            })
+        
+        # Determine data source based on bucket
+        data_source = "user_documents"  # Default since S3 events are only set up for user documents bucket
+        
+        # Start sync job for user documents
+        sync_result = start_sync_job(knowledge_base_id, data_source)
+        
+        # Add S3 event context to response
+        if sync_result['statusCode'] == 200:
+            response_data = json.loads(sync_result['body'])
+            response_data['trigger'] = 'S3_event'
+            response_data['uploaded_files'] = uploaded_files
+            sync_result['body'] = json.dumps(response_data)
+        
+        logger.info(f"Automatic sync triggered for {len(uploaded_files)} uploaded files")
+        return sync_result
+        
+    except Exception as e:
+        logger.error(f"Error handling S3 event: {str(e)}")
+        return create_error_response(500, f"Error handling S3 event: {str(e)}")
 
 
 def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all") -> Dict[str, Any]:

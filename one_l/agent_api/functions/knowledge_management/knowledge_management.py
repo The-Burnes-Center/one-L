@@ -7,6 +7,7 @@ from constructs import Construct
 from aws_cdk import (
     aws_lambda as _lambda,
     aws_s3 as s3,
+    aws_s3_notifications as s3n,
     aws_logs as logs,
     aws_opensearchserverless as aoss,
     custom_resources as cr,
@@ -60,6 +61,7 @@ class KnowledgeManagementConstruct(Construct):
         # Create Lambda functions in proper order
         self.create_functions()
         self.create_index_creation()
+        self.setup_s3_event_notifications()
     
     def create_functions(self):
         """Create essential knowledge management Lambda functions."""
@@ -147,6 +149,7 @@ class KnowledgeManagementConstruct(Construct):
         role = self.iam_roles.create_s3_read_role("SyncKnowledgeBase", self.buckets)
         
         # Add Bedrock permissions for Knowledge Base sync
+        # Use broader permissions since knowledge base ID may not be available at creation time
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -154,9 +157,14 @@ class KnowledgeManagementConstruct(Construct):
                     "bedrock:StartIngestionJob",
                     "bedrock:GetIngestionJob",
                     "bedrock:ListIngestionJobs",
-                    "bedrock:ListDataSources"
+                    "bedrock:ListDataSources",
+                    "bedrock:GetKnowledgeBase",
+                    "bedrock:ListKnowledgeBases"
                 ],
-                resources=[f"arn:aws:bedrock:*:*:knowledge-base/{self.knowledge_base_id}"]
+                resources=[
+                    f"arn:aws:bedrock:{Stack.of(self).region}:{Stack.of(self).account}:knowledge-base/*",
+                    f"arn:aws:bedrock:{Stack.of(self).region}:{Stack.of(self).account}:data-source/*"
+                ]
             )
         )
         
@@ -246,6 +254,26 @@ class KnowledgeManagementConstruct(Construct):
         
         # Ensure index creation happens after OpenSearch collection is ready
         self.create_index_custom_resource.node.add_dependency(self.opensearch_collection)
+    
+    def setup_s3_event_notifications(self):
+        """Set up S3 event notifications to trigger sync on file uploads."""
+        if not self.sync_knowledge_base_function:
+            raise ValueError("Sync function must be created before setting up S3 events")
+        
+        # Add S3 event notification to trigger sync when files are uploaded to user documents bucket
+        self.user_documents_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.sync_knowledge_base_function),
+            s3.NotificationKeyFilter(prefix="uploads/")  # Only trigger for files in uploads/ prefix
+        )
+        
+        # Add permission for S3 to invoke the sync lambda
+        self.sync_knowledge_base_function.add_permission(
+            "AllowS3Invoke",
+            principal=iam.ServicePrincipal("s3.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=self.user_documents_bucket.bucket_arn
+        )
     
     def get_function_routes(self) -> dict:
         """

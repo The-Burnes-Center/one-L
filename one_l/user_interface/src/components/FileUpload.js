@@ -66,8 +66,27 @@ const FileUpload = () => {
       
       // Response is now direct (no body parsing needed)
       if (response.uploaded_count > 0) {
-        setMessage(`Successfully uploaded ${response.uploaded_count} file(s)!`);
+        setMessage(`Successfully uploaded ${response.uploaded_count} file(s)! Starting knowledge base sync...`);
         setMessageType('success');
+        
+        // Automatically trigger knowledge base sync for user documents
+        try {
+          const syncResponse = await knowledgeManagementAPI.syncKnowledgeBase('user_documents', 'start_sync');
+          
+          // Update message to include sync status
+          const syncResponseData = typeof syncResponse.body === 'string' 
+            ? JSON.parse(syncResponse.body) 
+            : syncResponse.body || syncResponse;
+          
+          if (syncResponseData.successful_count > 0) {
+            setMessage(`Successfully uploaded ${response.uploaded_count} file(s) and started knowledge base sync!`);
+          } else {
+            setMessage(`Successfully uploaded ${response.uploaded_count} file(s), but sync failed to start. You may need to manually sync.`);
+          }
+        } catch (syncError) {
+          console.error('Auto-sync error:', syncError);
+          setMessage(`Successfully uploaded ${response.uploaded_count} file(s), but auto-sync failed: ${syncError.message}. You may need to manually sync.`);
+        }
         
         // Clear selection
         setSelectedFiles([]);
