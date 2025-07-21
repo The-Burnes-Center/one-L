@@ -182,6 +182,51 @@ const knowledgeManagementAPI = {
       method: 'DELETE',
       body: JSON.stringify(payload)
     });
+  },
+  
+  /**
+   * Sync Knowledge Base (trigger manual ingestion)
+   */
+  syncKnowledgeBase: async (dataSource = 'all', action = 'start_sync') => {
+    const payload = {
+      action: action,
+      data_source: dataSource
+    };
+    
+    return await apiCall('/knowledge_management/sync', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  
+  /**
+   * Get sync job status
+   */
+  getSyncJobStatus: async (jobId) => {
+    const payload = {
+      action: 'get_sync_status',
+      job_id: jobId
+    };
+    
+    return await apiCall('/knowledge_management/sync', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  
+  /**
+   * List recent sync jobs
+   */
+  listSyncJobs: async (dataSource = 'all') => {
+    const payload = {
+      action: 'list_sync_jobs',
+      data_source: dataSource
+    };
+    
+    return await apiCall('/knowledge_management/sync', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   }
 };
 

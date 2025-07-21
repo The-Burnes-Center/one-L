@@ -2,6 +2,7 @@
 User Interface construct for React app hosting with CloudFront.
 """
 
+import json
 from typing import Optional
 from constructs import Construct
 from aws_cdk import (
@@ -9,6 +10,8 @@ from aws_cdk import (
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
     aws_s3_deployment as s3_deployment,
+    aws_lambda as _lambda,
+    aws_logs as logs,
     aws_iam as iam,
     RemovalPolicy,
     Stack,
@@ -41,6 +44,7 @@ class UserInterfaceConstruct(Construct):
         # Instance variables
         self.website_bucket = None
         self.cloudfront_distribution = None
+        self.config_generator_function = None
         
         # Configuration
         self._stack_name = Stack.of(self).stack_name
@@ -48,6 +52,7 @@ class UserInterfaceConstruct(Construct):
         # Create the user interface infrastructure
         self.create_website_bucket()
         self.create_cloudfront_distribution()
+        self.create_config_generator()
         self.deploy_website()
         self.create_outputs()
     
@@ -115,9 +120,6 @@ class UserInterfaceConstruct(Construct):
         # Update Cognito settings
         self.create_frontend_config()
         
-        # Create custom resource to generate config.json at deployment time
-        config_generator = self.create_config_generator()
-        
         # Deploy the built React app to S3
         website_deployment = s3_deployment.BucketDeployment(
             self, "WebsiteDeployment",
@@ -128,8 +130,42 @@ class UserInterfaceConstruct(Construct):
             retain_on_delete=False,
         )
         
-        # Ensure website deployment happens after config.json is generated
-        website_deployment.node.add_dependency(config_generator)
+        # Create Custom Resource to trigger config generation after deployment
+        config_trigger = cr.AwsCustomResource(
+            self, "ConfigGeneratorTrigger",
+            on_create=cr.AwsSdkCall(
+                service="Lambda",
+                action="invoke",
+                parameters={
+                    "FunctionName": self.config_generator_function.function_name,
+                    "Payload": json.dumps({"action": "generate"})
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("ConfigGeneratorTrigger")
+            ),
+            on_update=cr.AwsSdkCall(
+                service="Lambda",
+                action="invoke",
+                parameters={
+                    "FunctionName": self.config_generator_function.function_name,
+                    "Payload": json.dumps({"action": "generate"})
+                },
+                physical_resource_id=cr.PhysicalResourceId.of("ConfigGeneratorTrigger")
+            ),
+            policy=cr.AwsCustomResourcePolicy.from_statements([
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    actions=["lambda:InvokeFunction"],
+                    resources=[self.config_generator_function.function_arn]
+                )
+            ])
+        )
+        
+        # Ensure config generation happens after all dependencies are created
+        config_trigger.node.add_dependency(self.config_generator_function)
+        config_trigger.node.add_dependency(self.api_gateway.main_api)
+        config_trigger.node.add_dependency(self.authorization.user_pool)
+        config_trigger.node.add_dependency(self.authorization.user_pool_client)
+        config_trigger.node.add_dependency(self.authorization.user_pool_domain)
     
     def create_frontend_config(self):
         """Update Cognito settings for frontend deployment."""
@@ -140,61 +176,40 @@ class UserInterfaceConstruct(Construct):
             self.update_cognito_callback_urls(cloudfront_url)
     
     def create_config_generator(self):
-        """Create Custom Resource to generate config.json at deployment time."""
+        """Create Lambda function to generate config.json post-deployment."""
         
         if not self.authorization or not self.api_gateway:
             raise ValueError("Authorization and API Gateway constructs are required for config generation")
         
-        # Build config JSON string with CDK token substitution
-        config_json_body = f'''{{
-  "apiGatewayUrl": "{self.api_gateway.main_api.url}",
-  "userPoolId": "{self.authorization.user_pool.user_pool_id}",
-  "userPoolClientId": "{self.authorization.user_pool_client.user_pool_client_id}",
-  "userPoolDomain": "https://{self.authorization.user_pool_domain.domain_name}.auth.{Stack.of(self).region}.amazoncognito.com",
-  "region": "{Stack.of(self).region}",
-  "stackName": "{self._stack_name}",
-  "knowledgeManagementUploadEndpointUrl": "{self.api_gateway.main_api.url}knowledge_management/upload",
-  "knowledgeManagementRetrieveEndpointUrl": "{self.api_gateway.main_api.url}knowledge_management/retrieve",
-  "knowledgeManagementDeleteEndpointUrl": "{self.api_gateway.main_api.url}knowledge_management/delete"
-}}'''
+        # Import the shared IAM roles construct
+        from ..agent_api.functions.shared.iam_roles import IAMRolesConstruct
+        iam_roles = IAMRolesConstruct(self, "ConfigIAMRoles")
         
-        # Create Custom Resource to generate config.json
-        config_generator = cr.AwsCustomResource(
-            self, "ConfigGenerator",
-            on_create=cr.AwsSdkCall(
-                service="S3",
-                action="putObject",
-                parameters={
-                    "Bucket": self.website_bucket.bucket_name,
-                    "Key": "config.json",
-                    "Body": config_json_body,
-                    "ContentType": "application/json"
-                },
-                physical_resource_id=cr.PhysicalResourceId.of("ConfigGeneratorResource")
-            ),
-            on_update=cr.AwsSdkCall(
-                service="S3",
-                action="putObject",
-                parameters={
-                    "Bucket": self.website_bucket.bucket_name,
-                    "Key": "config.json",
-                    "Body": config_json_body,
-                    "ContentType": "application/json"
-                },
-                physical_resource_id=cr.PhysicalResourceId.of("ConfigGeneratorResource")
-            ),
-            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
-                resources=[f"{self.website_bucket.bucket_arn}/config.json"]
-            )
+        # Create IAM role for config generator Lambda
+        config_role = iam_roles.create_website_config_role("ConfigGenerator", self.website_bucket)
+        
+        # Create Lambda function for config generation
+        self.config_generator_function = _lambda.Function(
+            self, "ConfigGeneratorFunction",
+            function_name=f"{self._stack_name}-config-generator",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="generate_config_lambda.lambda_handler",
+            code=_lambda.Code.from_asset("one_l/user_interface/config"),
+            role=config_role,
+            timeout=Duration.seconds(60),
+            memory_size=512,
+            environment={
+                "WEBSITE_BUCKET": self.website_bucket.bucket_name,
+                "API_GATEWAY_URL": self.api_gateway.main_api.url,
+                "USER_POOL_ID": self.authorization.user_pool.user_pool_id,
+                "USER_POOL_CLIENT_ID": self.authorization.user_pool_client.user_pool_client_id,
+                "USER_POOL_DOMAIN": f"https://{self.authorization.user_pool_domain.domain_name}.auth.{Stack.of(self).region}.amazoncognito.com",
+                "REGION": Stack.of(self).region,
+                "STACK_NAME": self._stack_name,
+                "LOG_LEVEL": "INFO"
+            },
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
-        
-        # Ensure config is generated after all dependencies are created
-        config_generator.node.add_dependency(self.website_bucket)
-        config_generator.node.add_dependency(self.api_gateway.main_api)
-        config_generator.node.add_dependency(self.authorization.user_pool)
-        config_generator.node.add_dependency(self.authorization.user_pool_client)
-        config_generator.node.add_dependency(self.authorization.user_pool_domain)
-        return config_generator
     
     def update_cognito_callback_urls(self, cloudfront_url: str):
         """Update Cognito user pool client with CloudFront callback URLs."""
