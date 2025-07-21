@@ -1,6 +1,7 @@
 /**
  * Configuration utility for the One-L application
- * Loads configuration from config.json created during CDK deployment
+ * Loads configuration from config.json generated post-deployment by Lambda function
+ * The config.json contains real deployment values (API Gateway URLs, Cognito IDs, etc.)
  */
 
 let config = null;
@@ -32,7 +33,8 @@ const loadConfig = async () => {
       stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack',
       knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
       knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
-      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
+      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || '',
+      knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || ''
     };
     console.log('Development config:', config);
     return config;
@@ -94,7 +96,8 @@ const loadConfig = async () => {
       stackName: process.env.REACT_APP_STACK_NAME || 'OneLStack',
       knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
       knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
-      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || ''
+      knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || '',
+      knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || ''
     };
     
     console.log('Final config object:', config);

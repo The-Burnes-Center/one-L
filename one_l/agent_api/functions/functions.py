@@ -6,6 +6,7 @@ from typing import Optional
 from constructs import Construct
 from aws_cdk import (
     aws_s3 as s3,
+    aws_opensearchserverless as aoss,
     Stack
 )
 from .shared.iam_roles import IAMRolesConstruct
@@ -23,13 +24,17 @@ class FunctionsConstruct(Construct):
         construct_id: str,
         knowledge_bucket: s3.Bucket,
         user_documents_bucket: s3.Bucket,
+        knowledge_base_id: str,
+        opensearch_collection: aoss.CfnCollection,
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
-        # Store bucket references
+        # Store bucket and collection references
         self.knowledge_bucket = knowledge_bucket
         self.user_documents_bucket = user_documents_bucket
+        self.knowledge_base_id = knowledge_base_id
+        self.opensearch_collection = opensearch_collection
         
         # Configuration
         self._stack_name = Stack.of(self).stack_name
@@ -42,6 +47,8 @@ class FunctionsConstruct(Construct):
             self, "KnowledgeManagement",
             knowledge_bucket=knowledge_bucket,
             user_documents_bucket=user_documents_bucket,
+            knowledge_base_id=knowledge_base_id,
+            opensearch_collection=opensearch_collection,
             iam_roles=self.iam_roles
         )
     
