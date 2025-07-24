@@ -1,0 +1,471 @@
+"""
+Tool functions for document review agent.
+Provides knowledge base retrieval and document red-lining capabilities.
+"""
+
+import json
+import boto3
+import os
+import logging
+import re
+from typing import Dict, Any, List
+from docx import Document
+from docx.shared import RGBColor
+import io
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Initialize AWS clients
+bedrock_agent_client = boto3.client('bedrock-agent-runtime')
+s3_client = boto3.client('s3')
+
+def retrieve_from_knowledge_base(
+    query: str, 
+    max_results: int = 15,
+    knowledge_base_id: str = None,
+    region: str = None
+) -> Dict[str, Any]:
+    """
+    Retrieve relevant documents from the knowledge base.
+    
+    Args:
+        query: Search query for relevant documents
+        max_results: Maximum number of results to return
+        knowledge_base_id: Knowledge base ID from environment
+        region: AWS region
+        
+    Returns:
+        Dictionary containing retrieved documents and metadata
+    """
+    
+    try:
+        # Get knowledge base ID from environment if not provided
+        if not knowledge_base_id:
+            knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
+        
+        if not knowledge_base_id:
+            return {
+                "success": False,
+                "error": "Knowledge base ID not available",
+                "results": []
+            }
+        
+        logger.info(f"Retrieving from knowledge base {knowledge_base_id} with query: {query}")
+        
+        # Query the knowledge base
+        response = bedrock_agent_client.retrieve(
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={
+                'text': query
+            },
+            retrievalConfiguration={
+                'vectorSearchConfiguration': {
+                    'numberOfResults': max_results
+                }
+            }
+        )
+        
+        # Process the results
+        results = []
+        for result in response.get('retrievalResults', []):
+            content = result.get('content', {})
+            metadata = result.get('metadata', {})
+            
+            results.append({
+                "text": content.get('text', ''),
+                "score": result.get('score', 0),
+                "source": metadata.get('source', 'Unknown'),
+                "metadata": metadata
+            })
+        
+        logger.info(f"Retrieved {len(results)} results for query: {query}")
+        
+        return {
+            "success": True,
+            "query": query,
+            "results_count": len(results),
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving from knowledge base: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "query": query,
+            "results": []
+        }
+
+
+def redline_document(
+    analysis_data: str,
+    document_s3_key: str,
+    bucket_type: str = "user_documents"
+) -> Dict[str, Any]:
+    """
+    Complete redlining workflow: download document, extract content, apply redlining, upload result.
+    Handles all document operations internally - no external dependencies.
+    
+    Args:
+        analysis_data: Analysis text containing conflict information
+        document_s3_key: S3 key of the original document
+        bucket_type: Type of source bucket (user_documents, knowledge, agent_processing)
+        
+    Returns:
+        Dictionary containing redlined document information and processing results
+    """
+    
+    try:
+        # Get bucket configurations
+        source_bucket = _get_bucket_name(bucket_type)
+        agent_processing_bucket = os.environ.get('AGENT_PROCESSING_BUCKET')
+        
+        if not agent_processing_bucket or not source_bucket:
+            return {
+                "success": False,
+                "error": "Required buckets not configured"
+            }
+        
+        logger.info(f"Starting redlining workflow for document: {document_s3_key}")
+        
+        # Step 1: Copy document to agent processing bucket
+        agent_document_key = _copy_document_to_processing(document_s3_key, source_bucket, agent_processing_bucket)
+        
+        # Step 2: Download and load the document
+        doc = _download_and_load_document(agent_processing_bucket, agent_document_key)
+        
+        # Step 3: Parse conflicts and create redline items from analysis data
+        redline_items = parse_conflicts_for_redlining(analysis_data)
+        
+        if not redline_items:
+            logger.warning("No conflicts found for redlining")
+            return {
+                "success": False,
+                "error": "No conflicts found in analysis data for redlining"
+            }
+        
+        # Step 4: Apply redlining with exact sentence matching
+        results = apply_exact_sentence_redlining(doc, redline_items)
+        
+        # Step 5: Save and upload redlined document
+        redlined_s3_key = _create_redlined_filename(agent_document_key)
+        upload_success = _save_and_upload_document(doc, agent_processing_bucket, redlined_s3_key, {
+            'original_document': document_s3_key,
+            'agent_document': agent_document_key,
+            'redlined_by': 'Legal-AI',
+            'conflicts_count': str(len(redline_items)),
+            'matches_found': str(results['matches_found'])
+        })
+        
+        if not upload_success:
+            return {
+                "success": False,
+                "error": "Failed to upload redlined document"
+            }
+        
+        logger.info(f"Redlining completed successfully: {redlined_s3_key}")
+        
+        return {
+            "success": True,
+            "original_document": document_s3_key,
+            "agent_document": agent_document_key,
+            "redlined_document": redlined_s3_key,
+            "conflicts_processed": len(redline_items),
+            "matches_found": results['matches_found'],
+            "paragraphs_with_redlines": results['paragraphs_with_redlines'],
+            "bucket": agent_processing_bucket,
+            "message": f"Successfully created redlined document with {results['matches_found']} conflicts highlighted"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in redlining workflow: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "original_document": document_s3_key
+        }
+
+
+def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
+    """
+    Parse the markdown table format conflicts data for redlining.
+    Extracts exact sentences from Summary column that should be present in vendor document.
+    
+    Args:
+        analysis_data: Analysis string containing markdown table
+        
+    Returns:
+        List of redline items with exact text to match and comments
+    """
+    
+    redline_items = []
+    
+    try:
+        lines = analysis_data.strip().split('\n')
+        
+        # Find the table header and data rows
+        header_found = False
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Skip empty lines and markdown formatting
+            if not line or line.startswith('|---') or line.startswith('|-'):
+                continue
+            
+            # Check if this is the header row
+            if '| Clarification ID |' in line:
+                header_found = True
+                continue
+            
+            # Process data rows
+            if header_found and line.startswith('|') and line.endswith('|'):
+                # Split by pipe and clean up
+                parts = [part.strip() for part in line.split('|')[1:-1]]
+                
+                if len(parts) >= 6:
+                    clarification_id = parts[0]
+                    summary = parts[1]  # This contains the exact sentence from vendor document
+                    source_doc = parts[2]
+                    clause_ref = parts[3]
+                    conflict_type = parts[4]
+                    rationale = parts[5]
+                    
+                    # Create redline item using exact summary text for matching
+                    if summary.strip():  # Only add if we have actual text
+                        redline_items.append({
+                            'text': summary.strip(),  # Exact sentence from vendor document
+                            'comment': f"CONFLICT {clarification_id} ({conflict_type}): {rationale}",
+                            'author': 'Legal-AI',
+                            'initials': 'LAI',
+                            'clarification_id': clarification_id,
+                            'conflict_type': conflict_type,
+                            'source_doc': source_doc,
+                            'clause_ref': clause_ref
+                        })
+        
+        logger.info(f"Parsed {len(redline_items)} redline items from analysis data")
+        
+    except Exception as e:
+        logger.error(f"Error parsing conflicts for redlining: {str(e)}")
+    
+    return redline_items
+
+
+def apply_exact_sentence_redlining(doc: Document, redline_items: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Apply redlining by matching exact sentences from DynamoDB with vendor document text.
+    Simple and direct matching since sentences are extracted from the vendor document.
+    
+    Args:
+        doc: bayoo-docx Document object
+        redline_items: List of redline items with exact text to match and comments
+        
+    Returns:
+        Dictionary with redlining results
+    """
+    
+    results = {
+        "total_paragraphs": len(doc.paragraphs),
+        "matches_found": 0,
+        "paragraphs_with_redlines": []
+    }
+    
+    if not redline_items:
+        return results
+    
+    logger.info(f"Starting exact sentence matching for {len(redline_items)} redline items")
+    
+    for idx, paragraph in enumerate(doc.paragraphs):
+        paragraph_text = paragraph.text
+        if not paragraph_text.strip():
+            continue
+        
+        # Try to find exact matches for each redline item in this paragraph
+        for item in redline_items:
+            exact_text = item.get('text', '').strip()
+            if not exact_text:
+                continue
+            
+            # Simple case-insensitive exact match
+            if exact_text.lower() in paragraph_text.lower():
+                try:
+                    # Find the exact position of the match
+                    start_pos = paragraph_text.lower().find(exact_text.lower())
+                    end_pos = start_pos + len(exact_text)
+                    
+                    # Clear existing runs
+                    for run in paragraph.runs:
+                        run.clear()
+                    
+                    # Split text into before, match, and after
+                    before = paragraph_text[:start_pos]
+                    match_text = paragraph_text[start_pos:end_pos]  # Preserve original case
+                    after = paragraph_text[end_pos:]
+                    
+                    # Add before text
+                    if before:
+                        paragraph.add_run(before)
+                    
+                    # Add redlined match text
+                    redlined_run = paragraph.add_run(match_text)
+                    redlined_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
+                    redlined_run.font.strike = True  # Strike through
+                    
+                    # Add after text
+                    if after:
+                        paragraph.add_run(after)
+                    
+                    # Add comment using bayoo-docx
+                    paragraph.add_comment(
+                        item.get("comment", "Legal conflict identified"),
+                        author=item.get("author", "Legal-AI"),
+                        initials=item.get("initials", "LAI")
+                    )
+                    
+                    results["matches_found"] += 1
+                    results["paragraphs_with_redlines"].append(idx)
+                    
+                    logger.info(f"Applied redlining to paragraph {idx}: '{match_text[:50]}...'")
+                    
+                    # Only redline one match per paragraph to avoid overlaps
+                    break
+                    
+                except Exception as e:
+                    logger.error(f"Error applying redlining to paragraph {idx}: {str(e)}")
+    
+    logger.info(f"Exact sentence redlining complete: {results['matches_found']} matches found in {results['total_paragraphs']} paragraphs")
+    return results
+
+
+def _get_bucket_name(bucket_type: str) -> str:
+    """Get the appropriate bucket name based on type."""
+    if bucket_type == "knowledge":
+        return os.environ.get("KNOWLEDGE_BUCKET")
+    elif bucket_type == "user_documents":
+        return os.environ.get("USER_DOCUMENTS_BUCKET")
+    elif bucket_type == "agent_processing":
+        return os.environ.get("AGENT_PROCESSING_BUCKET")
+    else:
+        raise ValueError(f"Invalid bucket_type: {bucket_type}")
+
+
+def _copy_document_to_processing(original_s3_key: str, source_bucket: str, agent_bucket: str) -> str:
+    """Copy document to agent processing bucket with organized structure."""
+    
+    from datetime import datetime
+    import uuid
+    
+    try:
+        # Create organized folder structure
+        timestamp = datetime.utcnow().strftime("%Y/%m/%d")
+        unique_id = str(uuid.uuid4())[:8]
+        
+        # Extract filename
+        filename = original_s3_key.split('/')[-1]
+        
+        # Create new key with organized structure
+        agent_key = f"input/{timestamp}/{unique_id}_{filename}"
+        
+        # Copy object to agent processing bucket
+        s3_client.copy_object(
+            CopySource={'Bucket': source_bucket, 'Key': original_s3_key},
+            Bucket=agent_bucket,
+            Key=agent_key,
+            MetadataDirective='COPY'
+        )
+        
+        logger.info(f"Document copied to agent processing bucket: {agent_key}")
+        return agent_key
+        
+    except Exception as e:
+        logger.error(f"Error copying document to processing bucket: {str(e)}")
+        raise
+
+
+def _download_and_load_document(bucket: str, s3_key: str) -> Document:
+    """Download document from S3 and load using bayoo-docx."""
+    
+    try:
+        logger.info(f"Downloading document from {bucket}/{s3_key}")
+        
+        # Download the document from S3
+        response = s3_client.get_object(
+            Bucket=bucket,
+            Key=s3_key
+        )
+        
+        document_content = response['Body'].read()
+        
+        # Load the document using bayoo-docx
+        doc = Document(io.BytesIO(document_content))
+        
+        logger.info(f"Document loaded successfully from {s3_key}")
+        return doc
+        
+    except Exception as e:
+        logger.error(f"Error downloading/loading document: {str(e)}")
+        raise
+
+
+def _create_redlined_filename(original_s3_key: str) -> str:
+    """
+    Create a filename for the redlined document.
+    
+    Args:
+        original_s3_key: Original document S3 key
+        
+    Returns:
+        New S3 key for redlined document
+    """
+    
+    # Split the path and filename
+    path_parts = original_s3_key.split('/')
+    filename = path_parts[-1]
+    
+    # Add redlined suffix
+    name_parts = filename.rsplit('.', 1)
+    if len(name_parts) == 2:
+        redlined_filename = f"{name_parts[0]}_REDLINED.{name_parts[1]}"
+    else:
+        redlined_filename = f"{filename}_REDLINED"
+    
+    # Reconstruct the full path with output folder
+    if len(path_parts) > 1:
+        # Change 'input' to 'output' for redlined documents
+        new_path_parts = [part if part != 'input' else 'output' for part in path_parts[:-1]]
+        redlined_s3_key = '/'.join(new_path_parts) + '/' + redlined_filename
+    else:
+        redlined_s3_key = f"output/{redlined_filename}"
+    
+    return redlined_s3_key
+
+
+def _save_and_upload_document(doc: Document, bucket: str, s3_key: str, metadata: Dict[str, str]) -> bool:
+    """Save document to bytes and upload to S3."""
+    
+    try:
+        # Save document to bytes
+        doc_bytes = io.BytesIO()
+        doc.save(doc_bytes)
+        doc_bytes.seek(0)
+        
+        # Upload redlined document to S3
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=doc_bytes.getvalue(),
+            ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            Metadata=metadata
+        )
+        
+        logger.info(f"Document uploaded successfully to {bucket}/{s3_key}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error uploading document: {str(e)}")
+        return False
+
+
+ 

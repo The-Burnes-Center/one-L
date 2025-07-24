@@ -44,6 +44,8 @@ class ApiGatewayConstruct(Construct):
         # Create outputs
         self.create_outputs()
     
+
+    
     def create_main_api(self):
         """Create the main API Gateway."""
         
@@ -55,7 +57,7 @@ class ApiGatewayConstruct(Construct):
             default_cors_preflight_options=apigateway.CorsOptions(
                 allow_origins=apigateway.Cors.ALL_ORIGINS,
                 allow_methods=apigateway.Cors.ALL_METHODS,
-                allow_headers=["Content-Type", "X-Amz-Date", "Authorization", "X-Api-Key"],
+                allow_headers=["Content-Type", "X-Amz-Date", "Authorization", "X-Api-Key", "X-Amz-Security-Token"],
             ),
         )
     
@@ -121,6 +123,8 @@ class ApiGatewayConstruct(Construct):
                 method,
                 integration,
             )
+        
+        # Note: OPTIONS method is automatically added by default_cors_preflight_options
     
     def create_outputs(self):
         """Create CloudFormation outputs."""

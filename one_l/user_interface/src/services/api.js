@@ -231,6 +231,80 @@ const knowledgeManagementAPI = {
 };
 
 /**
+ * Agent API calls
+ */
+const agentAPI = {
+  /**
+   * Review a document for conflicts using AI analysis
+   */
+  reviewDocument: async (documentS3Key, bucketType = 'user_documents') => {
+    const payload = {
+      document_s3_key: documentS3Key,
+      bucket_type: bucketType
+    };
+    
+    return await apiCall('/agent/review', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  
+  /**
+   * Download a file from S3 using a presigned URL
+   */
+  downloadFile: async (s3Key, bucketType = 'agent_processing', originalFilename = null) => {
+    try {
+      // First get file metadata and content
+      const retrieveResponse = await knowledgeManagementAPI.retrieveFile(s3Key, bucketType, true);
+      
+      const responseData = typeof retrieveResponse.body === 'string' 
+        ? JSON.parse(retrieveResponse.body) 
+        : retrieveResponse.body || retrieveResponse;
+      
+      if (!responseData.success || !responseData.content) {
+        throw new Error('Failed to retrieve file content');
+      }
+      
+      // Decode base64 content
+      const binaryContent = atob(responseData.content);
+      const bytes = new Uint8Array(binaryContent.length);
+      for (let i = 0; i < binaryContent.length; i++) {
+        bytes[i] = binaryContent.charCodeAt(i);
+      }
+      
+      // Create blob and download
+      const blob = new Blob([bytes], { type: responseData.content_type });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Create download link
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = originalFilename || s3Key.split('/').pop();
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up
+      window.URL.revokeObjectURL(url);
+      
+      return {
+        success: true,
+        message: 'File downloaded successfully',
+        filename: link.download
+      };
+      
+    } catch (error) {
+      console.error('Download file error:', error);
+      return {
+        success: false,
+        error: error.message,
+        message: `Download failed: ${error.message}`
+      };
+    }
+  }
+};
+
+/**
  * File utilities
  */
 const fileUtils = {
@@ -301,5 +375,6 @@ const fileUtils = {
 
 export {
   knowledgeManagementAPI,
+  agentAPI,
   fileUtils
 }; 

@@ -127,10 +127,22 @@ def handle_s3_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "processed_files": 0
             })
         
-        # Determine data source based on bucket
-        data_source = "user_documents"  # Default since S3 events are only set up for user documents bucket
+        # Determine data source based on bucket and object key
+        data_source = "user_documents"  # Default
+        for record in event.get('Records', []):
+            if record.get('eventName', '').startswith('ObjectCreated:'):
+                bucket_name = record['s3']['bucket']['name']
+                object_key = record['s3']['object']['key']
+                
+                # Determine data source based on bucket and prefix
+                if 'knowledge' in bucket_name.lower() or object_key.startswith('admin-uploads/'):
+                    data_source = "knowledge"
+                elif 'user-documents' in bucket_name.lower() or object_key.startswith('uploads/'):
+                    data_source = "user_documents"
+                
+                break  # Use the first record to determine the data source
         
-        # Start sync job for user documents
+        # Start sync job for the determined data source
         sync_result = start_sync_job(knowledge_base_id, data_source)
         
         # Add S3 event context to response
