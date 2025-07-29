@@ -327,16 +327,36 @@ const fileUtils = {
   /**
    * Prepare files for upload (no base64 conversion needed for presigned URLs)
    */
-  prepareFilesForUpload: async (files) => {
+  prepareFilesForUpload: async (files, options = {}) => {
+    const { renameForVendorSubmission = false } = options;
     const preparedFiles = [];
     
-    for (const file of files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
       try {
         // Validate the file
         fileUtils.validateFile(file);
         
-        // No base64 conversion needed - just pass the file object
-        preparedFiles.push(file);
+        let processedFile = file;
+        
+        // Rename file for vendor submission to meet Converse API requirements
+        if (renameForVendorSubmission) {
+          const fileExtension = file.name.split('.').pop().toLowerCase();
+          const newName = files.length > 1 
+            ? `vendor-submission-${i + 1}.${fileExtension}`
+            : `vendor-submission.${fileExtension}`;
+          
+          // Create a new File object with the sanitized name
+          processedFile = new File([file], newName, {
+            type: file.type,
+            lastModified: file.lastModified
+          });
+          
+          console.log(`Renamed file from "${file.name}" to "${newName}" for vendor submission`);
+        }
+        
+        preparedFiles.push(processedFile);
       } catch (error) {
         console.error(`Error preparing file ${file.name}:`, error);
         throw new Error(`Failed to prepare file ${file.name} for upload: ${error.message}`);

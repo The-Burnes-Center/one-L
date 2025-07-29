@@ -30,10 +30,11 @@ Use retrieve_from_knowledge_base tool with multiple targeted queries:
 
 Return one Markdown table with the following columns in this exact order:
 
-| Clarification ID | Summary | Source Doc | Clause Ref | Conflict Type | Rationale |
+| Clarification ID | Vendor Quote | Summary | Source Doc | Clause Ref | Conflict Type | Rationale |
 
 ### Column definitions
 * **Clarification ID** – clause/sub-clause identifier from the vendor document.
+* **Vendor Quote** – exact text from vendor document (word-for-word quote for redlining).
 * **Summary** – 20-40-word plain-language context of the vendor's request.
 * **Source Doc** – "ITS T&Cs" or "Commonwealth T&Cs".
 * **Clause Ref** – exact contract section being conflicted.

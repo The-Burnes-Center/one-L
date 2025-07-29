@@ -10,6 +10,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_dynamodb as dynamodb,
     aws_opensearchserverless as aoss,
+    aws_logs as logs,
     Duration,
     Stack
 )
@@ -76,19 +77,11 @@ class AgentConstruct(Construct):
             function_name=f"{self._stack_name}-document-review",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset(
-                "one_l/agent_api",
-                bundling={
-                    "image": _lambda.Runtime.PYTHON_3_12.bundling_image,
-                    "command": [
-                        "bash", "-c",
-                        "pip install --only-binary=lxml -r functions/agent/document_review/requirements.txt -t /asset-output && cp -au functions/agent/document_review/* /asset-output/ && mkdir -p /asset-output/agent_api && cp -r agent /asset-output/agent_api/"
-                    ]
-                }
-            ),
+            code=_lambda.Code.from_asset("build/lambda-deployment.zip"),
             role=role,
             timeout=Duration.minutes(15),  # Long timeout for AI processing
             memory_size=2048,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
                 "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,

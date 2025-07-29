@@ -8,7 +8,7 @@ import boto3
 import os
 import logging
 import sys
-from typing import Dict, Any
+from typing import Dict, Any, List
 from docx import Document
 import io
 import uuid
@@ -33,6 +33,9 @@ logger.setLevel(logging.INFO)
 
 # Initialize S3 client
 s3_client = boto3.client('s3')
+
+# DynamoDB operations are now handled in tools.py
+
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -91,11 +94,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Initialize the document review agent (composition pattern)
         agent = Agent(knowledge_base_id, region)
         
-        # Extract document content for AI analysis
-        document_content = extract_document_content(bucket_type, document_s3_key)
-        
-        # Run the document review (synchronous operation)
-        review_result = agent.review_document(document_content)
+        # Run the document review with direct document attachment
+        review_result = agent.review_document(bucket_type, document_s3_key)
         
         if not review_result.get('success', False):
             return create_error_response(500, f"Document review failed: {review_result.get('error', 'Unknown error')}")
@@ -107,18 +107,41 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             bucket_type=bucket_type
         )
         
-        return create_success_response({
+        # Generate unique analysis ID and save results to DynamoDB using tools
+        from agent_api.agent.tools import save_analysis_to_dynamodb
+        
+        analysis_id = str(uuid.uuid4())
+        save_result = save_analysis_to_dynamodb(
+            analysis_id=analysis_id,
+            document_s3_key=document_s3_key,
+            analysis_data=review_result.get('analysis', ''),
+            bucket_type=bucket_type,
+            usage_data=review_result.get('usage', {}),
+            thinking=review_result.get('thinking', ''),
+            citations=review_result.get('citations', [])
+        )
+        
+        # Include save status in response
+        response_data = {
             "message": "Document review completed successfully",
+            "analysis_id": analysis_id,
             "document_s3_key": document_s3_key,
             "analysis": review_result.get('analysis', ''),
             "thinking": review_result.get('thinking', ''),
             "citations": review_result.get('citations', []),
             "usage": review_result.get('usage', {}),
-            "redlined_document": redlined_result
-        })
+            "redlined_document": redlined_result,
+            "saved_to_database": save_result.get('success', False)
+        }
+        
+        if not save_result.get('success', False):
+            logger.warning(f"Failed to save analysis to DynamoDB: {save_result.get('error', 'Unknown error')}")
+            response_data["database_warning"] = f"Analysis completed but failed to save: {save_result.get('error', 'Unknown error')}"
+        
+        return create_success_response(response_data)
         
     except Exception as e:
-        logger.error(f"Error in document review function: {str(e)}")
+        logger.error(f"Error in document review function: {str(e)}", exc_info=True)
         return create_error_response(500, f"Internal server error: {str(e)}")
 
 
@@ -149,7 +172,7 @@ def extract_document_content(bucket_type: str, document_s3_key: str) -> str:
         
         document_content = response['Body'].read()
         
-        # Load the document using bayoo-docx
+        # Load the document using docx library
         doc = Document(io.BytesIO(document_content))
         
         # Extract text content from all paragraphs
@@ -162,7 +185,7 @@ def extract_document_content(bucket_type: str, document_s3_key: str) -> str:
         # Join all paragraphs with double newlines
         full_text = '\n\n'.join(text_content)
         
-        logger.info(f"Extracted {len(text_content)} paragraphs, {len(full_text)} characters")
+        logger.info(f"Extracted document content: {len(full_text)} characters from {len(text_content)} paragraphs")
         
         return full_text
         

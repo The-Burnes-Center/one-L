@@ -61,7 +61,6 @@ class FunctionsConstruct(Construct):
         
         # Create agent functions (will be updated with storage references)
         self.agent = None
-        self.create_agent_construct()
     
     def get_function_routes(self) -> dict:
         """
@@ -80,11 +79,6 @@ class FunctionsConstruct(Construct):
             routes["agent"] = self.agent.get_function_routes()
             
         return routes
-    
-    def create_agent_construct(self):
-        """Create agent construct with proper dependencies."""
-        # This will be called again after storage is available with all buckets
-        pass
     
     def setup_agent_with_storage(self, storage_construct):
         """Setup agent construct with complete storage references."""

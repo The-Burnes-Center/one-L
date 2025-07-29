@@ -20,9 +20,37 @@ logger.setLevel(logging.INFO)
 bedrock_agent_client = boto3.client('bedrock-agent-runtime')
 s3_client = boto3.client('s3')
 
+def get_tool_definitions() -> List[Dict[str, Any]]:
+    """Get tool definitions for Claude in Converse API format."""
+    return [
+        {
+            "toolSpec": {
+                "name": "retrieve_from_knowledge_base",
+                "description": "Retrieve relevant documents from the knowledge base to identify potential conflicts with vendor submission. Use multiple targeted queries for comprehensive coverage.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query to find relevant reference documents. Use specific terms related to vendor clauses."
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Maximum number of results to retrieve (recommended: 50-100)",
+                                "default": 100
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        }
+    ]
+
 def retrieve_from_knowledge_base(
     query: str, 
-    max_results: int = 15,
+    max_results: int = 100,
     knowledge_base_id: str = None,
     region: str = None
 ) -> Dict[str, Any]:
@@ -253,90 +281,135 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     return redline_items
 
 
-def apply_exact_sentence_redlining(doc: Document, redline_items: List[Dict[str, str]]) -> Dict[str, Any]:
+def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> Dict[str, Any]:
     """
-    Apply redlining by matching exact sentences from DynamoDB with vendor document text.
-    Simple and direct matching since sentences are extracted from the vendor document.
+    Apply redlining to document by highlighting conflict text in red.
     
     Args:
-        doc: bayoo-docx Document object
-        redline_items: List of redline items with exact text to match and comments
+        doc: python-docx Document object
+        redline_items: List of conflict items with text to highlight
         
     Returns:
         Dictionary with redlining results
     """
     
-    results = {
-        "total_paragraphs": len(doc.paragraphs),
-        "matches_found": 0,
-        "paragraphs_with_redlines": []
-    }
-    
-    if not redline_items:
-        return results
-    
-    logger.info(f"Starting exact sentence matching for {len(redline_items)} redline items")
-    
-    for idx, paragraph in enumerate(doc.paragraphs):
-        paragraph_text = paragraph.text
-        if not paragraph_text.strip():
-            continue
+    try:
+        matches_found = 0
+        paragraphs_with_redlines = []
+        total_paragraphs = len(doc.paragraphs)
         
-        # Try to find exact matches for each redline item in this paragraph
-        for item in redline_items:
-            exact_text = item.get('text', '').strip()
-            if not exact_text:
+        logger.info(f"Starting redlining process for {len(redline_items)} conflicts across {total_paragraphs} paragraphs")
+        
+        for redline_item in redline_items:
+            vendor_conflict_text = redline_item.get('text', '').strip()
+            if not vendor_conflict_text:
                 continue
+                
+            logger.info(f"Looking for vendor conflict text: '{vendor_conflict_text}'")
             
-            # Simple case-insensitive exact match
-            if exact_text.lower() in paragraph_text.lower():
-                try:
-                    # Find the exact position of the match
-                    start_pos = paragraph_text.lower().find(exact_text.lower())
-                    end_pos = start_pos + len(exact_text)
+            # Search through all paragraphs for exact vendor conflict text
+            found_match = False
+            for para_idx, paragraph in enumerate(doc.paragraphs):
+                para_text = paragraph.text.strip()
+                if not para_text:
+                    continue
                     
-                    # Clear existing runs
-                    for run in paragraph.runs:
-                        run.clear()
-                    
-                    # Split text into before, match, and after
-                    before = paragraph_text[:start_pos]
-                    match_text = paragraph_text[start_pos:end_pos]  # Preserve original case
-                    after = paragraph_text[end_pos:]
-                    
-                    # Add before text
-                    if before:
-                        paragraph.add_run(before)
-                    
-                    # Add redlined match text
-                    redlined_run = paragraph.add_run(match_text)
-                    redlined_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
-                    redlined_run.font.strike = True  # Strike through
-                    
-                    # Add after text
-                    if after:
-                        paragraph.add_run(after)
-                    
-                    # Add comment using bayoo-docx
-                    paragraph.add_comment(
-                        item.get("comment", "Legal conflict identified"),
-                        author=item.get("author", "Legal-AI"),
-                        initials=item.get("initials", "LAI")
-                    )
-                    
-                    results["matches_found"] += 1
-                    results["paragraphs_with_redlines"].append(idx)
-                    
-                    logger.info(f"Applied redlining to paragraph {idx}: '{match_text[:50]}...'")
-                    
-                    # Only redline one match per paragraph to avoid overlaps
+                # Try exact substring match (most reliable with exact vendor quotes)
+                if vendor_conflict_text in para_text:
+                    logger.info(f"Found EXACT match in paragraph {para_idx}")
+                    logger.info(f"Matched text: '{vendor_conflict_text}'")
+                    _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
+                    matches_found += 1
+                    if para_idx not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(para_idx)
+                    found_match = True
                     break
-                    
-                except Exception as e:
-                    logger.error(f"Error applying redlining to paragraph {idx}: {str(e)}")
+                
+                # Try case-insensitive match as fallback
+                elif vendor_conflict_text.lower() in para_text.lower():
+                    logger.info(f"Found CASE-INSENSITIVE match in paragraph {para_idx}")
+                    # Find the actual text with correct case in the document
+                    start_idx = para_text.lower().find(vendor_conflict_text.lower())
+                    actual_text = para_text[start_idx:start_idx + len(vendor_conflict_text)]
+                    logger.info(f"Matched text: '{actual_text}'")
+                    _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
+                    matches_found += 1
+                    if para_idx not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(para_idx)
+                    found_match = True
+                    break
+            
+            if not found_match:
+                logger.warning(f"NO MATCH found for vendor conflict: '{vendor_conflict_text}'")
+                # Sample a few paragraphs to help debug
+                logger.debug("Sample document paragraphs:")
+                for i, para in enumerate(doc.paragraphs[:3]):
+                    if para.text.strip():
+                        logger.debug(f"  Paragraph {i}: '{para.text[:100]}...'")
+                        if i >= 2:  # Limit to 3 samples
+                            break
+        
+        logger.info(f"Redlining complete: {matches_found} matches found in {len(paragraphs_with_redlines)} paragraphs")
+        
+        return {
+            "total_paragraphs": total_paragraphs,
+            "matches_found": matches_found,
+            "paragraphs_with_redlines": paragraphs_with_redlines
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in apply_exact_sentence_redlining: {str(e)}")
+        return {
+            "total_paragraphs": 0,
+            "matches_found": 0,
+            "paragraphs_with_redlines": [],
+            "error": str(e)
+        }
+
+
+def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dict[str, str]):
+    """Apply redline formatting to specific text within a paragraph."""
     
-    logger.info(f"Exact sentence redlining complete: {results['matches_found']} matches found in {results['total_paragraphs']} paragraphs")
-    return results
+    try:
+        # Clear existing runs and rebuild with redlined text
+        paragraph_text = paragraph.text
+        
+        # Find the position of conflict text
+        start_pos = paragraph_text.find(conflict_text)
+        if start_pos == -1:
+            return
+            
+        # Clear all runs
+        for run in paragraph.runs:
+            run.clear()
+        
+        # Add text before conflict (normal formatting)
+        if start_pos > 0:
+            before_text = paragraph_text[:start_pos]
+            run = paragraph.add_run(before_text)
+        
+        # Add conflict text with red highlighting
+        conflict_run = paragraph.add_run(conflict_text)
+        conflict_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
+        conflict_run.font.bold = True
+        
+        # Add comment text as a run with different formatting
+        comment = redline_item.get('comment', '')
+        if comment:
+            comment_run = paragraph.add_run(f" [CONFLICT: {comment}]")
+            comment_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
+            comment_run.font.italic = True
+        
+        # Add text after conflict (normal formatting)
+        end_pos = start_pos + len(conflict_text)
+        if end_pos < len(paragraph_text):
+            after_text = paragraph_text[end_pos:]
+            run = paragraph.add_run(after_text)
+            
+        logger.debug(f"Applied redlining to paragraph with conflict: {conflict_text[:30]}...")
+        
+    except Exception as e:
+        logger.error(f"Error applying redline to paragraph: {str(e)}")
 
 
 def _get_bucket_name(bucket_type: str) -> str:
@@ -384,29 +457,34 @@ def _copy_document_to_processing(original_s3_key: str, source_bucket: str, agent
         raise
 
 
-def _download_and_load_document(bucket: str, s3_key: str) -> Document:
-    """Download document from S3 and load using bayoo-docx."""
+def _download_and_load_document(bucket: str, s3_key: str):
+    """
+    Download document from S3 and load it using python-docx.
+    
+    Args:
+        bucket: S3 bucket name
+        s3_key: S3 key of the document
+        
+    Returns:
+        python-docx Document object
+    """
     
     try:
-        logger.info(f"Downloading document from {bucket}/{s3_key}")
+        logger.info(f"Downloading document from s3://{bucket}/{s3_key}")
         
         # Download the document from S3
-        response = s3_client.get_object(
-            Bucket=bucket,
-            Key=s3_key
-        )
-        
+        response = s3_client.get_object(Bucket=bucket, Key=s3_key)
         document_content = response['Body'].read()
         
-        # Load the document using bayoo-docx
+        # Load the document using python-docx
         doc = Document(io.BytesIO(document_content))
         
-        logger.info(f"Document loaded successfully from {s3_key}")
+        logger.info(f"Successfully loaded document with {len(doc.paragraphs)} paragraphs")
         return doc
         
     except Exception as e:
-        logger.error(f"Error downloading/loading document: {str(e)}")
-        raise
+        logger.error(f"Error downloading and loading document: {str(e)}")
+        raise Exception(f"Failed to download and load document: {str(e)}")
 
 
 def _create_redlined_filename(original_s3_key: str) -> str:
@@ -442,29 +520,124 @@ def _create_redlined_filename(original_s3_key: str) -> str:
     return redlined_s3_key
 
 
-def _save_and_upload_document(doc: Document, bucket: str, s3_key: str, metadata: Dict[str, str]) -> bool:
-    """Save document to bytes and upload to S3."""
+def save_analysis_to_dynamodb(
+    analysis_id: str,
+    document_s3_key: str,
+    analysis_data: str,
+    bucket_type: str,
+    usage_data: Dict[str, Any],
+    thinking: str = "",
+    citations: List[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Save analysis results to DynamoDB table including parsed conflicts.
+    
+    Args:
+        analysis_id: Unique identifier for this analysis
+        document_s3_key: S3 key of the analyzed document
+        analysis_data: The analysis text containing conflicts table
+        bucket_type: Source bucket type
+        usage_data: Model usage statistics
+        thinking: AI thinking process
+        citations: Knowledge base citations
+        
+    Returns:
+        Dictionary indicating success/failure of save operation
+    """
     
     try:
-        # Save document to bytes
-        doc_bytes = io.BytesIO()
-        doc.save(doc_bytes)
-        doc_bytes.seek(0)
+        table_name = os.environ.get('ANALYSIS_TABLE')
+        if not table_name:
+            return {
+                "success": False,
+                "error": "ANALYSIS_TABLE environment variable not set"
+            }
         
-        # Upload redlined document to S3
+        import boto3
+        from datetime import datetime
+        dynamodb_resource = boto3.resource('dynamodb')
+        table = dynamodb_resource.Table(table_name)
+        timestamp = datetime.utcnow().isoformat()
+        
+        # Parse conflicts from analysis data for structured storage
+        redline_items = parse_conflicts_for_redlining(analysis_data)
+        
+        # Convert redline format to DynamoDB format with better naming
+        conflicts = []
+        for item in redline_items:
+            conflicts.append({
+                'clarification_id': item['clarification_id'],
+                'vendor_conflict': item['text'],  # Exact text from vendor document (better naming)
+                'source_doc': item['source_doc'],
+                'clause_ref': item['clause_ref'],
+                'conflict_type': item['conflict_type'],
+                'rationale': item['comment'].split('): ', 1)[-1] if '): ' in item['comment'] else item['comment']
+            })
+        
+        # Prepare streamlined item for DynamoDB - focusing only on conflicts data
+        item = {
+            'analysis_id': analysis_id,
+            'timestamp': timestamp,
+            'document_s3_key': document_s3_key,
+            'conflicts_count': len(conflicts),
+            'conflicts': conflicts
+        }
+        
+        # Save to DynamoDB
+        table.put_item(Item=item)
+        
+        logger.info(f"Successfully saved analysis {analysis_id} to DynamoDB with {len(conflicts)} conflicts")
+        
+        return {
+            "success": True,
+            "analysis_id": analysis_id,
+            "conflicts_saved": len(conflicts)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving analysis to DynamoDB: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+def _save_and_upload_document(doc, bucket: str, s3_key: str, metadata: Dict[str, str]) -> bool:
+    """
+    Save python-docx document to memory and upload to S3.
+    
+    Args:
+        doc: python-docx Document object
+        bucket: S3 bucket name
+        s3_key: S3 key for the uploaded document
+        metadata: Dictionary of metadata to attach to S3 object
+        
+    Returns:
+        Boolean indicating success
+    """
+    
+    try:
+        logger.info(f"Saving and uploading redlined document to s3://{bucket}/{s3_key}")
+        
+        # Save document to memory buffer
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        
+        # Upload to S3 with metadata
         s3_client.put_object(
             Bucket=bucket,
             Key=s3_key,
-            Body=doc_bytes.getvalue(),
+            Body=buffer.getvalue(),
             ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             Metadata=metadata
         )
         
-        logger.info(f"Document uploaded successfully to {bucket}/{s3_key}")
+        logger.info(f"Successfully uploaded redlined document to S3: {s3_key}")
         return True
         
     except Exception as e:
-        logger.error(f"Error uploading document: {str(e)}")
+        logger.error(f"Error saving and uploading document: {str(e)}")
         return False
 
 

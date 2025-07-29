@@ -204,19 +204,27 @@ class IAMRolesConstruct(Construct):
         # Grant DynamoDB access
         analysis_table.grant_read_write_data(role)
         
-        # Grant Bedrock permissions for Claude Sonnet 4
+        # Grant Bedrock permissions for Claude Sonnet 4 with Converse API
         role.add_to_policy(
             iam.PolicyStatement(
+                sid="AllowClaudeSonnet4Inference",
                 effect=iam.Effect.ALLOW,
                 actions=[
                     "bedrock:InvokeModel",
-                    "bedrock:InvokeModelWithResponseStream"
+                    "bedrock:InvokeModelWithResponseStream",
+                    "bedrock:Converse",
+                    "bedrock:ConverseStream"
                 ],
                 resources=[
+                    # Inference profile with account ID
+                    f"arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
+                    # Foundation model as fallback
                     f"arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-20250514-v1:0"
                 ]
             )
         )
+
+        
         
         # Grant Knowledge Base permissions
         role.add_to_policy(

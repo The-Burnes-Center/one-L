@@ -8,7 +8,7 @@ import boto3
 import logging
 from typing import Dict, Any, List
 from .system_prompt import SYSTEM_PROMPT
-from .tools import retrieve_from_knowledge_base, redline_document
+from .tools import retrieve_from_knowledge_base, redline_document, get_tool_definitions, save_analysis_to_dynamodb
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -16,8 +16,8 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients
 bedrock_client = boto3.client('bedrock-runtime')
 
-# Model configuration
-CLAUDE_MODEL_ARN = "anthropic.claude-sonnet-4-20250514-v1:0"
+# Model configuration - Using inference profile for Claude Sonnet 4
+CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 MAX_TOKENS = 8000
 TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
 THINKING_BUDGET_TOKENS = 4000
@@ -30,38 +30,17 @@ class Model:
     def __init__(self, knowledge_base_id: str, region: str):
         self.knowledge_base_id = knowledge_base_id
         self.region = region
-        self.tools = self._define_tools()
+        self.tools = get_tool_definitions()
     
-    def _define_tools(self) -> List[Dict[str, Any]]:
-        """Define available tools for Claude."""
-        return [
-            {
-                "name": "retrieve_from_knowledge_base",
-                "description": "Retrieve relevant documents from the knowledge base to identify potential conflicts with vendor submission. Use multiple targeted queries for comprehensive coverage.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query to find relevant reference documents. Use specific terms related to vendor clauses."
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of results to retrieve (recommended: 10-20)",
-                            "default": 15
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        ]
+
     
-    def review_document(self, document_content: str) -> Dict[str, Any]:
+    def review_document(self, bucket_type: str, document_s3_key: str) -> Dict[str, Any]:
         """
         Review a vendor document for conflicts using Claude 4 Sonnet thinking with tools.
         
         Args:
-            document_content: Text content of the vendor document
+            bucket_type: Type of source bucket
+            document_s3_key: S3 key of the document to review
             
         Returns:
             Dictionary containing the review results
@@ -70,20 +49,53 @@ class Model:
         try:
             logger.info(f"Starting document review with Claude 4 Sonnet thinking and tools")
             
-            # Prepare the conversation
+            # Get document from S3 for attachment
+            bucket_name = self._get_bucket_name(bucket_type)
+            s3_client = boto3.client('s3')
+            
+            response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
+            document_data = response['Body'].read()
+            
+            # Prepare the conversation with document attachment
+            import base64
+            import os
+            
+            # Extract and sanitize filename for document name
+            filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
+            
             messages = [
                 {
                     "role": "user",
-                    "content": document_content
+                    "content": [
+                        {
+                            "text": "Please analyze this vendor submission document."
+                        },
+                        {
+                            "document": {
+                                "format": self._get_document_format(document_s3_key),
+                                "name": filename,
+                                "source": {
+                                    "bytes": document_data
+                                }
+                            }
+                        }
+                    ]
                 }
             ]
             
             # Make the initial request to Claude with tools
             response = self._call_claude_with_tools(messages)
             
+            # Extract content from Converse API response
+            content = ""
+            if response.get("output", {}).get("message", {}).get("content"):
+                for content_block in response["output"]["message"]["content"]:
+                    if content_block.get("text"):
+                        content += content_block["text"]
+            
             return {
                 "success": True,
-                "analysis": response.get("content", ""),
+                "analysis": content,
                 "tool_results": response.get("tool_results", []),
                 "usage": response.get("usage", {}),
                 "thinking": response.get("thinking", "")
@@ -100,45 +112,97 @@ class Model:
                 "thinking": ""
             }
     
+    def _get_bucket_name(self, bucket_type: str) -> str:
+        """Get the appropriate bucket name based on type."""
+        import os
+        if bucket_type == "knowledge":
+            return os.environ.get("KNOWLEDGE_BUCKET")
+        elif bucket_type == "user_documents":
+            return os.environ.get("USER_DOCUMENTS_BUCKET")
+        elif bucket_type == "agent_processing":
+            return os.environ.get("AGENT_PROCESSING_BUCKET")
+        else:
+            raise ValueError(f"Invalid bucket_type: {bucket_type}")
+    
+    def _get_document_format(self, document_s3_key: str) -> str:
+        """Determine document format based on file extension for Converse API."""
+        file_extension = document_s3_key.lower().split('.')[-1]
+        
+        # Converse API supported formats
+        supported_formats = ['pdf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt', 'md']
+        
+        if file_extension in supported_formats:
+            return file_extension
+        else:
+            # Default to PDF if extension not recognized
+            logger.warning(f"Unknown file extension '{file_extension}', defaulting to PDF format")
+            return 'pdf'
+    
+    def _sanitize_filename_for_converse(self, filename: str) -> str:
+        """
+        Sanitize filename to meet Converse API requirements:
+        - Only alphanumeric, whitespace, hyphens, parentheses, square brackets
+        - No more than one consecutive whitespace character
+        """
+        import re
+        
+        # If filename contains UUID or timestamp patterns, extract just the original name
+        # Pattern: uuid_originalname.ext or timestamp/uuid_originalname.ext
+        if '_' in filename:
+            # Try to extract original filename after last underscore
+            parts = filename.split('_')
+            if len(parts) > 1:
+                # Keep everything after the last underscore (likely the original filename)
+                filename = parts[-1]
+        
+        # Remove any invalid characters - keep only allowed ones
+        # Allowed: alphanumeric, whitespace, hyphens, parentheses, square brackets
+        sanitized = re.sub(r'[^a-zA-Z0-9\s\-\(\)\[\]]', '', filename)
+        
+        # Replace multiple consecutive whitespace with single space
+        sanitized = re.sub(r'\s+', ' ', sanitized)
+        
+        # Trim whitespace from start/end
+        sanitized = sanitized.strip()
+        
+        # If sanitization left us with empty string, use default
+        if not sanitized:
+            sanitized = "vendor-submission"
+        
+        logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
+        return sanitized
+    
     def _call_claude_with_tools(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Call Claude 4 Sonnet thinking with tool support.
+        Call Claude 4 Sonnet thinking with tool support using Converse API.
         """
-        
-        # Prepare the request body
-        request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": MAX_TOKENS,
-            "temperature": TEMPERATURE,
-            "system": SYSTEM_PROMPT,
-            "messages": messages,
-            "tools": self.tools,
-            # Enable thinking for Claude 4 Sonnet
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": THINKING_BUDGET_TOKENS
-            }
-        }
         
         logger.info(f"Calling Claude with {len(messages)} messages and {len(self.tools)} tools")
         
         try:
-            # Call Bedrock
-            response = bedrock_client.invoke_model(
-                modelId=CLAUDE_MODEL_ARN,
-                body=json.dumps(request_body),
-                contentType="application/json",
-                accept="application/json"
+            # Call Bedrock using Converse API (supports document attachments)
+            response = bedrock_client.converse(
+                modelId=CLAUDE_MODEL_ID,
+                messages=messages,
+                system=[{"text": SYSTEM_PROMPT}],
+                inferenceConfig={
+                    "maxTokens": MAX_TOKENS,
+                    "temperature": TEMPERATURE
+                },
+                toolConfig={"tools": self.tools},
+                additionalModelRequestFields={
+                    "thinking": {
+                        "type": "enabled",
+                        "budget_tokens": THINKING_BUDGET_TOKENS
+                    }
+                }
             )
             
-            # Parse response
-            response_body = json.loads(response['body'].read())
-            
             # Handle tool calls if present
-            if response_body.get("stop_reason") == "tool_use":
-                return self._handle_tool_calls(messages, response_body)
+            if response.get("stopReason") == "tool_use":
+                return self._handle_tool_calls(messages, response)
             
-            return response_body
+            return response
             
         except Exception as e:
             logger.error(f"Error calling Claude: {str(e)}")
@@ -149,29 +213,30 @@ class Model:
         Handle tool calls from Claude and continue the conversation.
         """
         
-        # Add Claude's response to messages
+        # Add Claude's response to messages (Converse API format)
         messages.append({
             "role": "assistant",
-            "content": claude_response["content"]
+            "content": claude_response["output"]["message"]["content"]
         })
         
         tool_results = []
         
-        # Process each tool call
-        for content_block in claude_response["content"]:
-            if content_block.get("type") == "tool_use":
-                tool_name = content_block["name"]
-                tool_input = content_block["input"]
-                tool_use_id = content_block["id"]
+        # Process each tool call (Converse API format)
+        for content_block in claude_response["output"]["message"]["content"]:
+            if content_block.get("toolUse"):
+                tool_use = content_block["toolUse"]
+                tool_name = tool_use["name"]
+                tool_input = tool_use["input"]
+                tool_use_id = tool_use["toolUseId"]
                 
                 logger.info(f"Executing tool: {tool_name} with input: {tool_input}")
                 
-                # Execute the tool
+                # Execute the tool using existing tools.py functions
                 try:
                     if tool_name == "retrieve_from_knowledge_base":
                         result = retrieve_from_knowledge_base(
                             query=tool_input["query"],
-                            max_results=tool_input.get("max_results", 15),
+                            max_results=tool_input.get("max_results", 100),
                             knowledge_base_id=self.knowledge_base_id,
                             region=self.region
                         )
@@ -184,14 +249,15 @@ class Model:
                         "result": result
                     })
                     
-                    # Add tool result to messages
+                    # Add tool result to messages (Converse API format)
                     messages.append({
                         "role": "user",
                         "content": [
                             {
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": json.dumps(result)
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"json": result}]
+                                }
                             }
                         ]
                     })
@@ -205,14 +271,15 @@ class Model:
                         "result": error_result
                     })
                     
-                    # Add error to messages
+                    # Add error to messages (Converse API format)
                     messages.append({
                         "role": "user",
                         "content": [
                             {
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": json.dumps(error_result)
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"json": error_result}]
+                                }
                             }
                         ]
                     })
@@ -221,4 +288,5 @@ class Model:
         final_response = self._call_claude_with_tools(messages)
         final_response["tool_results"] = tool_results
         
-        return final_response 
+        return final_response
+ 

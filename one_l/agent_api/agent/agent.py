@@ -6,7 +6,7 @@ Encapsulates model and tools following composition design pattern.
 import logging
 from typing import Dict, Any
 from .model import Model
-from .tools import redline_document
+from .tools import redline_document, save_analysis_to_dynamodb
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -32,12 +32,13 @@ class Agent:
         
         logger.info(f"Agent initialized with knowledge base: {knowledge_base_id}")
     
-    def review_document(self, document_content: str) -> Dict[str, Any]:
+    def review_document(self, bucket_type: str, document_s3_key: str) -> Dict[str, Any]:
         """
         Review a document for conflicts using AI analysis.
         
         Args:
-            document_content: Text content of the document to review
+            bucket_type: Type of source bucket
+            document_s3_key: S3 key of the document to review
             
         Returns:
             Dictionary containing review results
@@ -45,8 +46,8 @@ class Agent:
         try:
             logger.info("Starting document review process")
             
-            # Delegate to the model for AI analysis
-            result = self._model.review_document(document_content)
+            # Delegate to the model for AI analysis with document attachment
+            result = self._model.review_document(bucket_type, document_s3_key)
             
             logger.info(f"Document review completed successfully: {result.get('success', False)}")
             return result
@@ -91,12 +92,12 @@ class Agent:
                 "original_document": document_s3_key
             }
     
-    def review_and_redline(self, document_content: str, document_s3_key: str, analysis_id: str) -> Dict[str, Any]:
+    def review_and_redline(self, bucket_type: str, document_s3_key: str, analysis_id: str) -> Dict[str, Any]:
         """
         Complete workflow: review document and create redlined version.
         
         Args:
-            document_content: Text content of the document
+            bucket_type: Type of source bucket
             document_s3_key: S3 key of the original document
             analysis_id: Analysis ID for storing results
             
@@ -107,7 +108,7 @@ class Agent:
             logger.info("Starting complete review and redline workflow")
             
             # Step 1: Review the document
-            review_result = self.review_document(document_content)
+            review_result = self.review_document(bucket_type, document_s3_key)
             
             if not review_result.get('success', False):
                 return {
