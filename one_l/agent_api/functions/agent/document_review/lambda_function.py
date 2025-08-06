@@ -36,6 +36,38 @@ s3_client = boto3.client('s3')
 
 # DynamoDB operations are now handled in tools.py
 
+# Initialize DynamoDB for job status tracking
+dynamodb = boto3.resource('dynamodb')
+JOB_STATUS_TABLE = os.environ.get('ANALYSIS_TABLE', 'OneLStack-analysis-results')
+
+def save_job_status(job_id: str, document_s3_key: str, user_id: str, session_id: str, 
+                   status: str, error: str = None, result: dict = None):
+    """Save job status to DynamoDB for frontend polling"""
+    try:
+        table = dynamodb.Table(JOB_STATUS_TABLE)
+        
+        item = {
+            'analysis_id': f"job_{job_id}",
+            'timestamp': datetime.now().isoformat(),
+            'job_id': job_id,
+            'document_s3_key': document_s3_key,
+            'user_id': user_id,
+            'session_id': session_id,
+            'status': status,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if error:
+            item['error'] = error
+        if result:
+            item['result'] = result
+            
+        table.put_item(Item=item)
+        logger.info(f"Updated job status: {job_id} -> {status}")
+        
+    except Exception as e:
+        logger.error(f"Failed to save job status: {e}")
+
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -77,8 +109,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Extract parameters from parsed body
         document_s3_key = body_data.get('document_s3_key')
         bucket_type = body_data.get('bucket_type', 'user_documents')
+        session_id = body_data.get('session_id')
+        user_id = body_data.get('user_id')
         
-        logger.info(f"Parsed parameters - document_s3_key: {document_s3_key}, bucket_type: {bucket_type}")
+        logger.info(f"Parsed parameters - document_s3_key: {document_s3_key}, bucket_type: {bucket_type}, session_id: {session_id}, user_id: {user_id}")
         
         # Validate required parameters
         if not document_s3_key:
@@ -91,54 +125,170 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not knowledge_base_id:
             return create_error_response(500, "Knowledge base ID not configured")
         
-        # Initialize the document review agent (composition pattern)
-        agent = Agent(knowledge_base_id, region)
+        # Check if this is invoked from API Gateway (has API Gateway timeout constraint)
+        is_api_gateway_request = 'httpMethod' in event and 'headers' in event
         
-        # Run the document review with direct document attachment
-        review_result = agent.review_document(bucket_type, document_s3_key)
-        
-        if not review_result.get('success', False):
-            return create_error_response(500, f"Document review failed: {review_result.get('error', 'Unknown error')}")
-        
-        # Create redlined document using agent (handles all document operations internally)
-        redlined_result = agent.create_redlined_document(
-            analysis_data=review_result.get('analysis', ''),
-            document_s3_key=document_s3_key,
-            bucket_type=bucket_type
-        )
-        
-        # Generate unique analysis ID and save results to DynamoDB using tools
-        from agent_api.agent.tools import save_analysis_to_dynamodb
-        
-        analysis_id = str(uuid.uuid4())
-        save_result = save_analysis_to_dynamodb(
-            analysis_id=analysis_id,
-            document_s3_key=document_s3_key,
-            analysis_data=review_result.get('analysis', ''),
-            bucket_type=bucket_type,
-            usage_data=review_result.get('usage', {}),
-            thinking=review_result.get('thinking', ''),
-            citations=review_result.get('citations', [])
-        )
-        
-        # Include save status in response
-        response_data = {
-            "message": "Document review completed successfully",
-            "analysis_id": analysis_id,
-            "document_s3_key": document_s3_key,
-            "analysis": review_result.get('analysis', ''),
-            "thinking": review_result.get('thinking', ''),
-            "citations": review_result.get('citations', []),
-            "usage": review_result.get('usage', {}),
-            "redlined_document": redlined_result,
-            "saved_to_database": save_result.get('success', False)
-        }
-        
-        if not save_result.get('success', False):
-            logger.warning(f"Failed to save analysis to DynamoDB: {save_result.get('error', 'Unknown error')}")
-            response_data["database_warning"] = f"Analysis completed but failed to save: {save_result.get('error', 'Unknown error')}"
-        
-        return create_success_response(response_data)
+        if is_api_gateway_request:
+            # For API Gateway requests, start async processing and return immediately
+            logger.info("API Gateway request detected - starting background processing")
+            
+            # Start background processing using the remaining Lambda execution time
+            import threading
+            
+            # Create response immediately 
+            response_data = {
+                "message": "Document review started - processing in background",
+                "document_s3_key": document_s3_key,
+                "bucket_type": bucket_type,
+                "processing": True,
+                "estimated_completion_time": "2-5 minutes"
+            }
+            
+            # For API Gateway, return immediately and process in background
+            # Generate unique job ID for tracking
+            job_id = str(uuid.uuid4())
+            
+            # Save initial job status to DynamoDB
+            save_job_status(job_id, document_s3_key, user_id, session_id, "processing")
+            
+            # Return immediate response to frontend
+            immediate_response = {
+                "success": True,
+                "processing": True,
+                "job_id": job_id,
+                "message": "Document review started successfully",
+                "document_s3_key": document_s3_key,
+                "estimated_completion_time": "2-5 minutes",
+                "status_check_interval": 10  # seconds
+            }
+            
+            # Start background processing after responding
+            try:
+                logger.info("Starting background document processing")
+                
+                # Clear knowledge base cache for fresh document review session
+                from agent_api.agent.tools import clear_knowledge_base_cache
+                clear_knowledge_base_cache()
+                
+                # Initialize the document review agent (composition pattern)
+                agent = Agent(knowledge_base_id, region)
+                
+                # Update job status
+                save_job_status(job_id, document_s3_key, user_id, session_id, "analyzing")
+                
+                # Run the document review with direct document attachment
+                review_result = agent.review_document(bucket_type, document_s3_key)
+                
+                if not review_result.get('success', False):
+                    logger.error(f"Document processing failed: {review_result.get('error', 'Unknown error')}")
+                    save_job_status(job_id, document_s3_key, user_id, session_id, "failed", 
+                                  error=review_result.get('error', 'Unknown error'))
+                    return create_success_response(immediate_response)
+                
+                # Update job status
+                save_job_status(job_id, document_s3_key, user_id, session_id, "generating_redline")
+                
+                # Create redlined document using agent (handles all document operations internally)
+                redlined_result = agent.create_redlined_document(
+                    analysis_data=review_result.get('analysis', ''),
+                    document_s3_key=document_s3_key,
+                    bucket_type=bucket_type,
+                    session_id=session_id,
+                    user_id=user_id
+                )
+                
+                # Generate unique analysis ID and save results to DynamoDB using tools
+                from agent_api.agent.tools import save_analysis_to_dynamodb
+                
+                analysis_id = str(uuid.uuid4())
+                save_result = save_analysis_to_dynamodb(
+                    analysis_id=analysis_id,
+                    document_s3_key=document_s3_key,
+                    analysis_data=review_result.get('analysis', ''),
+                    bucket_type=bucket_type,
+                    usage_data=review_result.get('usage', {}),
+                    thinking=review_result.get('thinking', ''),
+                    citations=review_result.get('citations', [])
+                )
+                
+                logger.info(f"Document processing completed successfully for {document_s3_key}")
+                logger.info(f"Redlined document available at: {redlined_result.get('redlined_document', 'N/A')}")
+                
+                # Update job status to completed
+                completion_data = {
+                    "analysis_id": analysis_id,
+                    "analysis": review_result.get('analysis', ''),
+                    "redlined_document": redlined_result,
+                    "saved_to_database": save_result.get('success', False)
+                }
+                save_job_status(job_id, document_s3_key, user_id, session_id, "completed", 
+                              result=completion_data)
+                
+                # Return immediate response (API Gateway already closed connection)
+                return create_success_response(immediate_response)
+                
+            except Exception as e:
+                logger.error(f"Error during background processing: {str(e)}", exc_info=True)
+                save_job_status(job_id, document_s3_key, user_id, session_id, "failed", 
+                              error=str(e))
+                return create_success_response(immediate_response)
+            
+        else:
+            # For direct Lambda invocation, process synchronously
+            logger.info("Direct Lambda invocation - processing synchronously")
+            
+            # Clear knowledge base cache for fresh document review session
+            from agent_api.agent.tools import clear_knowledge_base_cache
+            clear_knowledge_base_cache()
+            
+            # Initialize the document review agent (composition pattern)
+            agent = Agent(knowledge_base_id, region)
+            
+            # Run the document review with direct document attachment
+            review_result = agent.review_document(bucket_type, document_s3_key)
+            
+            if not review_result.get('success', False):
+                return create_error_response(500, f"Document review failed: {review_result.get('error', 'Unknown error')}")
+            
+            # Create redlined document using agent (handles all document operations internally)
+            redlined_result = agent.create_redlined_document(
+                analysis_data=review_result.get('analysis', ''),
+                document_s3_key=document_s3_key,
+                bucket_type=bucket_type
+            )
+            
+            # Generate unique analysis ID and save results to DynamoDB using tools
+            from agent_api.agent.tools import save_analysis_to_dynamodb
+            
+            analysis_id = str(uuid.uuid4())
+            save_result = save_analysis_to_dynamodb(
+                analysis_id=analysis_id,
+                document_s3_key=document_s3_key,
+                analysis_data=review_result.get('analysis', ''),
+                bucket_type=bucket_type,
+                usage_data=review_result.get('usage', {}),
+                thinking=review_result.get('thinking', ''),
+                citations=review_result.get('citations', [])
+            )
+            
+            # Include save status in response
+            response_data = {
+                "message": "Document review completed successfully",
+                "analysis_id": analysis_id,
+                "document_s3_key": document_s3_key,
+                "analysis": review_result.get('analysis', ''),
+                "thinking": review_result.get('thinking', ''),
+                "citations": review_result.get('citations', []),
+                "usage": review_result.get('usage', {}),
+                "redlined_document": redlined_result,
+                "saved_to_database": save_result.get('success', False)
+            }
+            
+            if not save_result.get('success', False):
+                logger.warning(f"Failed to save analysis to DynamoDB: {save_result.get('error', 'Unknown error')}")
+                response_data["database_warning"] = f"Analysis completed but failed to save: {save_result.get('error', 'Unknown error')}"
+            
+            return create_success_response(response_data)
         
     except Exception as e:
         logger.error(f"Error in document review function: {str(e)}", exc_info=True)

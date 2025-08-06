@@ -63,7 +63,7 @@ class Agent:
                 "thinking": ""
             }
     
-    def create_redlined_document(self, analysis_data: str, document_s3_key: str, bucket_type: str = "user_documents") -> Dict[str, Any]:
+    def create_redlined_document(self, analysis_data: str, document_s3_key: str, bucket_type: str = "user_documents", session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """
         Create a redlined version of the document with conflicts highlighted.
         
@@ -71,15 +71,17 @@ class Agent:
             analysis_data: Analysis text containing conflict information 
             document_s3_key: S3 key of the original document
             bucket_type: Type of source bucket (user_documents, knowledge, agent_processing)
+            session_id: Session ID for organizing output files
+            user_id: User ID for organizing output files
             
         Returns:
             Dictionary containing redlined document information
         """
         try:
-            logger.info(f"Creating redlined document for document: {document_s3_key}")
+            logger.info(f"Creating redlined document for document: {document_s3_key}, session: {session_id}")
             
             # Delegate to the redlining tool - it handles all document operations
-            result = redline_document(analysis_data, document_s3_key, bucket_type)
+            result = redline_document(analysis_data, document_s3_key, bucket_type, session_id, user_id)
             
             logger.info(f"Redlined document creation completed: {result.get('success', False)}")
             return result

@@ -3,46 +3,157 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
-import Sidebar from './components/Sidebar';
+import SessionSidebar from './components/SessionSidebar';
 import AdminDashboard from './components/AdminDashboard';
+import UserHeader from './components/UserHeader';
 import { isConfigValid, loadConfig } from './utils/config';
-import { agentAPI } from './services/api';
+import { agentAPI, sessionAPI } from './services/api';
+import authService from './services/auth';
 
-const App = () => {
-  const [configLoaded, setConfigLoaded] = useState(false);
-  const [configError, setConfigError] = useState('');
-  const [activeSection, setActiveSection] = useState('main');
-  const [activeTab, setActiveTab] = useState('data');
+// Simple session component that loads session from URL
+const SessionView = () => {
+  const { sessionId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    loadSessionFromUrl();
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadSessionFromUrl = async () => {
+    if (!sessionId) {
+      setError('No session ID provided');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const userId = authService.getUserId();
+      if (!userId) {
+        navigate('/');
+        return;
+      }
+
+      // Check if session was passed via navigation state (for newly created sessions)
+      if (location.state?.session && location.state.session.session_id === sessionId) {
+        console.log('Using session from navigation state');
+        setSession(location.state.session);
+        setLoading(false);
+        return;
+      }
+
+      // Fallback: Load user sessions and find the current one (for existing sessions)
+      console.log('Loading session from database');
+      const response = await sessionAPI.getUserSessions(userId);
+      if (response.success && response.sessions) {
+        const foundSession = response.sessions.find(s => s.session_id === sessionId);
+        if (foundSession) {
+          setSession(foundSession);
+        } else {
+          setError(`Session ${sessionId} not found`);
+        }
+      } else {
+        setError('Failed to load sessions');
+      }
+    } catch (err) {
+      console.error('Error loading session:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="main-content">
+        <div className="card">
+          <h1>One L</h1>
+          <p>Loading session...</p>
+          <div style={{
+            width: '32px',
+            height: '32px',
+            border: '3px solid #dee2e6',
+            borderTop: '3px solid #0066cc',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '20px auto'
+          }}></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="main-content">
+        <div className="card">
+          <h1>One L</h1>
+          <div className="alert alert-error">
+            <strong>Session Error:</strong> {error}
+          </div>
+          <button 
+            onClick={() => navigate('/')} 
+            className="btn"
+            style={{ marginTop: '16px' }}
+          >
+            Go to Sessions
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <SessionWorkspace session={session} />
+  );
+};
+
+// Session workspace component for document processing
+const SessionWorkspace = ({ session }) => {
+  const location = useLocation();
   
-  // Workflow state
+  // Workflow state for this session
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [generating, setGenerating] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
   const [workflowMessageType, setWorkflowMessageType] = useState('');
   const [redlinedDocuments, setRedlinedDocuments] = useState([]);
+  const [sessionResults, setSessionResults] = useState([]);
+  const [loadingResults, setLoadingResults] = useState(false);
+  
+  // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
+  const isNewSession = location.state?.session?.session_id === session?.session_id;
 
+  // Load session results when component mounts
   useEffect(() => {
-    const initializeApp = async () => {
-      try {
-        await loadConfig();
-        const isValid = await isConfigValid();
-        
-        if (!isValid) {
-          setConfigError('Configuration is incomplete. Please check your deployment.');
-          return;
-        }
-        
-        setConfigLoaded(true);
-      } catch (error) {
-        console.error('Failed to initialize app:', error);
-        setConfigError('Failed to load application configuration.');
-      }
-    };
+    if (session?.session_id) {
+      loadSessionResults();
+    }
+  }, [session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    initializeApp();
-  }, []);
+  const loadSessionResults = async () => {
+    try {
+      setLoadingResults(true);
+      const userId = authService.getUserId();
+      const response = await sessionAPI.getSessionResults(session.session_id, userId);
+      
+      if (response.success && response.results) {
+        setSessionResults(response.results);
+        console.log(`Loaded ${response.results.length} results for session ${session.session_id}`);
+      }
+    } catch (error) {
+      console.error('Error loading session results:', error);
+    } finally {
+      setLoadingResults(false);
+    }
+  };
 
   const handleFilesUploaded = (files) => {
     setUploadedFiles(prevFiles => {
@@ -50,6 +161,54 @@ const App = () => {
       const existingOtherType = prevFiles.filter(f => f.type !== files[0].type);
       return [...existingOtherType, ...files];
     });
+  };
+
+  // Add polling function for job status
+  const pollJobStatus = async (jobId, userId, filename) => {
+    const maxAttempts = 30; // 5 minutes with 10-second intervals
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      try {
+        const statusResponse = await sessionAPI.checkJobStatus(jobId, userId);
+        
+        if (statusResponse.success && statusResponse.job) {
+          const { status, result, error } = statusResponse.job;
+          
+          if (status === 'completed' && result) {
+            return {
+              success: true,
+              processing: false,
+              redlined_document: result.redlined_document,
+              analysis: result.analysis
+            };
+          } else if (status === 'failed') {
+            return {
+              success: false,
+              processing: false,
+              error: error || 'Processing failed'
+            };
+          } else if (status === 'analyzing') {
+            setWorkflowMessage(`Analyzing ${filename} with AI...`);
+          } else if (status === 'generating_redline') {
+            setWorkflowMessage(`Generating redlined version of ${filename}...`);
+          }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+        attempts++;
+      } catch (error) {
+        console.error('Error polling job status:', error);
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        attempts++;
+      }
+    }
+    
+    return {
+      success: false,
+      processing: false,
+      error: 'Processing timeout - document may still be processing in background'
+    };
   };
 
   const handleGenerateRedline = async () => {
@@ -69,7 +228,7 @@ const App = () => {
     }
     
     setGenerating(true);
-    setWorkflowMessage('Generating redlined documents... This may take a few minutes.');
+    setWorkflowMessage('Starting document processing...');
     setWorkflowMessageType('');
     
     try {
@@ -77,17 +236,55 @@ const App = () => {
       
       // Process each vendor file
       for (const vendorFile of vendorFiles) {
-        setWorkflowMessage(`Processing ${vendorFile.filename}...`);
+        setWorkflowMessage(`Starting analysis of ${vendorFile.filename}...`);
         
         try {
-          const reviewResponse = await agentAPI.reviewDocument(vendorFile.s3_key, 'agent_processing');
+          const reviewResponse = await agentAPI.reviewDocument(
+            vendorFile.s3_key, 
+            'agent_processing',
+            session?.session_id,
+            session?.user_id
+          );
           
-          if (reviewResponse.redlined_document && reviewResponse.redlined_document.success) {
+          // Check if processing is asynchronous
+          if (reviewResponse.processing && reviewResponse.job_id) {
+            setWorkflowMessage(`Processing ${vendorFile.filename} in background...`);
+            
+            // Poll for completion
+            const finalResult = await pollJobStatus(
+              reviewResponse.job_id, 
+              session?.user_id, 
+              vendorFile.filename
+            );
+            
+            if (finalResult.success) {
+              redlineResults.push({
+                originalFile: vendorFile,
+                redlinedDocument: finalResult.redlined_document.redlined_document,
+                analysis: finalResult.analysis,
+                success: true
+              });
+            } else {
+              redlineResults.push({
+                originalFile: vendorFile,
+                error: finalResult.error,
+                success: false
+              });
+            }
+          } else if (reviewResponse.processing === false && reviewResponse.redlined_document && reviewResponse.redlined_document.success) {
             redlineResults.push({
               originalFile: vendorFile,
               redlinedDocument: reviewResponse.redlined_document.redlined_document,
               analysis: reviewResponse.analysis,
               success: true
+            });
+          } else if (reviewResponse.processing) {
+            redlineResults.push({
+              originalFile: vendorFile,
+              processing: true,
+              jobId: `job_${vendorFile.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+              success: false,
+              message: reviewResponse.message || 'Processing in background...'
             });
           } else {
             redlineResults.push({
@@ -97,26 +294,48 @@ const App = () => {
             });
           }
         } catch (error) {
-          redlineResults.push({
-            originalFile: vendorFile,
-            error: error.message,
-            success: false
-          });
+          if (error.message.includes('timeout') || error.message.includes('504') || error.message.includes('502')) {
+            redlineResults.push({
+              originalFile: vendorFile,
+              processing: true,
+              jobId: `job_${vendorFile.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+              success: false,
+              message: 'Processing in background due to complexity...'
+            });
+          } else {
+            redlineResults.push({
+              originalFile: vendorFile,
+              error: error.message,
+              success: false
+            });
+          }
         }
       }
       
       const successfulResults = redlineResults.filter(r => r.success);
-      const failedResults = redlineResults.filter(r => !r.success);
+      const failedResults = redlineResults.filter(r => !r.success && !r.processing);
+      const processingResults = redlineResults.filter(r => r.processing);
       
       setRedlinedDocuments(redlineResults);
       
       if (successfulResults.length > 0) {
-        setWorkflowMessage(
-          `Successfully generated ${successfulResults.length} redlined document(s)! ${
-            failedResults.length > 0 ? `${failedResults.length} failed.` : ''
-          } Scroll down to download.`
-        );
+        let message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
+        if (processingResults.length > 0) {
+          message += ` ${processingResults.length} document(s) are still processing in background.`;
+        }
+        if (failedResults.length > 0) {
+          message += ` ${failedResults.length} failed.`;
+        }
+        if (successfulResults.length > 0) {
+          message += ' Scroll down to download completed documents.';
+        }
+        setWorkflowMessage(message);
         setWorkflowMessageType('success');
+      } else if (processingResults.length > 0) {
+        setWorkflowMessage(
+          `${processingResults.length} document(s) are processing in background due to complexity. Please wait for completion.`
+        );
+        setWorkflowMessageType('');
       } else {
         setWorkflowMessage('All redline generation attempts failed. Please check your documents and try again.');
         setWorkflowMessageType('error');
@@ -163,6 +382,639 @@ const App = () => {
   const referenceFiles = uploadedFiles.filter(f => f.type === 'reference_document');
   const canGenerateRedline = vendorFiles.length > 0 && referenceFiles.length > 0;
 
+  // If this is an existing session (not new), show only the results table
+  if (!isNewSession && sessionResults.length > 0) {
+    return (
+      <div className="main-content">
+        <div className="card">
+          <h1>One L</h1>
+          <p>Session Analysis History</p>
+          {session && (
+            <div style={{ 
+              fontSize: '14px', 
+              color: '#666', 
+              marginTop: '8px',
+              padding: '8px',
+              background: '#f8f9fa',
+              borderRadius: '4px'
+            }}>
+              <strong>Session:</strong> {session.title} ({session.session_id.substring(0, 8)}...)
+            </div>
+          )}
+        </div>
+
+        {/* Session Analysis Results - Full View */}
+        <div style={{ marginTop: '20px' }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginBottom: '16px'
+          }}>
+            <h3 style={{ margin: 0, color: '#333' }}>Analysis Results</h3>
+            <span style={{ fontSize: '14px', color: '#666' }}>
+              {sessionResults.length} result{sessionResults.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          <div style={{
+            border: '1px solid #dee2e6',
+            borderRadius: '8px',
+            background: '#fff',
+            overflow: 'hidden'
+          }}>
+            {sessionResults.map((result, index) => (
+              <div
+                key={result.analysis_id}
+                style={{
+                  padding: '16px',
+                  borderBottom: index < sessionResults.length - 1 ? '1px solid #dee2e6' : 'none'
+                }}
+              >
+                {/* Result Header */}
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '12px'
+                }}>
+                  <div>
+                    <h4 style={{ margin: 0, color: '#333', fontSize: '16px' }}>
+                      {result.document_name}
+                    </h4>
+                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                      {new Date(result.timestamp).toLocaleString()} • {result.conflicts_count} conflicts found
+                    </div>
+                  </div>
+                  <div style={{
+                    background: result.conflicts_count > 0 ? '#dc3545' : '#28a745',
+                    color: 'white',
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}>
+                    {result.conflicts_count} conflicts
+                  </div>
+                </div>
+
+                {/* Conflicts Table */}
+                {result.conflicts.length > 0 && (
+                  <div style={{
+                    border: '1px solid #dee2e6',
+                    borderRadius: '4px',
+                    overflow: 'hidden',
+                    maxHeight: '400px',
+                    overflowY: 'auto'
+                  }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#f8f9fa' }}>
+                          <th style={{ 
+                            padding: '8px 12px', 
+                            textAlign: 'left', 
+                            borderBottom: '1px solid #dee2e6',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            color: '#666'
+                          }}>
+                            ID
+                          </th>
+                          <th style={{ 
+                            padding: '8px 12px', 
+                            textAlign: 'left', 
+                            borderBottom: '1px solid #dee2e6',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            color: '#666'
+                          }}>
+                            Vendor Text
+                          </th>
+                          <th style={{ 
+                            padding: '8px 12px', 
+                            textAlign: 'left', 
+                            borderBottom: '1px solid #dee2e6',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            color: '#666'
+                          }}>
+                            Source
+                          </th>
+                          <th style={{ 
+                            padding: '8px 12px', 
+                            textAlign: 'left', 
+                            borderBottom: '1px solid #dee2e6',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            color: '#666'
+                          }}>
+                            Type
+                          </th>
+                          <th style={{ 
+                            padding: '8px 12px', 
+                            textAlign: 'left', 
+                            borderBottom: '1px solid #dee2e6',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            color: '#666'
+                          }}>
+                            Rationale
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.conflicts.map((conflict, conflictIndex) => (
+                          <tr 
+                            key={conflictIndex}
+                            style={{ 
+                              background: conflictIndex % 2 === 0 ? 'white' : '#f8f9fa',
+                              borderBottom: '1px solid #eee'
+                            }}
+                          >
+                            <td style={{ 
+                              padding: '8px 12px', 
+                              fontSize: '12px',
+                              fontFamily: 'monospace',
+                              color: '#666'
+                            }}>
+                              {conflict.clarification_id}
+                            </td>
+                            <td style={{ 
+                              padding: '8px 12px', 
+                              fontSize: '12px',
+                              maxWidth: '200px',
+                              wordBreak: 'break-word'
+                            }}>
+                              {conflict.vendor_conflict}
+                            </td>
+                            <td style={{ 
+                              padding: '8px 12px', 
+                              fontSize: '12px',
+                              color: '#666'
+                            }}>
+                              {conflict.source_doc}
+                            </td>
+                            <td style={{ 
+                              padding: '8px 12px', 
+                              fontSize: '12px'
+                            }}>
+                              <span style={{
+                                background: '#ffc107',
+                                color: 'black',
+                                padding: '2px 6px',
+                                borderRadius: '8px',
+                                fontSize: '10px',
+                                fontWeight: 'bold'
+                              }}>
+                                {conflict.conflict_type}
+                              </span>
+                            </td>
+                            <td style={{ 
+                              padding: '8px 12px', 
+                              fontSize: '12px',
+                              maxWidth: '300px',
+                              wordBreak: 'break-word'
+                            }}>
+                              {conflict.rationale}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {result.conflicts.length === 0 && (
+                  <div style={{
+                    padding: '20px',
+                    textAlign: 'center',
+                    color: '#28a745',
+                    background: '#d4edda',
+                    border: '1px solid #c3e6cb',
+                    borderRadius: '4px'
+                  }}>
+                    ✓ No conflicts found in this document
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {loadingResults && (
+          <div style={{ 
+            textAlign: 'center', 
+            margin: '20px 0',
+            fontSize: '14px',
+            color: '#666'
+          }}>
+            Loading session history...
+          </div>
+        )}
+
+        {!loadingResults && sessionResults.length === 0 && (
+          <div style={{
+            textAlign: 'center',
+            padding: '40px',
+            color: '#666',
+            border: '1px solid #dee2e6',
+            borderRadius: '8px',
+            marginTop: '20px'
+          }}>
+            No analysis results found for this session.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // For new sessions or sessions without results, show the main page
+  return (
+    <div className="main-content">
+      <div className="card">
+        <h1>One L</h1>
+        <p>AI-based First pass review of Vendor submission</p>
+        {session && (
+          <div style={{ 
+            fontSize: '14px', 
+            color: '#666', 
+            marginTop: '8px',
+            padding: '8px',
+            background: '#f8f9fa',
+            borderRadius: '4px'
+          }}>
+            <strong>Session:</strong> {session.title} ({session.session_id.substring(0, 8)}...)
+          </div>
+        )}
+      </div>
+      
+      <div className="upload-sections">
+        <VendorSubmission onFilesUploaded={handleFilesUploaded} />
+        
+        <FileUpload 
+          title="Reference Documents"
+          maxFiles={null}
+          bucketType="user_documents"
+          prefix="reference-docs/"
+          description="Upload reference documents (contracts, policies, etc.) that will be used by the AI for conflict detection during vendor submission review"
+          onFilesUploaded={handleFilesUploaded}
+          enableAutoSync={true}
+        />
+      </div>
+      
+      {/* Centralized Workflow Section */}
+      <div className="card" style={{ marginTop: '20px' }}>
+        <h2>AI Document Review Workflow</h2>
+        <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
+        
+        {/* Upload Status */}
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '10px' }}>
+            <div style={{ 
+              padding: '10px', 
+              borderRadius: '4px', 
+              background: referenceFiles.length > 0 ? '#d4edda' : '#f8d7da',
+              border: `1px solid ${referenceFiles.length > 0 ? '#c3e6cb' : '#f5c6cb'}`,
+              flex: '1'
+            }}>
+              <strong>Reference Documents:</strong> {referenceFiles.length} uploaded
+              {referenceFiles.length > 0 && (
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {referenceFiles.map(f => f.filename).join(', ')}
+                </div>
+              )}
+            </div>
+            
+            <div style={{ 
+              padding: '10px', 
+              borderRadius: '4px', 
+              background: vendorFiles.length > 0 ? '#d4edda' : '#f8d7da',
+              border: `1px solid ${vendorFiles.length > 0 ? '#c3e6cb' : '#f5c6cb'}`,
+              flex: '1'
+            }}>
+              <strong>Vendor Submissions:</strong> {vendorFiles.length} uploaded
+              {vendorFiles.length > 0 && (
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {vendorFiles.map(f => f.filename).join(', ')}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* Generate Redline Button */}
+        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+          <button
+            onClick={handleGenerateRedline}
+            disabled={!canGenerateRedline || generating}
+            style={{
+              background: canGenerateRedline ? '#007bff' : '#6c757d',
+              color: 'white',
+              border: 'none',
+              padding: '12px 24px',
+              borderRadius: '4px',
+              cursor: canGenerateRedline && !generating ? 'pointer' : 'not-allowed',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              transition: 'background-color 0.2s',
+              opacity: generating ? 0.6 : 1
+            }}
+          >
+            {generating ? 'Generating Redlines...' : 'Generate Redlined Documents'}
+          </button>
+        </div>
+        
+        {/* Workflow Messages */}
+        {workflowMessage && (
+          <div className={`alert ${workflowMessageType === 'success' ? 'alert-success' : 'alert-error'}`}>
+            {workflowMessage}
+          </div>
+        )}
+        
+        {/* Redlined Documents Results */}
+        {redlinedDocuments.length > 0 && (
+          <div style={{ marginTop: '20px' }}>
+            <h3>Generated Redlined Documents</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {redlinedDocuments.map((result, index) => (
+                <div key={index} style={{ 
+                  padding: '12px', 
+                  border: '1px solid #ddd', 
+                  borderRadius: '4px',
+                  background: result.success ? '#f8f9fa' : (result.processing ? '#fff3cd' : '#f8d7da')
+                }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+                    {result.originalFile.filename}
+                  </div>
+                  {result.success ? (
+                    <div>
+                      <button
+                        onClick={() => handleDownloadRedlined(result)}
+                        style={{
+                          background: '#28a745',
+                          color: 'white',
+                          border: 'none',
+                          padding: '6px 12px',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '14px'
+                        }}
+                      >
+                        Download Redlined Document
+                      </button>
+                      
+                      {result.analysis && (
+                        <div style={{ 
+                          marginTop: '8px', 
+                          padding: '8px', 
+                          background: '#f8f9fa', 
+                          borderRadius: '4px',
+                          fontSize: '12px'
+                        }}>
+                          <strong>AI Analysis Preview:</strong>
+                          <div style={{ maxHeight: '100px', overflow: 'auto', marginTop: '4px' }}>
+                            {result.analysis.substring(0, 300)}...
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : result.processing ? (
+                    <div>
+                      <div style={{ 
+                        padding: '8px 16px',
+                        background: '#fff3cd',
+                        border: '1px solid #ffeaa7',
+                        borderRadius: '4px',
+                        color: '#856404',
+                        fontSize: '14px',
+                        marginBottom: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <div style={{
+                          width: '16px',
+                          height: '16px',
+                          border: '2px solid #856404',
+                          borderTop: '2px solid transparent',
+                          borderRadius: '50%',
+                          animation: 'spin 1s linear infinite'
+                        }}></div>
+                        Processing in background...
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        This document is being processed due to its complexity. The download button will appear when ready.
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ color: '#dc3545', fontSize: '14px' }}>
+                      Error: {result.error || result.message}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Auto-redirect component that creates session and navigates
+const AutoSessionRedirect = () => {
+  const navigate = useNavigate();
+
+  const [error, setError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    createSessionAndRedirect();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const createSessionAndRedirect = async () => {
+    try {
+      setError(null);
+      
+      const userId = authService.getUserId();
+      if (!userId) {
+        throw new Error('No user ID available. Please try logging in again.');
+      }
+
+      console.log('Creating session for user:', userId);
+      const response = await sessionAPI.createSession(userId);
+      
+      if (response.success && response.session?.session_id) {
+        console.log('Session created successfully:', response.session.session_id);
+        navigate(`/${response.session.session_id}`, { 
+          replace: true, 
+          state: { session: response.session } 
+        });
+      } else {
+        throw new Error(response.message || 'Failed to create session');
+      }
+    } catch (err) {
+      console.error('Error creating session:', err);
+      
+      let errorMessage = err.message;
+      if (err.message.includes('timeout')) {
+        errorMessage = 'Session creation timed out. Please try again.';
+      } else if (err.message.includes('Failed to fetch')) {
+        errorMessage = 'Network error. Please check your connection.';
+      }
+      
+      setError(errorMessage);
+    }
+  };
+
+  const handleRetry = () => {
+    setRetryCount(prev => prev + 1);
+    createSessionAndRedirect();
+  };
+
+  if (error) {
+    return (
+      <div className="main-content">
+        <div className="card">
+          <h1>One L</h1>
+          <div className="alert alert-error">
+            <strong>Error:</strong> {error}
+          </div>
+          <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <button 
+              onClick={handleRetry} 
+              className="btn"
+              style={{ backgroundColor: '#007bff', color: 'white' }}
+            >
+              Retry {retryCount > 0 ? `(${retryCount})` : ''}
+            </button>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="btn"
+              style={{ backgroundColor: '#6c757d', color: 'white' }}
+            >
+              Refresh Page
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="main-content">
+      <div className="card">
+        <h1>One L</h1>
+        <p>Setting up your workspace...</p>
+        <div style={{
+          width: '32px',
+          height: '32px',
+          border: '3px solid #dee2e6',
+          borderTop: '3px solid #0066cc',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite',
+          margin: '20px auto'
+        }}></div>
+      </div>
+    </div>
+  );
+};
+
+// Create a separate component that uses router hooks
+const AppContent = () => {
+  const navigate = useNavigate();
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const [activeTab, setActiveTab] = useState('data');
+  
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const initializeApp = async () => {
+      try {
+        setAuthLoading(true);
+        
+        // Load configuration first
+        await loadConfig();
+        const isValid = await isConfigValid();
+        
+        if (!isValid) {
+          setConfigError('Configuration is incomplete. Please check your deployment.');
+          setAuthLoading(false);
+          return;
+        }
+        
+        setConfigLoaded(true);
+        
+        // Initialize authentication
+        const authInitialized = await authService.initialize();
+        if (!authInitialized) {
+          console.warn('Authentication initialization failed - user will need to log in');
+          setAuthLoading(false);
+          return;
+        }
+        
+        // Check if user is authenticated
+        if (authService.isUserAuthenticated()) {
+          setIsAuthenticated(true);
+          setCurrentUser(authService.getCurrentUser());
+          console.log('User authenticated:', authService.getCurrentUser());
+        }
+        
+        setAuthLoading(false);
+      } catch (error) {
+        console.error('Failed to initialize app:', error);
+        setConfigError('Failed to load application configuration.');
+        setAuthLoading(false);
+      }
+    };
+
+    initializeApp();
+  }, []);
+
+
+
+  // Authentication handlers
+  const handleLogin = () => {
+    authService.login(); // This redirects to Cognito
+  };
+
+  const handleLogout = () => {
+    // Clear local state
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    
+    // Logout from Cognito (this will redirect)
+    authService.logout();
+  };
+
+  // Simplified session handlers - no longer needed with direct navigation
+  // All workflow logic moved to SessionWorkspace component
+
+  // Handle admin section navigation
+  const handleAdminSectionChange = async (section) => {
+    if (section === 'admin') {
+      navigate('/admin/knowledgebase');
+    } else {
+      // Go back to main page by creating a new session
+      try {
+        const userId = authService.getUserId();
+        const response = await sessionAPI.createSession(userId);
+        if (response.success) {
+          navigate(`/${response.session.session_id}`, { 
+            state: { session: response.session } 
+          });
+        }
+      } catch (error) {
+        console.error('Error creating session:', error);
+        navigate('/');
+      }
+    }
+  };
+
   const renderMainContent = () => {
     if (configError) {
       return (
@@ -189,185 +1041,154 @@ const App = () => {
       );
     }
 
-    switch (activeSection) {
-      case 'admin':
-        return (
+    // Use Routes instead of switch statement
+    return (
+      <Routes>
+        <Route path="/admin/knowledgebase" element={
           <div className="main-content">
             <AdminDashboard activeTab={activeTab} onTabChange={setActiveTab} />
           </div>
-        );
-      case 'main':
-      default:
-        return (
-          <div className="main-content">
-            <div className="card">
-              <h1>One L</h1>
-              <p>AI-based First pass review of Vendor submission</p>
-            </div>
-            
-            <div className="upload-sections">
-              <VendorSubmission onFilesUploaded={handleFilesUploaded} />
-              
-              <FileUpload 
-                title="Reference Documents"
-                maxFiles={null}
-                bucketType="user_documents"
-                prefix="reference-docs/"
-                description="Upload reference documents (contracts, policies, etc.) that will be used by the AI for conflict detection during vendor submission review"
-                onFilesUploaded={handleFilesUploaded}
-                enableAutoSync={true}
-              />
-            </div>
-            
-            {/* Centralized Workflow Section */}
-            <div className="card" style={{ marginTop: '20px' }}>
-              <h2>AI Document Review Workflow</h2>
-              <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
-              
-              {/* Upload Status */}
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ display: 'flex', gap: '20px', marginBottom: '10px' }}>
-                  <div style={{ 
-                    padding: '10px', 
-                    borderRadius: '4px', 
-                    background: referenceFiles.length > 0 ? '#d4edda' : '#f8d7da',
-                    border: `1px solid ${referenceFiles.length > 0 ? '#c3e6cb' : '#f5c6cb'}`,
-                    flex: '1'
-                  }}>
-                    <strong>Reference Documents:</strong> {referenceFiles.length} uploaded
-                    {referenceFiles.length > 0 && (
-                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                        {referenceFiles.map(f => f.filename).join(', ')}
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div style={{ 
-                    padding: '10px', 
-                    borderRadius: '4px', 
-                    background: vendorFiles.length > 0 ? '#d4edda' : '#f8d7da',
-                    border: `1px solid ${vendorFiles.length > 0 ? '#c3e6cb' : '#f5c6cb'}`,
-                    flex: '1'
-                  }}>
-                    <strong>Vendor Submissions:</strong> {vendorFiles.length} uploaded
-                    {vendorFiles.length > 0 && (
-                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                        {vendorFiles.map(f => f.filename).join(', ')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              
-              {/* Generate Redline Button */}
-              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                <button
-                  onClick={handleGenerateRedline}
-                  disabled={!canGenerateRedline || generating}
-                  style={{
-                    background: canGenerateRedline ? '#007bff' : '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                    padding: '12px 24px',
-                    borderRadius: '8px',
-                    fontSize: '16px',
-                    fontWeight: 'bold',
-                    cursor: canGenerateRedline ? 'pointer' : 'not-allowed',
-                    opacity: generating ? 0.6 : 1
-                  }}
-                >
-                  {generating ? 'Generating Redlined Documents...' : 'Generate Redlined Documents'}
-                </button>
-                
-                {!canGenerateRedline && (
-                  <div style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
-                    Please upload both reference documents and vendor submissions to enable redline generation.
-                  </div>
-                )}
-              </div>
-              
-              {/* Workflow Messages */}
-              {workflowMessage && (
-                <div className={`alert ${workflowMessageType === 'success' ? 'alert-success' : 'alert-error'}`} style={{ marginBottom: '20px' }}>
-                  {workflowMessage}
-                </div>
-              )}
-              
-              {/* Download Section */}
-              {redlinedDocuments.length > 0 && (
-                <div>
-                  <h3>Generated Redlined Documents</h3>
-                  <div style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '12px' }}>
-                    {redlinedDocuments.map((result, index) => (
-                      <div key={index} style={{ 
-                        padding: '12px 0',
-                        borderBottom: index < redlinedDocuments.length - 1 ? '1px solid #eee' : 'none'
-                      }}>
-                        <div style={{ fontWeight: '500', marginBottom: '8px' }}>
-                          {result.originalFile.filename}
-                        </div>
-                        
-                        {result.success ? (
-                          <div>
-                            <button
-                              onClick={() => handleDownloadRedlined(result)}
-                              disabled={generating}
-                              style={{
-                                background: '#28a745',
-                                color: 'white',
-                                border: 'none',
-                                padding: '8px 16px',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontSize: '14px',
-                                marginBottom: '8px'
-                              }}
-                            >
-                              Download Redlined Document
-                            </button>
-                            
-                            {result.analysis && (
-                              <div style={{ 
-                                marginTop: '8px', 
-                                padding: '8px', 
-                                background: '#f8f9fa', 
-                                borderRadius: '4px',
-                                fontSize: '12px'
-                              }}>
-                                <strong>AI Analysis Preview:</strong>
-                                <div style={{ maxHeight: '100px', overflow: 'auto', marginTop: '4px' }}>
-                                  {result.analysis.substring(0, 300)}...
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div style={{ color: '#dc3545', fontSize: '14px' }}>
-                            Error: {result.error}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-    }
+        } />
+        <Route path="/:sessionId" element={<SessionView />} />
+        <Route path="/" element={<AutoSessionRedirect />} />
+      </Routes>
+    );
   };
 
+  // Show loading screen during auth initialization
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        backgroundColor: '#f8f9fa',
+        flexDirection: 'column',
+        gap: '16px'
+      }}>
+        <div style={{
+          width: '32px',
+          height: '32px',
+          border: '3px solid #dee2e6',
+          borderTop: '3px solid #0066cc',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite'
+        }}></div>
+        <div style={{ fontSize: '16px', color: '#666' }}>
+          Initializing One-L...
+        </div>
+      </div>
+    );
+  }
+
+  // Show configuration error
+  if (configError) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        backgroundColor: '#f8f9fa',
+        padding: '20px'
+      }}>
+        <div style={{
+          backgroundColor: 'white',
+          padding: '32px',
+          borderRadius: '8px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          textAlign: 'center',
+          maxWidth: '400px'
+        }}>
+          <h2 style={{ color: '#dc3545', marginBottom: '16px' }}>Configuration Error</h2>
+          <p style={{ color: '#666', marginBottom: '16px' }}>{configError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#0066cc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login screen if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        backgroundColor: '#f8f9fa',
+        flexDirection: 'column',
+        gap: '24px'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={{ color: '#333', marginBottom: '16px' }}>Welcome to One-L</h1>
+          <p style={{ color: '#666', marginBottom: '24px' }}>
+            AI-based First pass review of Vendor submission
+          </p>
+          <button
+            onClick={handleLogin}
+            style={{
+              padding: '12px 24px',
+              backgroundColor: '#0066cc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: 'pointer'
+            }}
+          >
+            Sign In with Cognito
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show authenticated app
   return (
-    <div className="app-container">
-      <Sidebar 
-        activeSection={activeSection} 
-        activeTab={activeTab} 
-        onSectionChange={setActiveSection} 
-        onTabChange={setActiveTab} 
+    <div className="app-container" style={{ display: 'flex', height: '100vh', position: 'relative' }}>
+      {/* User Header */}
+      <UserHeader 
+        user={currentUser}
+        onLogout={handleLogout}
       />
-      {renderMainContent()}
+      
+      {/* Session Sidebar with integrated Admin */}
+      <SessionSidebar
+        currentUserId={authService.getUserId()}
+        onAdminSectionChange={handleAdminSectionChange}
+        isVisible={true}
+      />
+      
+      {/* Main Content Area */}
+      <div style={{ marginLeft: '280px', marginTop: '60px', minHeight: 'calc(100vh - 60px)', overflow: 'auto' }}>
+        {renderMainContent()}
+      </div>
     </div>
   );
 };
 
-export default App; 
+// Main App component with Router wrapper
+const App = () => {
+  return (
+    <Router>
+      <AppContent />
+    </Router>
+  );
+};
+
+export default App;

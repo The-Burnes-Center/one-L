@@ -32,3 +32,8 @@ class OneLStack(Stack):
             authorization_construct=self.authorization,
             api_gateway_construct=self.api_gateway
         )
+        
+        # Update Cognito callback URLs with CloudFront domain name
+        self.authorization.update_callback_urls(
+            self.user_interface.cloudfront_distribution.distribution_domain_name
+        )

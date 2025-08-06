@@ -24,7 +24,7 @@ Use retrieve_from_knowledge_base tool with multiple targeted queries:
 3. **Identify Conflicts**: Flag genuine conflicts, modifications, contradictions, or omissions
 4. **Create Table**: Generate conflict analysis in the specified format below
 
-**IMPORTANT**: Make at least 3-5 different retrieval queries to ensure comprehensive coverage. Each query should target different aspects of the vendor submission.
+**IMPORTANT**: Use as many retrieval queries as needed to ensure comprehensive coverage of all aspects of the vendor submission. The system is optimized to handle multiple queries efficiently.
 
 ## CONFLICT ANALYSIS OUTPUT
 

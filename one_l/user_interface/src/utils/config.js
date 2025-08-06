@@ -20,9 +20,6 @@ const loadConfig = async () => {
   if (isDevelopment) {
     // Use environment variables directly in development
     console.log('Development mode: using environment variables');
-    console.log('REACT_APP_API_GATEWAY_URL:', process.env.REACT_APP_API_GATEWAY_URL);
-    console.log('REACT_APP_USER_POOL_ID:', process.env.REACT_APP_USER_POOL_ID);
-    console.log('REACT_APP_USER_POOL_CLIENT_ID:', process.env.REACT_APP_USER_POOL_CLIENT_ID);
     
     config = {
       apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
@@ -36,7 +33,7 @@ const loadConfig = async () => {
       knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || '',
       knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || ''
     };
-    console.log('Development config:', config);
+    console.log('Development configuration loaded successfully');
     return config;
   }
   
@@ -78,14 +75,8 @@ const loadConfig = async () => {
     // Fallback to environment variables even in production
     console.warn('Using environment variables for configuration due to config.json issues');
     
-    // Log all environment variables for debugging
-    console.log('Environment variables loaded:');
-    console.log('REACT_APP_API_GATEWAY_URL:', process.env.REACT_APP_API_GATEWAY_URL);
-    console.log('REACT_APP_USER_POOL_ID:', process.env.REACT_APP_USER_POOL_ID);
-    console.log('REACT_APP_USER_POOL_CLIENT_ID:', process.env.REACT_APP_USER_POOL_CLIENT_ID);
-    console.log('REACT_APP_USER_POOL_DOMAIN:', process.env.REACT_APP_USER_POOL_DOMAIN);
-    console.log('REACT_APP_REGION:', process.env.REACT_APP_REGION);
-    console.log('REACT_APP_STACK_NAME:', process.env.REACT_APP_STACK_NAME);
+    // Log configuration loading status (without sensitive values)
+    console.log('Loading configuration from environment variables...');
     
     config = {
       apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
@@ -100,7 +91,7 @@ const loadConfig = async () => {
       knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || ''
     };
     
-    console.log('Final config object:', config);
+    console.log('Configuration loaded from environment variables successfully');
     
     // Check if fallback config is valid
     const missingEnvVars = [];
