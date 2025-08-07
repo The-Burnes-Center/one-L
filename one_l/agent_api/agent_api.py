@@ -144,3 +144,13 @@ class AgentApiConstruct(Construct):
     def get_agent_functions(self):
         """Get the agent functions construct."""
         return self.functions.agent if hasattr(self.functions, 'agent') else None
+    
+    def get_websocket_construct(self):
+        """Get the WebSocket construct for real-time communication."""
+        return self.functions.websocket if hasattr(self.functions, 'websocket') else None
+    
+    def get_websocket_api_url(self) -> str:
+        """Get the WebSocket API URL."""
+        if hasattr(self.functions, 'websocket') and self.functions.websocket:
+            return self.functions.websocket.get_websocket_api_url()
+        return None

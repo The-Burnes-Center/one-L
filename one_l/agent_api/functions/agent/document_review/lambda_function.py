@@ -166,6 +166,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             try:
                 logger.info("Starting background document processing")
                 
+                # Initialize Lambda client for notifications
+                lambda_client = boto3.client('lambda')
+                
                 # Clear knowledge base cache for fresh document review session
                 from agent_api.agent.tools import clear_knowledge_base_cache
                 clear_knowledge_base_cache()
@@ -175,6 +178,29 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 
                 # Update job status
                 save_job_status(job_id, document_s3_key, user_id, session_id, "analyzing")
+                
+                # Send WebSocket progress notification
+                try:
+                    notification_function_name = f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-websocket-notification')}"
+                    progress_payload = {
+                        'notification_type': 'job_progress',
+                        'job_id': job_id,
+                        'user_id': user_id,
+                        'session_id': session_id,
+                        'data': {
+                            'status': 'analyzing',
+                            'progress': 25,
+                            'message': 'Analyzing document with AI...'
+                        }
+                    }
+                    
+                    lambda_client.invoke(
+                        FunctionName=notification_function_name,
+                        InvocationType='Event',
+                        Payload=json.dumps(progress_payload)
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send progress notification: {e}")
                 
                 # Run the document review with direct document attachment
                 review_result = agent.review_document(bucket_type, document_s3_key)
@@ -187,6 +213,28 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 
                 # Update job status
                 save_job_status(job_id, document_s3_key, user_id, session_id, "generating_redline")
+                
+                # Send WebSocket progress notification
+                try:
+                    progress_payload = {
+                        'notification_type': 'job_progress',
+                        'job_id': job_id,
+                        'user_id': user_id,
+                        'session_id': session_id,
+                        'data': {
+                            'status': 'generating_redline',
+                            'progress': 75,
+                            'message': 'Generating redlined document...'
+                        }
+                    }
+                    
+                    lambda_client.invoke(
+                        FunctionName=notification_function_name,
+                        InvocationType='Event',
+                        Payload=json.dumps(progress_payload)
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send progress notification: {e}")
                 
                 # Create redlined document using agent (handles all document operations internally)
                 redlined_result = agent.create_redlined_document(
@@ -223,6 +271,54 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 }
                 save_job_status(job_id, document_s3_key, user_id, session_id, "completed", 
                               result=completion_data)
+                
+                # Mark session as having results (processed documents)
+                if session_id and user_id:
+                    try:
+                        
+                        # Call session management to mark session as having results
+                        session_payload = {
+                            'httpMethod': 'PUT',
+                            'body': json.dumps({
+                                'action': 'mark_results',
+                                'session_id': session_id,
+                                'user_id': user_id
+                            })
+                        }
+                        
+                        # Invoke session management function asynchronously
+                        lambda_client.invoke(
+                            FunctionName=f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-session-management')}",
+                            InvocationType='Event',  # Async call
+                            Payload=json.dumps(session_payload)
+                        )
+                        logger.info(f"Marked session {session_id} as having results")
+                        
+                        # Send WebSocket notification for job completion
+                        notification_function_name = f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-websocket-notification')}"
+                        notification_payload = {
+                            'notification_type': 'job_completed',
+                            'job_id': job_id,
+                            'user_id': user_id,
+                            'session_id': session_id,
+                            'data': {
+                                'status': 'completed',
+                                'analysis_id': analysis_id,
+                                'redlined_document': redlined_result,
+                                'message': 'Document analysis completed successfully'
+                            }
+                        }
+                        
+                        # Invoke WebSocket notification function asynchronously
+                        lambda_client.invoke(
+                            FunctionName=notification_function_name,
+                            InvocationType='Event',  # Async call
+                            Payload=json.dumps(notification_payload)
+                        )
+                        logger.info(f"Sent WebSocket completion notification for job {job_id}")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to send notifications: {e}")
                 
                 # Return immediate response (API Gateway already closed connection)
                 return create_success_response(immediate_response)

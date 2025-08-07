@@ -237,7 +237,7 @@ class KnowledgeManagementConstruct(Construct):
             )
         )
         
-        # Add DynamoDB permissions (for future session storage)
+        # Add DynamoDB permissions for sessions and analysis results tables
         session_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -250,7 +250,8 @@ class KnowledgeManagementConstruct(Construct):
                     "dynamodb:Query"
                 ],
                 resources=[
-                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/one-l-sessions"
+                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/{self._stack_name}-sessions",
+                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/{self._stack_name}-analysis-results"
                 ]
             )
         )
@@ -260,6 +261,8 @@ class KnowledgeManagementConstruct(Construct):
             "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
             "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
             "AGENT_PROCESSING_BUCKET": self.agent_processing_bucket.bucket_name,
+            "SESSIONS_TABLE": f"{self._stack_name}-sessions",
+            "ANALYSIS_RESULTS_TABLE": f"{self._stack_name}-analysis-results",
             "LOG_LEVEL": "INFO"
         }
         
@@ -399,7 +402,7 @@ class KnowledgeManagementConstruct(Construct):
             "retrieve": {
                 "function": self.retrieve_from_s3_function,
                 "path": "retrieve",
-                "methods": ["GET"],
+                "methods": ["GET", "POST"],
                 "description": "Retrieve files from S3 buckets"
             },
             "delete": {

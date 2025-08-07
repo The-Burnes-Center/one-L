@@ -12,6 +12,7 @@ import UserHeader from './components/UserHeader';
 import { isConfigValid, loadConfig } from './utils/config';
 import { agentAPI, sessionAPI } from './services/api';
 import authService from './services/auth';
+import webSocketService from './services/websocket';
 
 // Simple session component that loads session from URL
 const SessionView = () => {
@@ -49,15 +50,24 @@ const SessionView = () => {
         return;
       }
 
-      // Fallback: Load user sessions and find the current one (for existing sessions)
+      // Fallback: Load ALL user sessions (including new ones without results) and find the current one
       console.log('Loading session from database');
-      const response = await sessionAPI.getUserSessions(userId);
+      const response = await sessionAPI.getUserSessions(userId, false); // Don't filter by results for session lookup
       if (response.success && response.sessions) {
         const foundSession = response.sessions.find(s => s.session_id === sessionId);
         if (foundSession) {
+          console.log(`Found session: ${foundSession.title} (has_results: ${foundSession.has_results})`);
           setSession(foundSession);
         } else {
-          setError(`Session ${sessionId} not found`);
+          // Session not found - might be a new session that hasn't been persisted yet
+          console.warn(`Session ${sessionId} not found in database - creating minimal session object`);
+          setSession({
+            session_id: sessionId,
+            title: 'Loading Session...',
+            created_at: new Date().toISOString(),
+            has_results: false,
+            status: 'active'
+          });
         }
       } else {
         setError('Failed to load sessions');
@@ -124,6 +134,8 @@ const SessionWorkspace = ({ session }) => {
   const [generating, setGenerating] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
   const [workflowMessageType, setWorkflowMessageType] = useState('');
+  const [processingStage, setProcessingStage] = useState(''); // 'syncing', 'identifying', 'generating'
+  const [stageProgress, setStageProgress] = useState(0); // 0-100
   const [redlinedDocuments, setRedlinedDocuments] = useState([]);
   const [sessionResults, setSessionResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
@@ -131,25 +143,50 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   const isNewSession = location.state?.session?.session_id === session?.session_id;
 
-  // Load session results when component mounts
+  // Load session results when component mounts and setup WebSocket
   useEffect(() => {
     if (session?.session_id) {
       loadSessionResults();
+      setupWebSocket();
     }
+    
+    // Cleanup WebSocket and progress on unmount
+    return () => {
+      cleanupWebSocket();
+      // Clean up progress interval
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+    };
   }, [session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSessionResults = async () => {
     try {
       setLoadingResults(true);
       const userId = authService.getUserId();
+      
+      // Always try to load results - the backend will return empty if none exist
+      console.log(`Loading results for session ${session?.session_id}...`);
+      
       const response = await sessionAPI.getSessionResults(session.session_id, userId);
       
       if (response.success && response.results) {
         setSessionResults(response.results);
         console.log(`Loaded ${response.results.length} results for session ${session.session_id}`);
+      } else {
+        // Session might not have results yet
+        console.log(`No results found for session ${session.session_id}`);
+        setSessionResults([]);
       }
     } catch (error) {
-      console.error('Error loading session results:', error);
+      // Don't log as error for new sessions - they won't have results yet
+      if (session?.has_results) {
+        console.error('Error loading session results:', error);
+      } else {
+        console.log('Session has no results yet:', error.message);
+      }
+      setSessionResults([]);
     } finally {
       setLoadingResults(false);
     }
@@ -161,6 +198,163 @@ const SessionWorkspace = ({ session }) => {
       const existingOtherType = prevFiles.filter(f => f.type !== files[0].type);
       return [...existingOtherType, ...files];
     });
+  };
+
+  const setupWebSocket = async () => {
+    try {
+      // Connect to WebSocket
+      await webSocketService.connect();
+      console.log('WebSocket connected for session:', session?.session_id);
+      
+      // Subscribe to session-level updates to catch all notifications for this session
+      if (session?.session_id) {
+        webSocketService.subscribeToSession(session.session_id);
+        console.log('Subscribed to session-level updates for:', session.session_id);
+      }
+      
+      // Set up message handlers
+      webSocketService.onMessageType('job_progress', handleJobProgress);
+      webSocketService.onMessageType('job_completed', handleJobCompleted);
+      webSocketService.onMessageType('session_update', handleSessionUpdate);
+      webSocketService.onMessageType('error', handleWebSocketError);
+      
+      // Add catch-all handler to debug any missed messages
+      const catchAllHandler = (message) => {
+        console.log('WebSocket received message:', message);
+        // Look for any completion notifications for this session, regardless of job ID
+        if ((message.type === 'job_completed' || message.type === 'document_completed') && 
+            message.session_id === session?.session_id) {
+          console.log('Received job completion for current session:', message.session_id);
+          handleJobCompleted(message);
+        }
+      };
+      webSocketService.onMessageType('*', catchAllHandler);
+      
+    } catch (error) {
+      console.error('Failed to setup WebSocket:', error);
+      // WebSocket failure shouldn't break the app - polling will still work
+    }
+  };
+
+  const cleanupWebSocket = () => {
+    // Remove message handlers
+    webSocketService.offMessageType('job_progress', handleJobProgress);
+    webSocketService.offMessageType('job_completed', handleJobCompleted);
+    webSocketService.offMessageType('session_update', handleSessionUpdate);
+    webSocketService.offMessageType('error', handleWebSocketError);
+    // Note: Can't remove the specific catch-all handler here as it's defined inline
+    
+    // Disconnect WebSocket
+    webSocketService.disconnect();
+  };
+
+  const handleJobProgress = (message) => {
+    console.log('WebSocket job progress:', message);
+    const { job_id, session_id, data } = message;
+    
+    // Update UI with progress
+    if (session_id === session?.session_id) {
+      setWorkflowMessage(data.message || `Processing... ${data.progress || 0}%`);
+      setWorkflowMessageType('progress');
+      
+      // Update progress for any active jobs
+      setRedlinedDocuments(prev => prev.map(doc => {
+        if (doc.jobId === job_id) {
+          return {
+            ...doc,
+            progress: data.progress || 0,
+            status: data.status || 'processing',
+            message: data.message
+          };
+        }
+        return doc;
+      }));
+    }
+  };
+
+  const handleJobCompleted = (message) => {
+    console.log('WebSocket job completed:', message);
+    const { job_id, session_id, data } = message;
+    
+    // Update UI with completion
+    if (session_id === session?.session_id) {
+      console.log('Processing job completion for session:', session_id, 'job:', job_id);
+      
+      // Stop the progress interval and complete to 100%
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+      
+      setStageProgress(100);
+      setProcessingStage('completed');
+      setWorkflowMessage('Document processing completed successfully!');
+      setWorkflowMessageType('success');
+      
+      // Check if we already have an entry for this job ID
+      const existingJobIndex = redlinedDocuments.findIndex(doc => doc.jobId === job_id);
+      
+      if (existingJobIndex === -1 && 
+          ((window.currentProcessingJob && window.currentProcessingJob.sessionId === session_id) ||
+           (session_id === session?.session_id))) {
+        // Only add new entry if we don't already have one for this job
+        if (data.redlined_document && data.redlined_document.success) {
+          setRedlinedDocuments(prev => [...prev, {
+            originalFile: { 
+              filename: window.currentProcessingJob?.filename || `Document for job ${job_id}` 
+            },
+            redlinedDocument: data.redlined_document.redlined_document,
+            analysis: data.analysis_id,
+            success: true,
+            processing: false,
+            jobId: job_id  // Store the real job ID
+          }]);
+        }
+        
+        // Clear the stored job
+        window.currentProcessingJob = null;
+      }
+      
+      // Update any existing redlined document entries with completion data
+      setRedlinedDocuments(prev => prev.map(doc => {
+        if (doc.jobId === job_id) {
+          console.log('Updating document for job:', job_id, 'with data:', data);
+          return {
+            ...doc,
+            status: 'completed',
+            progress: 100,
+            success: data.redlined_document && data.redlined_document.success,
+            redlinedDocument: data.redlined_document?.redlined_document,
+            analysis: data.analysis_id,
+            error: data.redlined_document?.success ? null : (data.redlined_document?.error || 'Processing failed'),
+            processing: false,
+            message: 'Document processing completed'
+          };
+        }
+        return doc;
+      }));
+      
+      // Refresh session results to get the latest documents
+      loadSessionResults();
+      
+      // Clear progress after a brief delay to show completion
+      setTimeout(() => {
+        setGenerating(false);
+        setProcessingStage('');
+        setStageProgress(0);
+      }, 3000);
+    }
+  };
+
+  const handleSessionUpdate = (message) => {
+    console.log('WebSocket session update:', message);
+    // Handle session updates (e.g., title changes, status updates)
+  };
+
+  const handleWebSocketError = (message) => {
+    console.error('WebSocket error:', message);
+    setWorkflowMessage(`WebSocket error: ${message.message}`);
+    setWorkflowMessageType('error');
   };
 
   // Add polling function for job status
@@ -211,6 +405,51 @@ const SessionWorkspace = ({ session }) => {
     };
   };
 
+  // Unified progress management system
+  const updateProcessingStage = (stage, progress, message) => {
+    setProcessingStage(stage);
+    setStageProgress(progress);
+    setWorkflowMessage(message);
+    setWorkflowMessageType('progress');
+    
+    console.log(`Processing stage: ${stage}, progress: ${progress}%, message: ${message}`);
+  };
+
+  // Smooth progress flow like Domino's pizza tracker
+  const startProgressFlow = () => {
+    let currentProgress = 0;
+    
+    // Stage 1: Syncing knowledge base (0-30%) - 30 seconds
+    updateProcessingStage('syncing', 0, 'Syncing knowledge base...');
+    
+    const progressInterval = setInterval(() => {
+      currentProgress += 1;
+      
+      if (currentProgress <= 30) {
+        // Stage 1: Syncing knowledge base
+        updateProcessingStage('syncing', currentProgress, 'Syncing knowledge base...');
+      } else if (currentProgress <= 60) {
+        // Stage 2: Identifying conflicts
+        if (currentProgress === 31) {
+          updateProcessingStage('identifying', currentProgress, 'Identifying conflicts...');
+        } else {
+          setStageProgress(currentProgress);
+        }
+      } else {
+        // Stage 3: Generating redlines - hold at 60% until real completion
+        if (currentProgress === 61) {
+          updateProcessingStage('generating', 60, 'Generating redlines...');
+        }
+        // Stop progressing and hold at 60% until WebSocket completion
+        clearInterval(progressInterval);
+        setStageProgress(60);
+      }
+    }, 1000); // 1% per second for first 60 seconds
+    
+    // Store interval ID for cleanup
+    window.progressInterval = progressInterval;
+  };
+
   const handleGenerateRedline = async () => {
     const vendorFiles = uploadedFiles.filter(f => f.type === 'vendor_submission');
     const referenceFiles = uploadedFiles.filter(f => f.type === 'reference_document');
@@ -228,8 +467,9 @@ const SessionWorkspace = ({ session }) => {
     }
     
     setGenerating(true);
-    setWorkflowMessage('Starting document processing...');
-    setWorkflowMessageType('');
+    
+    // Start the smooth 3-stage progress flow
+    startProgressFlow();
     
     try {
       const redlineResults = [];
@@ -250,7 +490,26 @@ const SessionWorkspace = ({ session }) => {
           if (reviewResponse.processing && reviewResponse.job_id) {
             setWorkflowMessage(`Processing ${vendorFile.filename} in background...`);
             
-            // Poll for completion
+            // Subscribe to WebSocket notifications for this job
+            try {
+              webSocketService.subscribeToJob(reviewResponse.job_id, session?.session_id);
+              console.log('Subscribed to WebSocket updates for job:', reviewResponse.job_id);
+              
+              // Add job to tracking with initial progress
+              setRedlinedDocuments(prev => [...prev, {
+                originalFile: vendorFile,
+                jobId: reviewResponse.job_id,
+                status: 'processing',
+                progress: 0,
+                message: 'Starting document analysis...',
+                processing: true
+              }]);
+              
+            } catch (error) {
+              console.warn('Failed to subscribe to WebSocket updates:', error);
+            }
+            
+            // Poll for completion (WebSocket is primary, polling is fallback)
             const finalResult = await pollJobStatus(
               reviewResponse.job_id, 
               session?.user_id, 
@@ -294,14 +553,40 @@ const SessionWorkspace = ({ session }) => {
             });
           }
         } catch (error) {
-          if (error.message.includes('timeout') || error.message.includes('504') || error.message.includes('502')) {
-            redlineResults.push({
-              originalFile: vendorFile,
-              processing: true,
-              jobId: `job_${vendorFile.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
-              success: false,
-              message: 'Processing in background due to complexity...'
-            });
+          if (error.message.includes('timeout') || error.message.includes('504') || error.message.includes('502') || 
+              error.message.includes('CORS error') || error.message.includes('continue in background')) {
+            
+            // Don't log timeout/CORS errors as errors - they're expected for long processing
+            
+            console.log('API Gateway timeout detected, switching to WebSocket-only mode for:', vendorFile.filename);
+            
+            // DON'T add to redlineResults - just use the unified progress UI
+            // Store the job info for WebSocket tracking without showing old UI
+            // Note: We can't get the real job ID from the backend due to timeout,
+            // but the session-level subscription will catch the completion notification
+            window.currentProcessingJob = {
+              filename: vendorFile.filename,
+              sessionId: session?.session_id,
+              vendorFileKey: vendorFile.s3_key
+            };
+            
+            // Ensure WebSocket connection is strong and subscribe to any updates for this session
+            try {
+              if (!webSocketService.getConnectionStatus().isConnected) {
+                console.log('WebSocket not connected, attempting reconnection...');
+                await webSocketService.connect();
+              }
+              
+              // Session-level subscription is already set up in setupWebSocket()
+              console.log('Relying on session-level WebSocket subscription for:', session?.session_id);
+              
+            } catch (wsError) {
+              console.warn('Failed to set up WebSocket subscription after timeout:', wsError);
+            }
+            
+            // Don't interfere with the natural progress flow
+            // The progress will continue naturally and complete when WebSocket notification arrives
+            
           } else {
             redlineResults.push({
               originalFile: vendorFile,
@@ -343,8 +628,17 @@ const SessionWorkspace = ({ session }) => {
       
     } catch (error) {
       console.error('Redline generation error:', error);
+      
+      // Clean up progress interval on error
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+      
       setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
       setWorkflowMessageType('error');
+      setProcessingStage('');
+      setStageProgress(0);
     } finally {
       setGenerating(false);
     }
@@ -724,19 +1018,115 @@ const SessionWorkspace = ({ session }) => {
           </button>
         </div>
         
-        {/* Workflow Messages */}
-        {workflowMessage && (
-          <div className={`alert ${workflowMessageType === 'success' ? 'alert-success' : 'alert-error'}`}>
+        {/* Unified Progress UI */}
+        {(generating || processingStage) && (
+          <div style={{ 
+            marginTop: '20px', 
+            padding: '20px', 
+            border: '1px solid #ddd', 
+            borderRadius: '8px',
+            backgroundColor: '#f8f9fa'
+          }}>
+            <h4 style={{ marginBottom: '16px', color: '#333' }}>Processing Document</h4>
+            
+            {/* Stage Indicators */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ 
+                textAlign: 'center', 
+                flex: 1,
+                color: processingStage === 'syncing' || stageProgress >= 1 ? '#007bff' : '#6c757d'
+              }}>
+                <div style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  backgroundColor: stageProgress >= 30 ? '#28a745' : (processingStage === 'syncing' ? '#007bff' : '#6c757d'),
+                  margin: '0 auto 4px'
+                }}></div>
+                <small>Syncing Knowledge Base</small>
+              </div>
+              <div style={{ 
+                textAlign: 'center', 
+                flex: 1,
+                color: processingStage === 'identifying' || stageProgress >= 31 ? '#007bff' : '#6c757d'
+              }}>
+                <div style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  backgroundColor: stageProgress >= 60 ? '#28a745' : (processingStage === 'identifying' ? '#007bff' : '#6c757d'),
+                  margin: '0 auto 4px'
+                }}></div>
+                <small>Identifying Conflicts</small>
+              </div>
+              <div style={{ 
+                textAlign: 'center', 
+                flex: 1,
+                color: processingStage === 'generating' || stageProgress >= 61 ? '#007bff' : '#6c757d'
+              }}>
+                <div style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  backgroundColor: stageProgress >= 100 ? '#28a745' : (processingStage === 'generating' ? '#007bff' : '#6c757d'),
+                  margin: '0 auto 4px'
+                }}></div>
+                <small>Generating Redlines</small>
+              </div>
+            </div>
+            
+            {/* Progress Bar */}
+            <div style={{ 
+              width: '100%', 
+              height: '8px', 
+              backgroundColor: '#e9ecef', 
+              borderRadius: '4px',
+              marginBottom: '12px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${stageProgress}%`,
+                height: '100%',
+                backgroundColor: '#007bff',
+                transition: 'width 0.3s ease',
+                borderRadius: '4px'
+              }}></div>
+            </div>
+            
+            {/* Current Status */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {processingStage !== 'completed' && (
+                <div style={{
+                  width: '16px',
+                  height: '16px',
+                  border: '2px solid #007bff',
+                  borderTop: '2px solid transparent',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite'
+                }}></div>
+              )}
+              <span style={{ color: '#333' }}>
+                {workflowMessage} ({Math.round(stageProgress)}%)
+              </span>
+            </div>
+          </div>
+        )}
+        
+        {/* Other Messages (errors, success without progress) */}
+        {workflowMessage && workflowMessageType !== 'progress' && !generating && !processingStage && (
+          <div className={`alert ${
+            workflowMessageType === 'success' ? 'alert-success' : 'alert-error'
+          }`}>
             {workflowMessage}
           </div>
         )}
         
-        {/* Redlined Documents Results */}
-        {redlinedDocuments.length > 0 && (
+        {/* Redlined Documents Results - Only show completed documents */}
+        {redlinedDocuments.filter(doc => doc.success && !doc.processing).length > 0 && (
           <div style={{ marginTop: '20px' }}>
             <h3>Generated Redlined Documents</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {redlinedDocuments.map((result, index) => (
+              {redlinedDocuments.filter(doc => doc.success && !doc.processing).map((result, index) => (
                 <div key={index} style={{ 
                   padding: '12px', 
                   border: '1px solid #ddd', 
@@ -780,30 +1170,50 @@ const SessionWorkspace = ({ session }) => {
                     </div>
                   ) : result.processing ? (
                     <div>
+                      {/* Progress Bar */}
                       <div style={{ 
-                        padding: '8px 16px',
-                        background: '#fff3cd',
-                        border: '1px solid #ffeaa7',
-                        borderRadius: '4px',
-                        color: '#856404',
-                        fontSize: '14px',
-                        marginBottom: '8px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
+                        background: '#f8f9fa',
+                        borderRadius: '8px',
+                        padding: '12px',
+                        marginBottom: '8px'
                       }}>
+                        <div style={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          alignItems: 'center',
+                          marginBottom: '8px'
+                        }}>
+                          <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#495057' }}>
+                            {result.message || 'Processing...'}
+                          </span>
+                          <span style={{ fontSize: '12px', color: '#6c757d' }}>
+                            {result.progress || 0}%
+                          </span>
+                        </div>
+                        
+                        {/* Progress bar */}
                         <div style={{
-                          width: '16px',
-                          height: '16px',
-                          border: '2px solid #856404',
-                          borderTop: '2px solid transparent',
-                          borderRadius: '50%',
-                          animation: 'spin 1s linear infinite'
-                        }}></div>
-                        Processing in background...
+                          width: '100%',
+                          height: '8px',
+                          background: '#e9ecef',
+                          borderRadius: '4px',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{
+                            width: `${result.progress || 0}%`,
+                            height: '100%',
+                            background: result.progress >= 100 ? '#28a745' : '#007bff',
+                            borderRadius: '4px',
+                            transition: 'width 0.3s ease-in-out'
+                          }}></div>
+                        </div>
                       </div>
+                      
                       <div style={{ fontSize: '12px', color: '#666' }}>
-                        This document is being processed due to its complexity. The download button will appear when ready.
+                        {result.timeoutError ? 
+                          'API Gateway timed out, but processing continues via WebSocket. Download will appear when ready.' :
+                          'Document processing in background due to complexity. Download will appear when ready.'
+                        }
                       </div>
                     </div>
                   ) : (

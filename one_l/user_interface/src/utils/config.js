@@ -31,7 +31,8 @@ const loadConfig = async () => {
       knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
       knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
       knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || '',
-      knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || ''
+      knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || '',
+      webSocketUrl: process.env.REACT_APP_WEBSOCKET_URL || ''
     };
     console.log('Development configuration loaded successfully');
     return config;
@@ -88,7 +89,8 @@ const loadConfig = async () => {
       knowledgeManagementUploadEndpointUrl: process.env.REACT_APP_KNOWLEDGE_UPLOAD_URL || '',
       knowledgeManagementRetrieveEndpointUrl: process.env.REACT_APP_KNOWLEDGE_RETRIEVE_URL || '',
       knowledgeManagementDeleteEndpointUrl: process.env.REACT_APP_KNOWLEDGE_DELETE_URL || '',
-      knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || ''
+      knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || '',
+      webSocketUrl: process.env.REACT_APP_WEBSOCKET_URL || ''
     };
     
     console.log('Configuration loaded from environment variables successfully');
@@ -126,6 +128,13 @@ const getApiGatewayUrl = async () => {
 };
 
 /**
+ * Get WebSocket URL
+ */
+const getWebSocketUrl = async () => {
+  return await getConfig('webSocketUrl');
+};
+
+/**
  * Get authentication configuration
  */
 const getAuthConfig = async () => {
@@ -150,6 +159,7 @@ export {
   loadConfig,
   getConfig,
   getApiGatewayUrl,
+  getWebSocketUrl,
   getAuthConfig,
   isConfigValid
 }; 

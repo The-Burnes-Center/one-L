@@ -52,7 +52,17 @@ const apiCall = async (endpoint, options = {}) => {
     return await response.json();
   } catch (error) {
     clearTimeout(timeoutId);
-    console.error('API call failed:', error);
+    
+    // Handle CORS errors that often indicate timeouts on agent review endpoints
+    if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
+      if (endpoint.includes('/agent/review')) {
+        // Don't log CORS errors for agent review - they're expected timeouts
+        throw new Error('continue in background');
+      } else {
+        console.error('API call failed:', error);
+        throw new Error('Network connectivity issue - please try again');
+      }
+    }
     
     // Enhance timeout detection - handle various timeout scenarios
     if (error.name === 'AbortError' || 
@@ -61,8 +71,19 @@ const apiCall = async (endpoint, options = {}) => {
         error.message.includes('ERR_FAILED') ||
         error.message.includes('ERR_NETWORK') ||
         error.message.includes('ERR_INTERNET_DISCONNECTED')) {
-      throw new Error(`Request timeout after ${timeoutMs/1000}s - the backend may be experiencing issues`);
+      
+      // Special handling for agent review timeouts
+      if (endpoint.includes('/agent/review')) {
+        // Don't log timeouts for agent review - they're expected
+        throw new Error('continue in background');
+      } else {
+        console.error('API call failed:', error);
+        throw new Error(`Request timeout after ${timeoutMs/1000}s - please try again later`);
+      }
     }
+    
+    // Log other errors normally
+    console.error('API call failed:', error);
     throw error;
   }
 };
@@ -474,11 +495,20 @@ const sessionAPI = {
   /**
    * Get all sessions for a user
    */
-  getUserSessions: async (userId) => {
+  getUserSessions: async (userId, filterByResults = false) => {
     try {
-      console.log('Getting sessions for user:', userId);
+      console.log('Getting sessions for user:', userId, 'filterByResults:', filterByResults);
       
-      const response = await apiCall(`/knowledge_management/sessions?action=list&user_id=${userId}`);
+      const queryParams = new URLSearchParams({
+        action: 'list',
+        user_id: userId
+      });
+      
+      if (filterByResults) {
+        queryParams.append('filter_by_results', 'true');
+      }
+      
+      const response = await apiCall(`/knowledge_management/sessions?${queryParams.toString()}`);
       
       console.log('Retrieved sessions:', response.sessions?.length || 0);
       return response;

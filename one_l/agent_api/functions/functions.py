@@ -12,6 +12,7 @@ from aws_cdk import (
 from .shared.iam_roles import IAMRolesConstruct
 from .knowledge_management.knowledge_management import KnowledgeManagementConstruct
 from .agent.agent import AgentConstruct
+from .websocket.websocket import WebSocketConstruct
 
 
 class FunctionsConstruct(Construct):
@@ -59,6 +60,12 @@ class FunctionsConstruct(Construct):
             iam_roles=self.iam_roles
         )
         
+        # Create WebSocket functions for real-time communication
+        self.websocket = WebSocketConstruct(
+            self, "WebSocket",
+            iam_roles=self.iam_roles
+        )
+        
         # Create agent functions (will be updated with storage references)
         self.agent = None
     
@@ -71,7 +78,8 @@ class FunctionsConstruct(Construct):
         """
         
         routes = {
-            "knowledge_management": self.knowledge_management.get_function_routes()
+            "knowledge_management": self.knowledge_management.get_function_routes(),
+            "websocket": self.websocket.get_function_routes()
         }
         
         # Add agent routes if available

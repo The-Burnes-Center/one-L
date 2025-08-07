@@ -5,7 +5,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 const SessionSidebar = ({ 
   currentUserId, 
   isVisible = true,
-  onAdminSectionChange 
+  onAdminSectionChange,
+  onRefreshRequest // Add callback to allow parent to trigger refresh
 }) => {
   const navigate = useNavigate();
   const { sessionId } = useParams();
@@ -22,12 +23,32 @@ const SessionSidebar = ({
     }
   }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Refresh sessions periodically to catch newly completed sessions
+  useEffect(() => {
+    if (!currentUserId || !isVisible) return;
+    
+    const refreshInterval = setInterval(() => {
+      loadSessions();
+    }, 30000); // Refresh every 30 seconds
+
+    return () => clearInterval(refreshInterval);
+  }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for refresh requests from parent
+  useEffect(() => {
+    if (onRefreshRequest) {
+      loadSessions();
+    }
+  }, [onRefreshRequest]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadSessions = async () => {
     try {
       setLoading(true);
-      const response = await sessionAPI.getUserSessions(currentUserId);
+      // Only load sessions that have processed documents (results)
+      const response = await sessionAPI.getUserSessions(currentUserId, true);
       if (response.success) {
         setSessions(response.sessions || []);
+        console.log(`Loaded ${response.sessions?.length || 0} sessions with results`);
       }
     } catch (error) {
       console.error('Error loading sessions:', error);

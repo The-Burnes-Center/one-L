@@ -33,6 +33,7 @@ class UserInterfaceConstruct(Construct):
         construct_id: str,
         authorization_construct=None,
         api_gateway_construct=None,
+        agent_api_construct=None,
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -40,6 +41,7 @@ class UserInterfaceConstruct(Construct):
         # Store references to other constructs
         self.authorization = authorization_construct
         self.api_gateway = api_gateway_construct
+        self.agent_api = agent_api_construct
         
         # Instance variables
         self.website_bucket = None
@@ -206,6 +208,7 @@ class UserInterfaceConstruct(Construct):
                 "USER_POOL_DOMAIN": f"https://{self.authorization.user_pool_domain.domain_name}.auth.{Stack.of(self).region}.amazoncognito.com",
                 "REGION": Stack.of(self).region,
                 "STACK_NAME": self._stack_name,
+                "WEBSOCKET_URL": self.agent_api.get_websocket_api_url() if self.agent_api else "",
                 "LOG_LEVEL": "INFO"
             },
             log_retention=logs.RetentionDays.ONE_WEEK

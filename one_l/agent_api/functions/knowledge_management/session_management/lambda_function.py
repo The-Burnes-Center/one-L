@@ -18,7 +18,8 @@ dynamodb = boto3.resource('dynamodb')
 KNOWLEDGE_BUCKET = os.environ.get('KNOWLEDGE_BUCKET')
 USER_DOCUMENTS_BUCKET = os.environ.get('USER_DOCUMENTS_BUCKET')
 AGENT_PROCESSING_BUCKET = os.environ.get('AGENT_PROCESSING_BUCKET')
-SESSIONS_TABLE = 'one-l-sessions'
+SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE', 'one-l-sessions')
+ANALYSIS_RESULTS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
 
 def create_cors_response(status_code: int, body: dict) -> dict:
     """Create a response with CORS headers"""
@@ -69,6 +70,8 @@ def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, An
             'title': f"New Session - {datetime.now().strftime('%b %d, %Y %I:%M %p')}",
             'status': 'active',
             'document_count': 0,
+            'has_results': False,  # Track if session has processed documents
+            'last_activity': timestamp,
             's3_prefix': session_prefix
         }
         
@@ -94,8 +97,8 @@ def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, An
             'error': str(e)
         }
 
-def get_user_sessions(user_id: str) -> Dict[str, Any]:
-    """Get all sessions for a user"""
+def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str, Any]:
+    """Get all sessions for a user, optionally filtered by whether they have results"""
     try:
         # Try to get from DynamoDB
         try:
@@ -106,10 +109,14 @@ def get_user_sessions(user_id: str) -> Dict[str, Any]:
             )
             sessions = response.get('Items', [])
             
+            # Filter sessions with results if requested
+            if filter_by_results:
+                sessions = [s for s in sessions if s.get('has_results', False)]
+            
             # Sort by created_at descending
             sessions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
             
-            logger.info(f"Retrieved {len(sessions)} sessions for user {user_id}")
+            logger.info(f"Retrieved {len(sessions)} sessions for user {user_id} (filter_by_results: {filter_by_results})")
             
             return {
                 'success': True,
@@ -140,10 +147,11 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         # Update the session
         response = table.update_item(
             Key={'session_id': session_id},
-            UpdateExpression='SET title = :title, updated_at = :updated_at',
+            UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
             ExpressionAttributeValues={
                 ':title': title,
                 ':updated_at': datetime.now(timezone.utc).isoformat(),
+                ':last_activity': datetime.now(timezone.utc).isoformat(),
                 ':user_id': user_id
             },
             ConditionExpression='user_id = :user_id',
@@ -163,6 +171,42 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
             'success': False,
             'error': str(e)
         }
+
+def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
+    """Mark a session as having processed results (documents)"""
+    try:
+        table = dynamodb.Table(SESSIONS_TABLE)
+        
+        # Update session to mark it has results
+        response = table.update_item(
+            Key={'session_id': session_id},
+            UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity, document_count = document_count + :inc',
+            ExpressionAttributeValues={
+                ':has_results': True,
+                ':updated_at': datetime.now(timezone.utc).isoformat(),
+                ':last_activity': datetime.now(timezone.utc).isoformat(),
+                ':inc': 1,
+                ':user_id': user_id
+            },
+            ConditionExpression='user_id = :user_id',
+            ReturnValues='ALL_NEW'
+        )
+        
+        logger.info(f"Marked session {session_id} as having results")
+        
+        return {
+            'success': True,
+            'session': response.get('Attributes', {})
+        }
+        
+    except Exception as e:
+        logger.error(f"Error marking session with results: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
 
 def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
     """Delete a session and its associated files"""
@@ -372,7 +416,9 @@ def lambda_handler(event, context):
             return create_cors_response(200 if result['success'] else 500, result)
             
         elif http_method == 'GET' and action == 'list':
-            result = get_user_sessions(user_id)
+            # Check if we should filter by sessions with results
+            filter_by_results = query_parameters.get('filter_by_results', '').lower() == 'true'
+            result = get_user_sessions(user_id, filter_by_results)
             return create_cors_response(200 if result['success'] else 500, result)
             
         elif http_method == 'PUT' and action == 'update':
@@ -412,6 +458,16 @@ def lambda_handler(event, context):
                 return create_cors_response(400, {'error': 'session_id is required'})
             
             result = get_session_analysis_results(session_id, user_id)
+            return create_cors_response(200 if result['success'] else 500, result)
+            
+        elif http_method == 'PUT' and action == 'mark_results':
+            # Mark session as having processed results
+            session_id = body.get('session_id')
+            
+            if not session_id:
+                return create_cors_response(400, {'error': 'session_id is required'})
+            
+            result = mark_session_with_results(session_id, user_id)
             return create_cors_response(200 if result['success'] else 500, result)
             
         else:

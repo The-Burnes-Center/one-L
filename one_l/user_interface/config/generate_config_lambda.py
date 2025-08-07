@@ -123,6 +123,7 @@ def generate_config_json() -> Dict[str, Any]:
         user_pool_domain = os.environ.get('USER_POOL_DOMAIN')
         region = os.environ.get('REGION')
         stack_name = os.environ.get('STACK_NAME')
+        websocket_url = os.environ.get('WEBSOCKET_URL')
         
         # Validate required environment variables
         required_vars = {
@@ -154,7 +155,8 @@ def generate_config_json() -> Dict[str, Any]:
             "knowledgeManagementUploadEndpointUrl": f"{api_gateway_url}knowledge_management/upload",
             "knowledgeManagementRetrieveEndpointUrl": f"{api_gateway_url}knowledge_management/retrieve",
             "knowledgeManagementDeleteEndpointUrl": f"{api_gateway_url}knowledge_management/delete",
-            "knowledgeManagementSyncEndpointUrl": f"{api_gateway_url}knowledge_management/sync"
+            "knowledgeManagementSyncEndpointUrl": f"{api_gateway_url}knowledge_management/sync",
+            "webSocketUrl": websocket_url
         }
         
         # Write config.json to S3

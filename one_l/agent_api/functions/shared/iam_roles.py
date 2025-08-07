@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_iam as iam,
     aws_s3 as s3,
     aws_opensearchservice as opensearch,
+    aws_dynamodb as dynamodb,
 )
 
 
@@ -252,6 +253,48 @@ class IAMRolesConstruct(Construct):
                 resources=[
                     opensearch_collection.attr_arn
                 ]
+            )
+        )
+        
+        # Grant Lambda invoke permissions for WebSocket notifications and session management
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "lambda:InvokeFunction"
+                ],
+                resources=[
+                    f"arn:aws:lambda:*:*:function:*-websocket-notification",
+                    f"arn:aws:lambda:*:*:function:*-session-management"
+                ]
+            )
+        )
+        
+        return role
+    
+    def create_websocket_role(self, role_name: str, connections_table: dynamodb.Table) -> iam.Role:
+        """Create IAM role for WebSocket Lambda functions."""
+        role = iam.Role(
+            self, f"{role_name}WebSocketRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                )
+            ]
+        )
+        
+        # Grant DynamoDB permissions for connections table
+        connections_table.grant_read_write_data(role)
+        
+        # Grant API Gateway Management permissions for posting to connections
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "execute-api:ManageConnections"
+                ],
+                resources=["*"]  # WebSocket API ARN pattern is complex, using * for simplicity
             )
         )
         
