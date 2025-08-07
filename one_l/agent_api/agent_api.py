@@ -9,6 +9,7 @@ from .storage.storage import StorageConstruct
 from .opensearch.opensearch import OpenSearchConstruct
 from .knowledge_base.knowledge_base import KnowledgeBaseConstruct
 from .functions.functions import FunctionsConstruct
+from .agent.agent import Agent
 
 
 class AgentApiConstruct(Construct):
@@ -31,6 +32,9 @@ class AgentApiConstruct(Construct):
         self.functions = None
         self.knowledge_base_role = None
         
+        # Instance variable for agent business logic
+        self.agent = None
+        
         # Configuration - ensure all names start with stack name
         self._stack_name = Stack.of(self).stack_name
         
@@ -40,6 +44,7 @@ class AgentApiConstruct(Construct):
         self.create_opensearch()
         self.create_functions()  # This now creates the index
         self.create_knowledge_base()  # This now depends on index creation
+        self.create_agent()  # Create agent business logic after knowledge base is ready
     
     def create_storage(self):
         """Create the storage construct."""
@@ -87,9 +92,13 @@ class AgentApiConstruct(Construct):
             self, "Functions",
             knowledge_bucket=self.storage.knowledge_bucket,
             user_documents_bucket=self.storage.user_documents_bucket,
+            agent_processing_bucket=self.storage.agent_processing_bucket,  # Pass agent processing bucket directly
             knowledge_base_id="placeholder",  # Will be updated after knowledge base creation
             opensearch_collection=self.opensearch.collection
         )
+        
+        # Setup agent functions with complete storage references
+        self.functions.setup_agent_with_storage(self.storage)
     
     def create_knowledge_base(self):
         """Create the Knowledge Base construct."""
@@ -108,3 +117,40 @@ class AgentApiConstruct(Construct):
             "KNOWLEDGE_BASE_ID", 
             self.knowledge_base.get_knowledge_base_id()
         )
+        
+        # Update the knowledge base ID in agent functions after creation
+        if hasattr(self.functions, 'agent') and self.functions.agent:
+            self.functions.agent.document_review_function.add_environment(
+                "KNOWLEDGE_BASE_ID", 
+                self.knowledge_base.get_knowledge_base_id()
+            )
+    
+    def create_agent(self):
+        """Create the Agent business logic following composition pattern."""
+        if self.knowledge_base:
+            # Initialize the agent with the knowledge base ID and region
+            # Note: This is the business logic layer, not the infrastructure
+            knowledge_base_id = self.knowledge_base.get_knowledge_base_id()
+            region = Stack.of(self).region
+            
+            # The Agent business logic will be available for runtime operations
+            # This follows the composition pattern used throughout the project
+            self.agent = Agent(knowledge_base_id, region)
+    
+    def get_agent(self) -> Optional[Agent]:
+        """Get the agent business logic instance."""
+        return self.agent
+    
+    def get_agent_functions(self):
+        """Get the agent functions construct."""
+        return self.functions.agent if hasattr(self.functions, 'agent') else None
+    
+    def get_websocket_construct(self):
+        """Get the WebSocket construct for real-time communication."""
+        return self.functions.websocket if hasattr(self.functions, 'websocket') else None
+    
+    def get_websocket_api_url(self) -> str:
+        """Get the WebSocket API URL."""
+        if hasattr(self.functions, 'websocket') and self.functions.websocket:
+            return self.functions.websocket.get_websocket_api_url()
+        return None

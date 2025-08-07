@@ -48,6 +48,33 @@ class AuthorizationConstruct(Construct):
         self.create_user_pool_client()
         self.create_auth_lambda()
         self.create_outputs()
+
+    def update_callback_urls(self, cloudfront_domain_name: str):
+        """Update User Pool Client callback URLs with CloudFront URL."""
+        try:
+            from aws_cdk import aws_cognito as cognito_cfn
+            
+            # Get the underlying CloudFormation resource
+            cfn_user_pool_client = self.user_pool_client.node.default_child
+            
+            # Update the callback URLs to include CloudFront domain
+            callback_urls = [
+                f"https://{cloudfront_domain_name}/"
+            ]
+            
+            logout_urls = [
+                f"https://{cloudfront_domain_name}/"
+            ]
+            
+            # Update the CloudFormation properties
+            cfn_user_pool_client.add_property_override("CallbackURLs", callback_urls)
+            cfn_user_pool_client.add_property_override("LogoutURLs", logout_urls)
+            
+            print(f"Updated Cognito callback URLs to include: https://{cloudfront_domain_name}")
+            
+        except Exception as e:
+            print(f"Warning: Could not update Cognito callback URLs: {e}")
+            # This is not critical for stack deployment, so we continue
     
     def create_user_pool(self):
         """Create the Cognito User Pool."""
@@ -121,8 +148,8 @@ class AuthorizationConstruct(Construct):
                     cognito.OAuthScope.EMAIL,
                     cognito.OAuthScope.PROFILE
                 ],
-                callback_urls=["http://localhost:3000"],  # Will be updated with CloudFront URL
-                logout_urls=["http://localhost:3000"]  # Will be updated with CloudFront URL
+                callback_urls=["http://localhost:3000"],  # Placeholder - will be updated post-deployment
+                logout_urls=["http://localhost:3000"]  # Placeholder - will be updated post-deployment
             ),
             read_attributes=cognito.ClientAttributes().with_standard_attributes(
                 email=True,
@@ -190,7 +217,7 @@ class AuthorizationConstruct(Construct):
         
         CfnOutput(
             self, "UserPoolDomainUrl",
-            value=self.user_pool_domain.domain_name,
+            value=f"https://{self.user_pool_domain.domain_name}.auth.{Stack.of(self).region}.amazoncognito.com",
             description="Cognito User Pool Domain URL",
             export_name=f"{self._stack_name}-UserPoolDomainUrl"
         )

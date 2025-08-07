@@ -1,0 +1,292 @@
+"""
+Model integration for Claude 4 Sonnet thinking with AWS Bedrock.
+Handles tool calling for comprehensive document review.
+"""
+
+import json
+import boto3
+import logging
+from typing import Dict, Any, List
+from .system_prompt import SYSTEM_PROMPT
+from .tools import retrieve_from_knowledge_base, redline_document, get_tool_definitions, save_analysis_to_dynamodb
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Initialize AWS clients
+bedrock_client = boto3.client('bedrock-runtime')
+
+# Model configuration - Using inference profile for Claude Sonnet 4
+CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+MAX_TOKENS = 8000
+TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
+THINKING_BUDGET_TOKENS = 4000
+
+class Model:
+    """
+    Handles document review using Claude 4 Sonnet thinking with tool calling.
+    """
+    
+    def __init__(self, knowledge_base_id: str, region: str):
+        self.knowledge_base_id = knowledge_base_id
+        self.region = region
+        self.tools = get_tool_definitions()
+    
+
+    
+    def review_document(self, bucket_type: str, document_s3_key: str) -> Dict[str, Any]:
+        """
+        Review a vendor document for conflicts using Claude 4 Sonnet thinking with tools.
+        
+        Args:
+            bucket_type: Type of source bucket
+            document_s3_key: S3 key of the document to review
+            
+        Returns:
+            Dictionary containing the review results
+        """
+        
+        try:
+            logger.info(f"Starting document review with Claude 4 Sonnet thinking and tools")
+            
+            # Get document from S3 for attachment
+            bucket_name = self._get_bucket_name(bucket_type)
+            s3_client = boto3.client('s3')
+            
+            response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
+            document_data = response['Body'].read()
+            
+            # Prepare the conversation with document attachment
+            import base64
+            import os
+            
+            # Extract and sanitize filename for document name
+            filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": "Please analyze this vendor submission document."
+                        },
+                        {
+                            "document": {
+                                "format": self._get_document_format(document_s3_key),
+                                "name": filename,
+                                "source": {
+                                    "bytes": document_data
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Make the initial request to Claude with tools
+            response = self._call_claude_with_tools(messages)
+            
+            # Extract content from Converse API response
+            content = ""
+            if response.get("output", {}).get("message", {}).get("content"):
+                for content_block in response["output"]["message"]["content"]:
+                    if content_block.get("text"):
+                        content += content_block["text"]
+            
+            return {
+                "success": True,
+                "analysis": content,
+                "tool_results": response.get("tool_results", []),
+                "usage": response.get("usage", {}),
+                "thinking": response.get("thinking", "")
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in document review: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "analysis": "",
+                "tool_results": [],
+                "usage": {},
+                "thinking": ""
+            }
+    
+    def _get_bucket_name(self, bucket_type: str) -> str:
+        """Get the appropriate bucket name based on type."""
+        import os
+        if bucket_type == "knowledge":
+            return os.environ.get("KNOWLEDGE_BUCKET")
+        elif bucket_type == "user_documents":
+            return os.environ.get("USER_DOCUMENTS_BUCKET")
+        elif bucket_type == "agent_processing":
+            return os.environ.get("AGENT_PROCESSING_BUCKET")
+        else:
+            raise ValueError(f"Invalid bucket_type: {bucket_type}")
+    
+    def _get_document_format(self, document_s3_key: str) -> str:
+        """Determine document format based on file extension for Converse API."""
+        file_extension = document_s3_key.lower().split('.')[-1]
+        
+        # Converse API supported formats
+        supported_formats = ['pdf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt', 'md']
+        
+        if file_extension in supported_formats:
+            return file_extension
+        else:
+            # Default to PDF if extension not recognized
+            logger.warning(f"Unknown file extension '{file_extension}', defaulting to PDF format")
+            return 'pdf'
+    
+    def _sanitize_filename_for_converse(self, filename: str) -> str:
+        """
+        Sanitize filename to meet Converse API requirements:
+        - Only alphanumeric, whitespace, hyphens, parentheses, square brackets
+        - No more than one consecutive whitespace character
+        """
+        import re
+        
+        # If filename contains UUID or timestamp patterns, extract just the original name
+        # Pattern: uuid_originalname.ext or timestamp/uuid_originalname.ext
+        if '_' in filename:
+            # Try to extract original filename after last underscore
+            parts = filename.split('_')
+            if len(parts) > 1:
+                # Keep everything after the last underscore (likely the original filename)
+                filename = parts[-1]
+        
+        # Remove any invalid characters - keep only allowed ones
+        # Allowed: alphanumeric, whitespace, hyphens, parentheses, square brackets
+        sanitized = re.sub(r'[^a-zA-Z0-9\s\-\(\)\[\]]', '', filename)
+        
+        # Replace multiple consecutive whitespace with single space
+        sanitized = re.sub(r'\s+', ' ', sanitized)
+        
+        # Trim whitespace from start/end
+        sanitized = sanitized.strip()
+        
+        # If sanitization left us with empty string, use default
+        if not sanitized:
+            sanitized = "vendor-submission"
+        
+        logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
+        return sanitized
+    
+    def _call_claude_with_tools(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Call Claude 4 Sonnet thinking with tool support using Converse API.
+        """
+        
+        logger.info(f"Calling Claude with {len(messages)} messages and {len(self.tools)} tools")
+        
+        try:
+            # Call Bedrock using Converse API (supports document attachments)
+            response = bedrock_client.converse(
+                modelId=CLAUDE_MODEL_ID,
+                messages=messages,
+                system=[{"text": SYSTEM_PROMPT}],
+                inferenceConfig={
+                    "maxTokens": MAX_TOKENS,
+                    "temperature": TEMPERATURE
+                },
+                toolConfig={"tools": self.tools},
+                additionalModelRequestFields={
+                    "thinking": {
+                        "type": "enabled",
+                        "budget_tokens": THINKING_BUDGET_TOKENS
+                    }
+                }
+            )
+            
+            # Handle tool calls if present
+            if response.get("stopReason") == "tool_use":
+                return self._handle_tool_calls(messages, response)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error calling Claude: {str(e)}")
+            raise
+    
+    def _handle_tool_calls(self, messages: List[Dict[str, Any]], claude_response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle tool calls from Claude and continue the conversation.
+        """
+        
+        # Add Claude's response to messages (Converse API format)
+        messages.append({
+            "role": "assistant",
+            "content": claude_response["output"]["message"]["content"]
+        })
+        
+        tool_results = []
+        
+        # Process each tool call (Converse API format)
+        for content_block in claude_response["output"]["message"]["content"]:
+            if content_block.get("toolUse"):
+                tool_use = content_block["toolUse"]
+                tool_name = tool_use["name"]
+                tool_input = tool_use["input"]
+                tool_use_id = tool_use["toolUseId"]
+                
+                logger.info(f"Executing tool: {tool_name} with input: {tool_input}")
+                
+                # Execute the tool using existing tools.py functions
+                try:
+                    if tool_name == "retrieve_from_knowledge_base":
+                        result = retrieve_from_knowledge_base(
+                            query=tool_input["query"],
+                            max_results=tool_input.get("max_results", 100),
+                            knowledge_base_id=self.knowledge_base_id,
+                            region=self.region
+                        )
+                    else:
+                        result = {"error": f"Unknown tool: {tool_name}"}
+                    
+                    tool_results.append({
+                        "tool_name": tool_name,
+                        "input": tool_input,
+                        "result": result
+                    })
+                    
+                    # Add tool result to messages (Converse API format)
+                    messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"json": result}]
+                                }
+                            }
+                        ]
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error executing tool {tool_name}: {str(e)}")
+                    error_result = {"error": str(e)}
+                    tool_results.append({
+                        "tool_name": tool_name,
+                        "input": tool_input,
+                        "result": error_result
+                    })
+                    
+                    # Add error to messages (Converse API format)
+                    messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"json": error_result}]
+                                }
+                            }
+                        ]
+                    })
+        
+        # Continue the conversation with tool results
+        final_response = self._call_claude_with_tools(messages)
+        final_response["tool_results"] = tool_results
+        
+        return final_response
+ 

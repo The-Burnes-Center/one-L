@@ -1,0 +1,3 @@
+boto3>=1.34.0
+bayoo-docx
+anthropic>=0.34.0

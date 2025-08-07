@@ -6,6 +6,7 @@ from typing import Optional
 from constructs import Construct
 from aws_cdk import (
     aws_s3 as s3,
+    aws_dynamodb as dynamodb,
     RemovalPolicy,
     Stack,
     CfnOutput
@@ -29,19 +30,25 @@ class StorageConstruct(Construct):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
-        # Instance variables - store bucket references
+        # Instance variables - store bucket and table references
         self.knowledge_bucket = None
         self.user_documents_bucket = None
+        self.agent_processing_bucket = None
+        self.analysis_table = None
         
         # Configuration - ensure all names start with stack name
         self._stack_name = Stack.of(self).stack_name
         self._knowledge_bucket_name = knowledge_bucket_name or f"{self._stack_name.lower()}-knowledge-source"
         self._user_documents_bucket_name = user_documents_bucket_name or f"{self._stack_name.lower()}-user-documents"
+        self._agent_processing_bucket_name = f"{self._stack_name.lower()}-agent-processing"
+        self._analysis_table_name = f"{self._stack_name}-analysis-results"
         self._additional_cors_origins = additional_cors_origins or []
         
         # Create the storage infrastructure
         self.create_knowledge_bucket()
         self.create_user_documents_bucket()
+        self.create_agent_processing_bucket()
+        self.create_analysis_table()
         self.create_outputs()
     
     def create_knowledge_bucket(self):
@@ -121,6 +128,78 @@ class StorageConstruct(Construct):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
     
+    def create_agent_processing_bucket(self):
+        """Create the agent processing bucket for input/output documents."""
+        
+        # Build CORS allowed origins list
+        cors_origins = [
+            "http://localhost:3000",    # Local development
+            "https://localhost:3000",   # Local development with HTTPS
+        ]
+        cors_origins.extend(self._additional_cors_origins)
+        
+        # If no additional origins provided, allow all origins for CloudFront compatibility
+        if not self._additional_cors_origins:
+            cors_origins = ["*"]
+        
+        self.agent_processing_bucket = s3.Bucket(
+            self, "AgentProcessingBucket",
+            bucket_name=self._agent_processing_bucket_name,
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            cors=[
+                s3.CorsRule(
+                    allowed_methods=[
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.HEAD,  # Add HEAD method for preflight checks
+                        s3.HttpMethods.POST,
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.DELETE,
+                    ],
+                    allowed_origins=cors_origins,
+                    allowed_headers=["*"],
+                    exposed_headers=["ETag"],  # Add ETag header for upload verification
+                    max_age=3000,  # Add max_age for CORS preflight caching
+                )
+            ],
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        )
+    
+    def create_analysis_table(self):
+        """Create DynamoDB table for storing analysis results."""
+        
+        self.analysis_table = dynamodb.Table(
+            self, "AnalysisTable",
+            table_name=self._analysis_table_name,
+            partition_key=dynamodb.Attribute(
+                name="analysis_id",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+            point_in_time_recovery=True
+        )
+        
+        # Add GSI for querying by document
+        self.analysis_table.add_global_secondary_index(
+            index_name="document-index",
+            partition_key=dynamodb.Attribute(
+                name="document_s3_key",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp",
+                type=dynamodb.AttributeType.STRING
+            )
+        )
+    
     def create_outputs(self):
         """Create CloudFormation outputs."""
         CfnOutput(
@@ -150,27 +229,69 @@ class StorageConstruct(Construct):
             description="S3 User Documents Bucket ARN",
             export_name=f"{self._stack_name}-UserDocumentsBucketArn"
         )
+        
+        CfnOutput(
+            self, "AgentProcessingBucketName",
+            value=self.agent_processing_bucket.bucket_name,
+            description="S3 Agent Processing Bucket Name",
+            export_name=f"{self._stack_name}-AgentProcessingBucketName"
+        )
+        
+        CfnOutput(
+            self, "AgentProcessingBucketArn",
+            value=self.agent_processing_bucket.bucket_arn,
+            description="S3 Agent Processing Bucket ARN",
+            export_name=f"{self._stack_name}-AgentProcessingBucketArn"
+        )
+        
+        CfnOutput(
+            self, "AnalysisTableName",
+            value=self.analysis_table.table_name,
+            description="DynamoDB Analysis Results Table Name",
+            export_name=f"{self._stack_name}-AnalysisTableName"
+        )
+        
+        CfnOutput(
+            self, "AnalysisTableArn",
+            value=self.analysis_table.table_arn,
+            description="DynamoDB Analysis Results Table ARN",
+            export_name=f"{self._stack_name}-AnalysisTableArn"
+        )
     
-    def grant_read_access(self, principal, bucket_name: str = "both"):
+    def grant_read_access(self, principal, bucket_name: str = "all"):
         """Grant read access to specified bucket(s)."""
-        if bucket_name in ["knowledge", "both"]:
+        if bucket_name in ["knowledge", "all"]:
             self.knowledge_bucket.grant_read(principal)
         
-        if bucket_name in ["user_documents", "both"]:
+        if bucket_name in ["user_documents", "all"]:
             self.user_documents_bucket.grant_read(principal)
+        
+        if bucket_name in ["agent_processing", "all"]:
+            self.agent_processing_bucket.grant_read(principal)
     
-    def grant_write_access(self, principal, bucket_name: str = "both"):
+    def grant_write_access(self, principal, bucket_name: str = "all"):
         """Grant write access to specified bucket(s)."""
-        if bucket_name in ["knowledge", "both"]:
+        if bucket_name in ["knowledge", "all"]:
             self.knowledge_bucket.grant_write(principal)
         
-        if bucket_name in ["user_documents", "both"]:
+        if bucket_name in ["user_documents", "all"]:
             self.user_documents_bucket.grant_write(principal)
+        
+        if bucket_name in ["agent_processing", "all"]:
+            self.agent_processing_bucket.grant_write(principal)
     
-    def grant_read_write_access(self, principal, bucket_name: str = "both"):
+    def grant_read_write_access(self, principal, bucket_name: str = "all"):
         """Grant read/write access to specified bucket(s)."""
-        if bucket_name in ["knowledge", "both"]:
+        if bucket_name in ["knowledge", "all"]:
             self.knowledge_bucket.grant_read_write(principal)
         
-        if bucket_name in ["user_documents", "both"]:
-            self.user_documents_bucket.grant_read_write(principal) 
+        if bucket_name in ["user_documents", "all"]:
+            self.user_documents_bucket.grant_read_write(principal)
+        
+        if bucket_name in ["agent_processing", "all"]:
+            self.agent_processing_bucket.grant_read_write(principal)
+    
+    def grant_dynamodb_access(self, principal, table_name: str = "analysis"):
+        """Grant DynamoDB access to specified table(s)."""
+        if table_name in ["analysis", "all"]:
+            self.analysis_table.grant_read_write_data(principal) 

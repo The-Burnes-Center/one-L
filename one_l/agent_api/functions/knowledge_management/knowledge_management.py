@@ -30,6 +30,7 @@ class KnowledgeManagementConstruct(Construct):
         construct_id: str,
         knowledge_bucket: s3.Bucket,
         user_documents_bucket: s3.Bucket,
+        agent_processing_bucket: s3.Bucket,  # Remove default None since it's now required
         knowledge_base_id: str,
         opensearch_collection: aoss.CfnCollection,
         iam_roles,
@@ -40,9 +41,13 @@ class KnowledgeManagementConstruct(Construct):
         # Store references
         self.knowledge_bucket = knowledge_bucket
         self.user_documents_bucket = user_documents_bucket
+        self.agent_processing_bucket = agent_processing_bucket
         self.knowledge_base_id = knowledge_base_id
         self.opensearch_collection = opensearch_collection
-        self.buckets = [knowledge_bucket, user_documents_bucket]
+        
+        # Create buckets list for IAM permissions (include all buckets)
+        self.buckets = [knowledge_bucket, user_documents_bucket, agent_processing_bucket]
+            
         self.iam_roles = iam_roles
         
         # Configuration
@@ -54,6 +59,7 @@ class KnowledgeManagementConstruct(Construct):
         self.retrieve_from_s3_function = None
         self.delete_from_s3_function = None
         self.sync_knowledge_base_function = None
+        self.session_management_function = None
         self.create_index_function = None
         self.create_index_provider = None
         self.create_index_custom_resource = None
@@ -69,12 +75,22 @@ class KnowledgeManagementConstruct(Construct):
         self.create_retrieve_from_s3_function()
         self.create_delete_from_s3_function()
         self.create_sync_knowledge_base_function()
+        self.create_session_management_function()
     
     def create_upload_to_s3_function(self):
         """Create Lambda function for uploading files to S3."""
         
         # Create role with S3 write permissions
         role = self.iam_roles.create_s3_write_role("UploadToS3", self.buckets)
+        
+        # Prepare environment variables
+        env_vars = {
+            "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
+            "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
+            "LOG_LEVEL": "INFO"
+        }
+        if self.agent_processing_bucket:
+            env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
         
         # Create Lambda function
         self.upload_to_s3_function = _lambda.Function(
@@ -86,11 +102,7 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            environment={
-                "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
-                "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
-                "LOG_LEVEL": "INFO"
-            },
+            environment=env_vars,
             log_retention=logs.RetentionDays.ONE_WEEK
         )
     
@@ -99,6 +111,15 @@ class KnowledgeManagementConstruct(Construct):
         
         # Create role with S3 read permissions
         role = self.iam_roles.create_s3_read_role("RetrieveFromS3", self.buckets)
+        
+        # Prepare environment variables
+        env_vars = {
+            "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
+            "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
+            "LOG_LEVEL": "INFO"
+        }
+        if self.agent_processing_bucket:
+            env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
         
         # Create Lambda function
         self.retrieve_from_s3_function = _lambda.Function(
@@ -110,11 +131,7 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            environment={
-                "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
-                "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
-                "LOG_LEVEL": "INFO"
-            },
+            environment=env_vars,
             log_retention=logs.RetentionDays.ONE_WEEK
         )
     
@@ -123,6 +140,15 @@ class KnowledgeManagementConstruct(Construct):
         
         # Create role with S3 delete permissions
         role = self.iam_roles.create_s3_write_role("DeleteFromS3", self.buckets)
+        
+        # Prepare environment variables
+        env_vars = {
+            "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
+            "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
+            "LOG_LEVEL": "INFO"
+        }
+        if self.agent_processing_bucket:
+            env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
         
         # Create Lambda function
         self.delete_from_s3_function = _lambda.Function(
@@ -134,11 +160,7 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            environment={
-                "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
-                "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
-                "LOG_LEVEL": "INFO"
-            },
+            environment=env_vars,
             log_retention=logs.RetentionDays.ONE_WEEK
         )
     
@@ -182,6 +204,79 @@ class KnowledgeManagementConstruct(Construct):
                 "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
                 "LOG_LEVEL": "INFO"
             },
+            log_retention=logs.RetentionDays.ONE_WEEK
+        )
+    
+    def create_session_management_function(self):
+        """Create Lambda function for session management."""
+        
+        # Create role with S3 read/write permissions and DynamoDB permissions
+        session_role = iam.Role(
+            self, "SessionManagementRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                )
+            ]
+        )
+        
+        # Add S3 permissions for all buckets
+        session_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "s3:GetObject",
+                    "s3:PutObject", 
+                    "s3:DeleteObject",
+                    "s3:ListBucket"
+                ],
+                resources=[
+                    f"{bucket.bucket_arn}/*" for bucket in self.buckets
+                ] + [bucket.bucket_arn for bucket in self.buckets]
+            )
+        )
+        
+        # Add DynamoDB permissions for sessions and analysis results tables
+        session_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Scan",
+                    "dynamodb:Query"
+                ],
+                resources=[
+                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/{self._stack_name}-sessions",
+                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/{self._stack_name}-analysis-results"
+                ]
+            )
+        )
+        
+        # Prepare environment variables
+        env_vars = {
+            "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
+            "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
+            "AGENT_PROCESSING_BUCKET": self.agent_processing_bucket.bucket_name,
+            "SESSIONS_TABLE": f"{self._stack_name}-sessions",
+            "ANALYSIS_RESULTS_TABLE": f"{self._stack_name}-analysis-results",
+            "LOG_LEVEL": "INFO"
+        }
+        
+        # Create Lambda function
+        self.session_management_function = _lambda.Function(
+            self, "SessionManagementFunction",
+            function_name=f"{self._stack_name}-session-management",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset("one_l/agent_api/functions/knowledge_management/session_management"),
+            role=session_role,
+            timeout=Duration.seconds(60),
+            memory_size=256,
+            environment=env_vars,
             log_retention=logs.RetentionDays.ONE_WEEK
         )
     
@@ -267,12 +362,27 @@ class KnowledgeManagementConstruct(Construct):
             s3.NotificationKeyFilter(prefix="uploads/")  # Only trigger for files in uploads/ prefix
         )
         
-        # Add permission for S3 to invoke the sync lambda
+        # Add S3 event notification to trigger sync when files are uploaded to knowledge bucket (admin uploads)
+        self.knowledge_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.sync_knowledge_base_function),
+            s3.NotificationKeyFilter(prefix="admin-uploads/")  # Only trigger for files in admin-uploads/ prefix
+        )
+        
+        # Add permission for S3 to invoke the sync lambda from user documents bucket
         self.sync_knowledge_base_function.add_permission(
-            "AllowS3Invoke",
+            "AllowS3InvokeUserDocs",
             principal=iam.ServicePrincipal("s3.amazonaws.com"),
             action="lambda:InvokeFunction",
             source_arn=self.user_documents_bucket.bucket_arn
+        )
+        
+        # Add permission for S3 to invoke the sync lambda from knowledge bucket
+        self.sync_knowledge_base_function.add_permission(
+            "AllowS3InvokeKnowledge",
+            principal=iam.ServicePrincipal("s3.amazonaws.com"),
+            action="lambda:InvokeFunction",
+            source_arn=self.knowledge_bucket.bucket_arn
         )
     
     def get_function_routes(self) -> dict:
@@ -292,7 +402,7 @@ class KnowledgeManagementConstruct(Construct):
             "retrieve": {
                 "function": self.retrieve_from_s3_function,
                 "path": "retrieve",
-                "methods": ["GET"],
+                "methods": ["GET", "POST"],
                 "description": "Retrieve files from S3 buckets"
             },
             "delete": {
@@ -306,6 +416,12 @@ class KnowledgeManagementConstruct(Construct):
                 "path": "sync",
                 "methods": ["POST"],
                 "description": "Manually sync Knowledge Base with S3 data sources"
+            },
+            "sessions": {
+                "function": self.session_management_function,
+                "path": "sessions",
+                "methods": ["GET", "POST", "PUT", "DELETE"],
+                "description": "Manage user sessions and session-based file organization"
             }
         }
     
