@@ -234,7 +234,7 @@ def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all") -> D
 def get_sync_job_status(knowledge_base_id: str, job_id: str) -> Dict[str, Any]:
     """Get the status of a specific ingestion job."""
     try:
-        # Get data source ID (assuming first data source)
+        # Get all data sources
         data_sources_response = bedrock_client.list_data_sources(
             knowledgeBaseId=knowledge_base_id
         )
@@ -242,26 +242,53 @@ def get_sync_job_status(knowledge_base_id: str, job_id: str) -> Dict[str, Any]:
         if not data_sources_response['dataSourceSummaries']:
             return create_error_response(404, "No data sources found for Knowledge Base")
         
-        data_source_id = data_sources_response['dataSourceSummaries'][0]['dataSourceId']
+        # Try to find the job in each data source until we find it
+        last_error = None
+        for data_source in data_sources_response['dataSourceSummaries']:
+            try:
+                data_source_id = data_source['dataSourceId']
+                data_source_name = data_source['name']
+                
+                logger.info(f"Checking for job {job_id} in data source {data_source_name} ({data_source_id})")
+                
+                # Try to get ingestion job from this data source
+                response = bedrock_client.get_ingestion_job(
+                    knowledgeBaseId=knowledge_base_id,
+                    dataSourceId=data_source_id,
+                    ingestionJobId=job_id
+                )
+                
+                job = response['ingestionJob']
+                
+                logger.info(f"Found job {job_id} in data source {data_source_name}")
+                
+                return create_success_response({
+                    "message": "Sync job status retrieved successfully",
+                    "job_id": job['ingestionJobId'],
+                    "status": job['status'],
+                    "data_source_id": data_source_id,
+                    "data_source_name": data_source_name,
+                    "created_at": job['createdAt'].isoformat() if 'createdAt' in job else None,
+                    "updated_at": job['updatedAt'].isoformat() if 'updatedAt' in job else None,
+                    "statistics": job.get('statistics', {}),
+                    "failure_reasons": job.get('failureReasons', [])
+                })
+                
+            except Exception as e:
+                # If job not found in this data source, try the next one
+                if "not found" in str(e).lower() or "ResourceNotFoundException" in str(e):
+                    logger.info(f"Job {job_id} not found in data source {data_source['name']}, trying next data source")
+                    last_error = e
+                    continue
+                else:
+                    # Other error types should be reported immediately
+                    logger.error(f"Error checking data source {data_source['name']}: {str(e)}")
+                    last_error = e
+                    continue
         
-        # Get ingestion job details
-        response = bedrock_client.get_ingestion_job(
-            knowledgeBaseId=knowledge_base_id,
-            dataSourceId=data_source_id,
-            ingestionJobId=job_id
-        )
-        
-        job = response['ingestionJob']
-        
-        return create_success_response({
-            "message": "Sync job status retrieved successfully",
-            "job_id": job['ingestionJobId'],
-            "status": job['status'],
-            "created_at": job['createdAt'].isoformat() if 'createdAt' in job else None,
-            "updated_at": job['updatedAt'].isoformat() if 'updatedAt' in job else None,
-            "statistics": job.get('statistics', {}),
-            "failure_reasons": job.get('failureReasons', [])
-        })
+        # If we get here, job wasn't found in any data source
+        logger.error(f"Job {job_id} not found in any data source. Checked {len(data_sources_response['dataSourceSummaries'])} data sources")
+        return create_error_response(404, f"Ingestion job {job_id} not found in any data source")
         
     except Exception as e:
         logger.error(f"Error getting sync job status: {str(e)}")

@@ -13,13 +13,117 @@ const FileUpload = ({
   prefix = "uploads/", 
   description = "Upload files for processing",
   onFilesUploaded = null,
-  enableAutoSync = true // New prop to control auto-sync behavior
+  enableAutoSync = true,
+  onSyncComplete=null // New prop to control auto-sync behavior
 }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
   const fileInputRef = useRef(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncJobIds, setSyncJobIds] = useState([]);
+
+  const pollSyncCompletion = async (jobIds, maxAttempts = 60) => {
+    let attempts = 0;
+    const pollInterval = 15000; // 15 seconds
+    
+    const checkJobsStatus = async () => {
+      try {
+        attempts++;
+        console.log(`Sync polling attempt ${attempts}/${maxAttempts}`);
+        
+        // Check status of all jobs
+        const jobStatuses = await Promise.all(
+          jobIds.map(async (jobId) => {
+            try {
+              const statusResponse = await knowledgeManagementAPI.getSyncJobStatus(jobId);
+              const statusData = typeof statusResponse.body === 'string' 
+                ? JSON.parse(statusResponse.body) 
+                : statusResponse.body || statusResponse;
+              
+              return {
+                jobId,
+                status: statusData.status,
+                success: true
+              };
+            } catch (error) {
+              console.error(`Error checking job ${jobId}:`, error);
+              return {
+                jobId,
+                status: 'FAILED',
+                success: false,
+                error: error.message
+              };
+            }
+          })
+        );
+        
+        // Check if all jobs are completed
+        const completedJobs = jobStatuses.filter(job => 
+          job.status === 'COMPLETE' || job.status === 'COMPLETED'
+        );
+        const failedJobs = jobStatuses.filter(job => 
+          job.status === 'FAILED' || job.status === 'STOPPED' || !job.success
+        );
+        const inProgressJobs = jobStatuses.filter(job => 
+          job.status === 'IN_PROGRESS' || job.status === 'STARTING'
+        );
+        
+        console.log(`Sync status: ${completedJobs.length} completed, ${failedJobs.length} failed, ${inProgressJobs.length} in progress`);
+        
+        // All jobs completed successfully
+        if (completedJobs.length === jobIds.length) {
+          setSyncing(false);
+          setMessage('Files uploaded and knowledge base sync completed successfully!');
+          setMessageType('success');
+          if (onSyncComplete) {
+            onSyncComplete(true, 'Knowledge base sync completed successfully! AI review is now available.');
+          }
+          return;
+        }
+        
+        // Some jobs failed, but we'll continue waiting for others
+        if (failedJobs.length > 0 && inProgressJobs.length === 0) {
+          setSyncing(false);
+          const errorMessage = `Knowledge base sync failed for ${failedJobs.length} job(s). AI review may not include latest documents.`;
+          setMessage(errorMessage);
+          setMessageType('error');
+          if (onSyncComplete) {
+            onSyncComplete(false, errorMessage);
+          }
+          return;
+        }
+        
+        // Still have jobs in progress, continue polling
+        if (attempts < maxAttempts && inProgressJobs.length > 0) {
+          setTimeout(checkJobsStatus, pollInterval);
+        } else if (attempts >= maxAttempts) {
+          // Timeout - assume sync failed
+          setSyncing(false);
+          const timeoutMessage = 'Knowledge base sync timed out. AI review may not include latest documents.';
+          setMessage(timeoutMessage);
+          setMessageType('error');
+          if (onSyncComplete) {
+            onSyncComplete(false, timeoutMessage);
+          }
+        }
+        
+      } catch (error) {
+        console.error('Error during sync polling:', error);
+        setSyncing(false);
+        const errorMessage = `Sync monitoring failed: ${error.message}`;
+        setMessage(errorMessage);
+        setMessageType('error');
+        if (onSyncComplete) {
+          onSyncComplete(false, errorMessage);
+        }
+      }
+    };
+    
+    // Start polling
+    checkJobsStatus();
+  };
 
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files);
@@ -118,23 +222,52 @@ const FileUpload = ({
         // Automatically trigger knowledge base sync if enabled
         if (enableAutoSync && bucketType === 'user_documents') {
           setMessage(`${baseMessage} Starting knowledge base sync...`);
+          setSyncing(true);  // Start syncing state
           
           try {
             const syncResponse = await knowledgeManagementAPI.syncKnowledgeBase('user_documents', 'start_sync');
             
-            // Update message to include sync status
             const syncResponseData = typeof syncResponse.body === 'string' 
               ? JSON.parse(syncResponse.body) 
               : syncResponse.body || syncResponse;
             
             if (syncResponseData.successful_count > 0) {
-              setMessage(`Successfully uploaded ${response.uploaded_count} file(s) and started knowledge base sync!`);
+              // Extract job IDs for polling
+              const jobIds = syncResponseData.sync_jobs
+                ?.filter(job => job.success)
+                ?.map(job => job.job_id) || [];
+              
+              setSyncJobIds(jobIds);
+              
+              if (jobIds.length > 0) {
+                setMessage(`Successfully uploaded ${response.uploaded_count} file(s). Syncing knowledge base... (this may take several minutes)`);
+                setMessageType('success');
+                
+                // Start polling for completion using our new function
+                pollSyncCompletion(jobIds);
+              } else {
+                setSyncing(false);
+                const noJobsMessage = 'Files uploaded but no sync jobs were started.';
+                setMessage(noJobsMessage);
+                if (onSyncComplete) {
+                  onSyncComplete(false, noJobsMessage);
+                }
+              }
             } else {
-              setMessage(`Successfully uploaded ${response.uploaded_count} file(s), but sync failed to start. You may need to manually sync.`);
+              setSyncing(false);
+              const syncFailMessage = `Successfully uploaded ${response.uploaded_count} file(s), but sync failed to start.`;
+              setMessage(syncFailMessage);
+              if (onSyncComplete) {
+                onSyncComplete(false, syncFailMessage);
+              }
             }
           } catch (syncError) {
-            console.error('Auto-sync error:', syncError);
-            setMessage(`Successfully uploaded ${response.uploaded_count} file(s), but auto-sync failed: ${syncError.message}. You may need to manually sync.`);
+            setSyncing(false);
+            const syncErrorMessage = `Successfully uploaded ${response.uploaded_count} file(s), but auto-sync failed: ${syncError.message}`;
+            setMessage(syncErrorMessage);
+            if (onSyncComplete) {
+              onSyncComplete(false, syncErrorMessage);
+            }
           }
         }
         
@@ -241,11 +374,10 @@ const FileUpload = ({
       <div className="form-group">
         <button
           onClick={handleUpload}
-          disabled={uploading || selectedFiles.length === 0}
-          className="btn"
-          style={{ opacity: uploading ? 0.6 : 1 }}
+          disabled={uploading || syncing || selectedFiles.length === 0}
+          className="btn btn-primary"
         >
-          {uploading ? 'Uploading...' : `Upload ${title} (${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''})`}
+          {uploading ? 'Uploading...' : syncing ? 'Syncing Knowledge Base...' : `Upload ${title}`}
         </button>
       </div>
 
