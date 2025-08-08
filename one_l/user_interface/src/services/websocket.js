@@ -36,9 +36,11 @@ class WebSocketService {
 
     try {
       const wsUrl = await getWebSocketUrl();
+      console.log('Retrieved WebSocket URL:', wsUrl);
       const userId = authService.getUserId();
       
       if (!wsUrl) {
+        console.error('WebSocket URL is null/undefined from config');
         throw new Error('WebSocket URL not configured');
       }
       

@@ -140,6 +140,11 @@ const SessionWorkspace = ({ session }) => {
   const [sessionResults, setSessionResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
   
+  // ← NEW KB SYNC STATE
+  const [kbSyncStatus, setKbSyncStatus] = useState('unknown'); // 'syncing', 'ready', 'unknown'
+  const [kbSyncProgress, setKbSyncProgress] = useState(0);
+  const [kbSyncMessage, setKbSyncMessage] = useState('');
+  
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   const isNewSession = location.state?.session?.session_id === session?.session_id;
 
@@ -198,6 +203,14 @@ const SessionWorkspace = ({ session }) => {
       const existingOtherType = prevFiles.filter(f => f.type !== files[0].type);
       return [...existingOtherType, ...files];
     });
+  };
+
+  // ← NEW HANDLER FUNCTION
+  const handleKbSyncStatusChange = (status, progress, message) => {
+    console.log(`KB Sync Status: ${status}, Progress: ${progress}%, Message: ${message}`);
+    setKbSyncStatus(status);
+    setKbSyncProgress(progress);
+    setKbSyncMessage(message);
   };
 
   const setupWebSocket = async () => {
@@ -335,7 +348,7 @@ const SessionWorkspace = ({ session }) => {
       }));
       
       // Refresh session results to get the latest documents
-      loadSessionResults();
+      // loadSessionResults(); // Commented out to prevent duplicates - WebSocket already has latest data
       
       // Clear progress after a brief delay to show completion
       setTimeout(() => {
@@ -419,32 +432,25 @@ const SessionWorkspace = ({ session }) => {
   const startProgressFlow = () => {
     let currentProgress = 0;
     
-    // Stage 1: Syncing knowledge base (0-30%) - 30 seconds
-    updateProcessingStage('syncing', 0, 'Syncing knowledge base...');
+    // Stage 1: Identifying conflicts (0-50%) - 30 seconds
+    updateProcessingStage('identifying', 0, 'Identifying conflicts...');
     
     const progressInterval = setInterval(() => {
       currentProgress += 1;
       
-      if (currentProgress <= 30) {
-        // Stage 1: Syncing knowledge base
-        updateProcessingStage('syncing', currentProgress, 'Syncing knowledge base...');
-      } else if (currentProgress <= 60) {
-        // Stage 2: Identifying conflicts
-        if (currentProgress === 31) {
-          updateProcessingStage('identifying', currentProgress, 'Identifying conflicts...');
-        } else {
-          setStageProgress(currentProgress);
-        }
+      if (currentProgress <= 50) {
+        // Stage 1: Identifying conflicts
+        updateProcessingStage('identifying', currentProgress, 'Identifying conflicts...');
       } else {
-        // Stage 3: Generating redlines - hold at 60% until real completion
-        if (currentProgress === 61) {
-          updateProcessingStage('generating', 60, 'Generating redlines...');
+        // Stage 2: Generating redlines - hold at 50% until real completion
+        if (currentProgress === 51) {
+          updateProcessingStage('generating', 50, 'Generating redlines...');
         }
-        // Stop progressing and hold at 60% until WebSocket completion
+        // Stop progressing and hold at 50% until WebSocket completion
         clearInterval(progressInterval);
-        setStageProgress(60);
+        setStageProgress(50);
       }
-    }, 1000); // 1% per second for first 60 seconds
+    }, 1000); // 1% per second for first 50 seconds
     
     // Store interval ID for cleanup
     window.progressInterval = progressInterval;
@@ -953,13 +959,59 @@ const SessionWorkspace = ({ session }) => {
           description="Upload reference documents (contracts, policies, etc.) that will be used by the AI for conflict detection during vendor submission review"
           onFilesUploaded={handleFilesUploaded}
           enableAutoSync={true}
+          onSyncStatusChange={handleKbSyncStatusChange}
         />
       </div>
       
-      {/* Centralized Workflow Section */}
-      <div className="card" style={{ marginTop: '20px' }}>
-        <h2>AI Document Review Workflow</h2>
-        <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
+      {/* Knowledge Base Sync Progress - NEW SECTION */}
+      {kbSyncStatus === 'syncing' && (
+        <div className="card" style={{ marginTop: '20px' }}>
+          <h2>Knowledge Base Sync</h2>
+          <p>Syncing reference documents with AI knowledge base...</p>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '8px'
+            }}>
+              <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#495057' }}>
+                {kbSyncMessage}
+              </span>
+              <span style={{ fontSize: '12px', color: '#6c757d' }}>
+                {Math.round(kbSyncProgress)}%
+              </span>
+            </div>
+            
+            <div style={{
+              width: '100%',
+              height: '8px',
+              background: '#e9ecef',
+              borderRadius: '4px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${kbSyncProgress}%`,
+                height: '100%',
+                background: '#007bff',
+                borderRadius: '4px',
+                transition: 'width 0.3s ease-in-out'
+              }}></div>
+            </div>
+          </div>
+          
+          <div style={{ fontSize: '12px', color: '#666' }}>
+            Please wait while we sync your reference documents. This may take several minutes.
+          </div>
+        </div>
+      )}
+
+      {/* AI Document Review Workflow - CONDITIONAL RENDERING */}
+      {kbSyncStatus === 'ready' && (
+        <div className="card" style={{ marginTop: '20px' }}>
+          <h2>AI Document Review Workflow</h2>
+          <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
         
         {/* Upload Status */}
         <div style={{ marginBottom: '20px' }}>
@@ -1034,27 +1086,13 @@ const SessionWorkspace = ({ session }) => {
               <div style={{ 
                 textAlign: 'center', 
                 flex: 1,
-                color: processingStage === 'syncing' || stageProgress >= 1 ? '#007bff' : '#6c757d'
+                color: processingStage === 'identifying' || stageProgress >= 1 ? '#007bff' : '#6c757d'
               }}>
                 <div style={{
                   width: '12px',
                   height: '12px',
                   borderRadius: '50%',
-                  backgroundColor: stageProgress >= 30 ? '#28a745' : (processingStage === 'syncing' ? '#007bff' : '#6c757d'),
-                  margin: '0 auto 4px'
-                }}></div>
-                <small>Syncing Knowledge Base</small>
-              </div>
-              <div style={{ 
-                textAlign: 'center', 
-                flex: 1,
-                color: processingStage === 'identifying' || stageProgress >= 31 ? '#007bff' : '#6c757d'
-              }}>
-                <div style={{
-                  width: '12px',
-                  height: '12px',
-                  borderRadius: '50%',
-                  backgroundColor: stageProgress >= 60 ? '#28a745' : (processingStage === 'identifying' ? '#007bff' : '#6c757d'),
+                  backgroundColor: stageProgress >= 50 ? '#28a745' : (processingStage === 'identifying' ? '#007bff' : '#6c757d'),
                   margin: '0 auto 4px'
                 }}></div>
                 <small>Identifying Conflicts</small>
@@ -1062,7 +1100,7 @@ const SessionWorkspace = ({ session }) => {
               <div style={{ 
                 textAlign: 'center', 
                 flex: 1,
-                color: processingStage === 'generating' || stageProgress >= 61 ? '#007bff' : '#6c757d'
+                color: processingStage === 'generating' || stageProgress >= 51 ? '#007bff' : '#6c757d'
               }}>
                 <div style={{
                   width: '12px',
@@ -1227,6 +1265,7 @@ const SessionWorkspace = ({ session }) => {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

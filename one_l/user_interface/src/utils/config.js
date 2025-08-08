@@ -35,6 +35,7 @@ const loadConfig = async () => {
       webSocketUrl: process.env.REACT_APP_WEBSOCKET_URL || ''
     };
     console.log('Development configuration loaded successfully');
+    console.log('Development WebSocket URL:', config.webSocketUrl);
     return config;
   }
   
@@ -67,6 +68,7 @@ const loadConfig = async () => {
     }
     
     console.log('Successfully loaded config from config.json:', configData);
+    console.log('WebSocket URL from config:', configData.webSocketUrl);
     config = configData;
     
     return config;

@@ -133,7 +133,8 @@ def generate_config_json() -> Dict[str, Any]:
             'USER_POOL_CLIENT_ID': user_pool_client_id,
             'USER_POOL_DOMAIN': user_pool_domain,
             'REGION': region,
-            'STACK_NAME': stack_name
+            'STACK_NAME': stack_name,
+            'WEBSOCKET_URL': websocket_url
         }
         
         missing_vars = [key for key, value in required_vars.items() if not value]

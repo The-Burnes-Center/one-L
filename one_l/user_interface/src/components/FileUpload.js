@@ -14,7 +14,8 @@ const FileUpload = ({
   description = "Upload files for processing",
   onFilesUploaded = null,
   enableAutoSync = true,
-  onSyncComplete=null // New prop to control auto-sync behavior
+  onSyncComplete = null,
+  onSyncStatusChange = null // ← NEW PROP
 }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -28,10 +29,21 @@ const FileUpload = ({
     let attempts = 0;
     const pollInterval = 15000; // 15 seconds
     
+    // Report sync started ← NEW
+    if (onSyncStatusChange) {
+      onSyncStatusChange('syncing', 0, 'Starting knowledge base sync...');
+    }
+    
     const checkJobsStatus = async () => {
       try {
         attempts++;
         console.log(`Sync polling attempt ${attempts}/${maxAttempts}`);
+        
+        // Report progress during polling ← NEW
+        const progressPercent = Math.min((attempts / maxAttempts) * 95, 95);
+        if (onSyncStatusChange) {
+          onSyncStatusChange('syncing', progressPercent, `Syncing knowledge base... (${attempts}/${maxAttempts})`);
+        }
         
         // Check status of all jobs
         const jobStatuses = await Promise.all(
@@ -72,11 +84,17 @@ const FileUpload = ({
         
         console.log(`Sync status: ${completedJobs.length} completed, ${failedJobs.length} failed, ${inProgressJobs.length} in progress`);
         
-        // All jobs completed successfully
+        // All jobs completed successfully (around line 76)
         if (completedJobs.length === jobIds.length) {
           setSyncing(false);
           setMessage('Files uploaded and knowledge base sync completed successfully!');
           setMessageType('success');
+          
+          // Report sync completed ← NEW
+          if (onSyncStatusChange) {
+            onSyncStatusChange('ready', 100, 'Knowledge base sync completed successfully!');
+          }
+          
           if (onSyncComplete) {
             onSyncComplete(true, 'Knowledge base sync completed successfully! AI review is now available.');
           }
