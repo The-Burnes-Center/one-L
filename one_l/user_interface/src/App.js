@@ -289,11 +289,10 @@ const SessionWorkspace = ({ session }) => {
     console.log('WebSocket job completed:', message);
     const { job_id, session_id, data } = message;
     
-    // Update UI with completion
     if (session_id === session?.session_id) {
       console.log('Processing job completion for session:', session_id, 'job:', job_id);
       
-      // Stop the progress interval and complete to 100%
+      // Stop progress and update UI
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
@@ -304,53 +303,44 @@ const SessionWorkspace = ({ session }) => {
       setWorkflowMessage('Document processing completed successfully!');
       setWorkflowMessageType('success');
       
-      // Check if we already have an entry for this job ID
-      const existingJobIndex = redlinedDocuments.findIndex(doc => doc.jobId === job_id);
-      
-      if (existingJobIndex === -1 && 
-          ((window.currentProcessingJob && window.currentProcessingJob.sessionId === session_id) ||
-           (session_id === session?.session_id))) {
-        // Only add new entry if we don't already have one for this job
-        if (data.redlined_document && data.redlined_document.success) {
-          setRedlinedDocuments(prev => [...prev, {
-            originalFile: { 
-              filename: window.currentProcessingJob?.filename || `Document for job ${job_id}` 
-            },
-            redlinedDocument: data.redlined_document.redlined_document,
-            analysis: data.analysis_id,
-            success: true,
-            processing: false,
-            jobId: job_id  // Store the real job ID
-          }]);
-        }
+      // Use functional update to properly handle existing entries
+      setRedlinedDocuments(prev => {
+        const existingIndex = prev.findIndex(doc => doc.jobId === job_id);
         
-        // Clear the stored job
-        window.currentProcessingJob = null;
-      }
-      
-      // Update any existing redlined document entries with completion data
-      setRedlinedDocuments(prev => prev.map(doc => {
-        if (doc.jobId === job_id) {
-          console.log('Updating document for job:', job_id, 'with data:', data);
-          return {
-            ...doc,
+        if (existingIndex !== -1) {
+          // UPDATE existing entry instead of adding new one
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
             status: 'completed',
             progress: 100,
             success: data.redlined_document && data.redlined_document.success,
             redlinedDocument: data.redlined_document?.redlined_document,
             analysis: data.analysis_id,
-            error: data.redlined_document?.success ? null : (data.redlined_document?.error || 'Processing failed'),
             processing: false,
             message: 'Document processing completed'
           };
+          return updated;
+        } else {
+          // Only add new entry if somehow none exists (fallback)
+          if (data.redlined_document && data.redlined_document.success) {
+            return [...prev, {
+              originalFile: { 
+                filename: window.currentProcessingJob?.filename || `Document for job ${job_id}` 
+              },
+              redlinedDocument: data.redlined_document.redlined_document,
+              analysis: data.analysis_id,
+              success: true,
+              processing: false,
+              jobId: job_id
+            }];
+          }
+          return prev;
         }
-        return doc;
-      }));
+      });
       
-      // Refresh session results to get the latest documents
-      // loadSessionResults(); // Commented out to prevent duplicates - WebSocket already has latest data
+      window.currentProcessingJob = null;
       
-      // Clear progress after a brief delay to show completion
       setTimeout(() => {
         setGenerating(false);
         setProcessingStage('');
