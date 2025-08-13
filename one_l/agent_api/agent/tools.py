@@ -23,11 +23,11 @@ logger.setLevel(logging.INFO)
 bedrock_agent_client = boto3.client('bedrock-agent-runtime')
 s3_client = boto3.client('s3')
 
-# Knowledge base optimization constants
-MAX_CHUNK_SIZE = 2000  # Target tokens per chunk for optimal processing
-MIN_RELEVANCE_SCORE = 0.7  # Minimum relevance score to include results
-OPTIMAL_RESULTS_PER_QUERY = 30  # Optimized results per query (reduced from 100)
-DEDUPLICATION_THRESHOLD = 0.85  # Similarity threshold for content deduplication
+# Knowledge base optimization constants - TUNED FOR MAXIMUM CONFLICT DETECTION
+MAX_CHUNK_SIZE = 3000  # Increased tokens per chunk for more context
+MIN_RELEVANCE_SCORE = 0.5  # Lowered threshold to capture more potentially relevant content
+OPTIMAL_RESULTS_PER_QUERY = 50  # Increased results per query for comprehensive coverage
+DEDUPLICATION_THRESHOLD = 0.90  # Slightly higher threshold to allow more similar content variations
 
 # Exponential backoff configuration for throttling resilience
 MAX_RETRIES = 5
@@ -109,19 +109,19 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
         {
             "toolSpec": {
                 "name": "retrieve_from_knowledge_base",
-                "description": "Intelligently retrieve and optimize relevant documents from the knowledge base. Features automatic deduplication, relevance filtering, smart chunking, and throttling resilience. Use as many queries as needed for comprehensive coverage.",
+                "description": "Exhaustively retrieve ALL relevant reference documents for conflict detection. Optimized for maximum coverage with deduplication, relevance filtering, and smart chunking. Use 8-12+ targeted queries to ensure no conflicts are missed. Lowered relevance threshold captures edge cases.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query to find relevant reference documents. Use specific terms related to vendor clauses."
+                                "description": "Targeted search query to find reference documents. Use specific contract terms, legal phrases, or vendor-specific language. Try variations of important terms to catch all relevant content."
                             },
                             "max_results": {
                                 "type": "integer",
-                                "description": "Maximum number of results to retrieve (auto-optimized for performance, default: 30)",
-                                "default": 30
+                                "description": "Maximum number of results to retrieve (auto-optimized for comprehensive coverage, default: 50)",
+                                "default": 50
                             }
                         },
                         "required": ["query"]
@@ -133,7 +133,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
 
 def retrieve_from_knowledge_base(
     query: str, 
-    max_results: int = 30,
+    max_results: int = 50,
     knowledge_base_id: str = None,
     region: str = None
 ) -> Dict[str, Any]:
