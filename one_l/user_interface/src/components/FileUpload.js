@@ -16,7 +16,9 @@ const FileUpload = ({
   enableAutoSync = true,
   onSyncComplete = null,
   onSyncStatusChange = null, // ← NEW PROP
-  sessionContext = null // ← NEW: Session context for session-based storage
+  sessionContext = null, // ← NEW: Session context for session-based storage
+  acceptedFileTypes = ".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif", // ← NEW: Accepted file types
+  fileTypeDescription = "TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)" // ← NEW: File type description
 }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -88,7 +90,7 @@ const FileUpload = ({
         // All jobs completed successfully (around line 76)
         if (completedJobs.length === jobIds.length) {
           setSyncing(false);
-          setMessage('Files uploaded and knowledge base sync completed successfully!');
+          setMessage('Files uploaded successfully!');
           setMessageType('success');
           
           // Report sync completed ← NEW
@@ -105,7 +107,7 @@ const FileUpload = ({
         // Some jobs failed, but we'll continue waiting for others
         if (failedJobs.length > 0 && inProgressJobs.length === 0) {
           setSyncing(false);
-          const errorMessage = `Knowledge base sync failed for ${failedJobs.length} job(s). AI review may not include latest documents.`;
+          const errorMessage = `File processing failed. Please try uploading again.`;
           setMessage(errorMessage);
           setMessageType('error');
           if (onSyncComplete) {
@@ -120,7 +122,7 @@ const FileUpload = ({
         } else if (attempts >= maxAttempts) {
           // Timeout - assume sync failed
           setSyncing(false);
-          const timeoutMessage = 'Knowledge base sync timed out. AI review may not include latest documents.';
+          const timeoutMessage = 'File processing timed out. Please try uploading again.';
           setMessage(timeoutMessage);
           setMessageType('error');
           if (onSyncComplete) {
@@ -131,7 +133,7 @@ const FileUpload = ({
       } catch (error) {
         console.error('Error during sync polling:', error);
         setSyncing(false);
-        const errorMessage = `Sync monitoring failed: ${error.message}`;
+        const errorMessage = `File processing error. Please try uploading again.`;
         setMessage(errorMessage);
         setMessageType('error');
         if (onSyncComplete) {
@@ -219,7 +221,7 @@ const FileUpload = ({
       
       // Response is now direct (no body parsing needed)
       if (response.uploaded_count > 0) {
-        let baseMessage = `Successfully uploaded ${response.uploaded_count} ${title.toLowerCase()} file(s)!`;
+        let baseMessage = 'Files uploaded successfully!';
         setMessage(baseMessage);
         setMessageType('success');
         
@@ -241,7 +243,7 @@ const FileUpload = ({
         
         // Automatically trigger knowledge base sync if enabled
         if (enableAutoSync && bucketType === 'user_documents') {
-          setMessage(`${baseMessage} Starting knowledge base sync...`);
+          setMessage(baseMessage);
           setSyncing(true);  // Start syncing state
           
           try {
@@ -260,14 +262,14 @@ const FileUpload = ({
               setSyncJobIds(jobIds);
               
               if (jobIds.length > 0) {
-                setMessage(`Successfully uploaded ${response.uploaded_count} file(s). Syncing knowledge base... (this may take several minutes)`);
+                setMessage('Files uploaded successfully!');
                 setMessageType('success');
                 
                 // Start polling for completion using our new function
                 pollSyncCompletion(jobIds);
               } else {
                 setSyncing(false);
-                const noJobsMessage = 'Files uploaded but no sync jobs were started.';
+                const noJobsMessage = 'Files uploaded successfully.';
                 setMessage(noJobsMessage);
                 if (onSyncComplete) {
                   onSyncComplete(false, noJobsMessage);
@@ -275,7 +277,7 @@ const FileUpload = ({
               }
             } else {
               setSyncing(false);
-              const syncFailMessage = `Successfully uploaded ${response.uploaded_count} file(s), but sync failed to start.`;
+              const syncFailMessage = 'Files uploaded successfully!';
               setMessage(syncFailMessage);
               if (onSyncComplete) {
                 onSyncComplete(false, syncFailMessage);
@@ -283,7 +285,7 @@ const FileUpload = ({
             }
           } catch (syncError) {
             setSyncing(false);
-            const syncErrorMessage = `Successfully uploaded ${response.uploaded_count} file(s), but auto-sync failed: ${syncError.message}`;
+            const syncErrorMessage = 'Files uploaded successfully!';
             setMessage(syncErrorMessage);
             if (onSyncComplete) {
               onSyncComplete(false, syncErrorMessage);
@@ -291,11 +293,7 @@ const FileUpload = ({
           }
         }
         
-        // Clear selection
-        setSelectedFiles([]);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
+        // Keep selectedFiles to maintain preview after upload
       } else {
         setMessage(response.message || 'Upload failed. Please try again.');
         setMessageType('error');
@@ -342,48 +340,65 @@ const FileUpload = ({
           multiple={!maxFiles || maxFiles > 1}
           onChange={handleFileSelect}
           className="form-control"
-          accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
+          accept={acceptedFileTypes}
           disabled={uploading || (maxFiles && selectedFiles.length >= maxFiles)}
         />
         <small style={{ color: '#666', fontSize: '14px' }}>
-          Supported formats: TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)
-          {maxFiles && ` | File limit: ${maxFiles} file${maxFiles > 1 ? 's' : ''}`}
+          {fileTypeDescription}
         </small>
       </div>
 
       {selectedFiles.length > 0 && (
         <div className="form-group">
-          <label className="form-label">Selected Files ({selectedFiles.length})</label>
-          <div style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {selectedFiles.map((file, index) => (
               <div key={index} style={{ 
                 display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                padding: '8px 0',
-                borderBottom: index < selectedFiles.length - 1 ? '1px solid #eee' : 'none'
+                alignItems: 'center', 
+                padding: '12px 16px',
+                backgroundColor: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '12px',
+                color: '#333',
+                gap: '12px',
+                maxWidth: '400px'
               }}>
-                <div>
-                  <div style={{ fontWeight: '500' }}>{file.name}</div>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: '#3498db',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '20px'
+                }}>
+                  📄
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: '500', fontSize: '14px' }}>
+                    {file.name}
+                  </div>
                   <div style={{ fontSize: '12px', color: '#666' }}>
-                    {formatFileSize(file.size)} • {file.type}
+                    Document
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleRemoveFile(index)}
-                  disabled={uploading}
+                  disabled={uploading || messageType === 'success'}
                   style={{
-                    background: '#dc3545',
-                    color: 'white',
+                    background: 'transparent',
                     border: 'none',
-                    padding: '4px 8px',
+                    color: '#666',
+                    cursor: (uploading || messageType === 'success') ? 'not-allowed' : 'pointer',
+                    fontSize: '18px',
+                    padding: '4px',
                     borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '12px'
+                    opacity: messageType === 'success' ? 0.5 : 1
                   }}
                 >
-                  Remove
+                  ✕
                 </button>
               </div>
             ))}
@@ -394,10 +409,11 @@ const FileUpload = ({
       <div className="form-group">
         <button
           onClick={handleUpload}
-          disabled={uploading || syncing || selectedFiles.length === 0}
+          disabled={uploading || selectedFiles.length === 0 || messageType === 'success'}
           className="btn btn-primary"
+          style={{ opacity: (uploading || messageType === 'success') ? 0.6 : 1 }}
         >
-          {uploading ? 'Uploading...' : syncing ? 'Syncing Knowledge Base...' : `Upload ${title}`}
+          {uploading ? 'Uploading...' : messageType === 'success' ? 'Files Uploaded' : `Upload ${title}`}
         </button>
       </div>
 

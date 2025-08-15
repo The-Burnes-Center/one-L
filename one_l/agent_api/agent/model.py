@@ -25,10 +25,10 @@ THINKING_BUDGET_TOKENS = 4000
 
 # Graceful queuing configuration for token rate limiting prevention
 MAX_RETRIES = 5
-BASE_DELAY = 3.0  # Base delay between calls to prevent rate limiting
-MAX_DELAY = 60.0  # Max delay for exponential backoff
+BASE_DELAY = 1.0  # Base delay between calls to prevent rate limiting
+MAX_DELAY = 6.0  # Max delay for exponential backoff
 BACKOFF_MULTIPLIER = 2.0
-CALL_SPACING_DELAY = 1.5  # Minimum delay between consecutive calls to prevent token rate limiting
+CALL_SPACING_DELAY = 1.0  # Minimum delay between consecutive calls to prevent token rate limiting
 
 # Global tracking for logging and throttling management
 _call_tracker = {

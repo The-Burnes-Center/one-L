@@ -341,11 +341,8 @@ const SessionWorkspace = ({ session }) => {
       
       window.currentProcessingJob = null;
       
-      setTimeout(() => {
-        setGenerating(false);
-        setProcessingStage('');
-        setStageProgress(0);
-      }, 3000);
+      // Keep progress bar visible and show completed state
+      // Don't reset the progress - keep it at 100% to show completion
     }
   };
 
@@ -418,29 +415,32 @@ const SessionWorkspace = ({ session }) => {
     console.log(`Processing stage: ${stage}, progress: ${progress}%, message: ${message}`);
   };
 
-  // Smooth progress flow like Domino's pizza tracker
+  // Smooth progress flow - 1% per 2 seconds for entire progress bar
   const startProgressFlow = () => {
     let currentProgress = 0;
     
-    // Stage 1: Identifying conflicts (0-50%) - 30 seconds
-    updateProcessingStage('identifying', 0, 'Identifying conflicts...');
+    // Start with KB sync stage
+    updateProcessingStage('kb_sync', 0, 'Syncing knowledge base...');
     
     const progressInterval = setInterval(() => {
-      currentProgress += 1;
+      currentProgress += 1; // 1% per 2 seconds for entire progress bar
       
-      if (currentProgress <= 50) {
-        // Stage 1: Identifying conflicts
+      if (currentProgress <= 33) {
+        // Stage 1: KB Sync (0-33%)
+        updateProcessingStage('kb_sync', currentProgress, 'Syncing knowledge base...');
+      } else if (currentProgress <= 66) {
+        // Stage 2: Identifying conflicts (34-66%)
         updateProcessingStage('identifying', currentProgress, 'Identifying conflicts...');
+      } else if (currentProgress < 99) {
+        // Stage 3: Generating redlines (67-98%)
+        updateProcessingStage('generating', currentProgress, 'Generating redlines...');
       } else {
-        // Stage 2: Generating redlines - hold at 50% until real completion
-        if (currentProgress === 51) {
-          updateProcessingStage('generating', 50, 'Generating redlines...');
-        }
-        // Stop progressing and hold at 50% until WebSocket completion
+        // Wait at 99% until WebSocket completion
+        updateProcessingStage('generating', 99, 'Generating redlines...');
         clearInterval(progressInterval);
-        setStageProgress(50);
+        setStageProgress(99);
       }
-    }, 1000); // 1% per second for first 50 seconds
+    }, 2000); // 2000ms interval for 1% per 2 seconds
     
     // Store interval ID for cleanup
     window.progressInterval = progressInterval;
@@ -946,7 +946,9 @@ const SessionWorkspace = ({ session }) => {
           maxFiles={null}
           bucketType="user_documents"
           prefix="reference-docs/"
-          description="Upload reference documents (contracts, policies, etc.) that will be used by the AI for conflict detection during vendor submission review"
+          description="Select Files"
+          acceptedFileTypes=".doc,.docx,.pdf"
+          fileTypeDescription="DOC, DOCX, PDF (Max 10MB per file)"
           onFilesUploaded={handleFilesUploaded}
           enableAutoSync={true}
           onSyncStatusChange={handleKbSyncStatusChange}
@@ -954,90 +956,14 @@ const SessionWorkspace = ({ session }) => {
         />
       </div>
       
-      {/* Knowledge Base Sync Progress - NEW SECTION */}
-      {kbSyncStatus === 'syncing' && (
-        <div className="card" style={{ marginTop: '20px' }}>
-          <h2>Knowledge Base Sync</h2>
-          <p>Syncing reference documents with AI knowledge base...</p>
-          
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              marginBottom: '8px'
-            }}>
-              <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#495057' }}>
-                {kbSyncMessage}
-              </span>
-              <span style={{ fontSize: '12px', color: '#6c757d' }}>
-                {Math.round(kbSyncProgress)}%
-              </span>
-            </div>
-            
-            <div style={{
-              width: '100%',
-              height: '8px',
-              background: '#e9ecef',
-              borderRadius: '4px',
-              overflow: 'hidden'
-            }}>
-              <div style={{
-                width: `${kbSyncProgress}%`,
-                height: '100%',
-                background: '#007bff',
-                borderRadius: '4px',
-                transition: 'width 0.3s ease-in-out'
-              }}></div>
-            </div>
-          </div>
-          
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            Please wait while we sync your reference documents. This may take several minutes.
-          </div>
-        </div>
-      )}
 
-      {/* AI Document Review Workflow - CONDITIONAL RENDERING */}
-      {kbSyncStatus === 'ready' && (
-        <div className="card" style={{ marginTop: '20px' }}>
+
+      {/* AI Document Review Workflow */}
+      <div className="card" style={{ marginTop: '20px' }}>
           <h2>AI Document Review Workflow</h2>
           <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
         
-        {/* Upload Status */}
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ display: 'flex', gap: '20px', marginBottom: '10px' }}>
-            <div style={{ 
-              padding: '10px', 
-              borderRadius: '4px', 
-              background: referenceFiles.length > 0 ? '#d4edda' : '#f8d7da',
-              border: `1px solid ${referenceFiles.length > 0 ? '#c3e6cb' : '#f5c6cb'}`,
-              flex: '1'
-            }}>
-              <strong>Reference Documents:</strong> {referenceFiles.length} uploaded
-              {referenceFiles.length > 0 && (
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  {referenceFiles.map(f => f.filename).join(', ')}
-                </div>
-              )}
-            </div>
-            
-            <div style={{ 
-              padding: '10px', 
-              borderRadius: '4px', 
-              background: vendorFiles.length > 0 ? '#d4edda' : '#f8d7da',
-              border: `1px solid ${vendorFiles.length > 0 ? '#c3e6cb' : '#f5c6cb'}`,
-              flex: '1'
-            }}>
-              <strong>Vendor Submissions:</strong> {vendorFiles.length} uploaded
-              {vendorFiles.length > 0 && (
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  {vendorFiles.map(f => f.filename).join(', ')}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+
         
         {/* Generate Redline Button */}
         <div style={{ textAlign: 'center', marginBottom: '20px' }}>
@@ -1062,28 +988,52 @@ const SessionWorkspace = ({ session }) => {
         </div>
         
         {/* Unified Progress UI */}
-        {(generating || processingStage) && (
-          <div style={{ 
-            marginTop: '20px', 
-            padding: '20px', 
-            border: '1px solid #ddd', 
-            borderRadius: '8px',
-            backgroundColor: '#f8f9fa'
-          }}>
-            <h4 style={{ marginBottom: '16px', color: '#333' }}>Processing Document</h4>
+        {(generating || processingStage || (redlinedDocuments.filter(doc => doc.success && !doc.processing).length > 0)) && (() => {
+          // Determine display state
+          const hasCompletedResults = redlinedDocuments.filter(doc => doc.success && !doc.processing).length > 0;
+          const isCompleted = hasCompletedResults && !generating && !processingStage;
+          const displayProgress = isCompleted ? 100 : stageProgress;
+          const displayStage = isCompleted ? 'completed' : processingStage;
+          const displayMessage = isCompleted ? 'Document processing completed successfully!' : workflowMessage;
+          
+          return (
+            <div style={{ 
+              marginTop: '20px', 
+              padding: '20px', 
+              border: '1px solid #ddd', 
+              borderRadius: '8px',
+              backgroundColor: isCompleted ? '#d4edda' : '#f8f9fa'
+            }}>
+              <h4 style={{ marginBottom: '16px', color: '#333' }}>
+                {isCompleted ? 'Document Processing Complete' : 'Processing Document'}
+              </h4>
             
             {/* Stage Indicators */}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
               <div style={{ 
                 textAlign: 'center', 
                 flex: 1,
-                color: processingStage === 'identifying' || stageProgress >= 1 ? '#007bff' : '#6c757d'
+                color: displayStage === 'kb_sync' || displayProgress >= 1 || isCompleted ? '#007bff' : '#6c757d'
               }}>
                 <div style={{
                   width: '12px',
                   height: '12px',
                   borderRadius: '50%',
-                  backgroundColor: stageProgress >= 50 ? '#28a745' : (processingStage === 'identifying' ? '#007bff' : '#6c757d'),
+                  backgroundColor: displayProgress > 33 || isCompleted ? '#28a745' : (displayStage === 'kb_sync' ? '#007bff' : '#6c757d'),
+                  margin: '0 auto 4px'
+                }}></div>
+                <small>Knowledge Base Sync</small>
+              </div>
+              <div style={{ 
+                textAlign: 'center', 
+                flex: 1,
+                color: displayStage === 'identifying' || displayProgress > 33 || isCompleted ? '#007bff' : '#6c757d'
+              }}>
+                <div style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  backgroundColor: displayProgress > 66 || isCompleted ? '#28a745' : (displayStage === 'identifying' ? '#007bff' : '#6c757d'),
                   margin: '0 auto 4px'
                 }}></div>
                 <small>Identifying Conflicts</small>
@@ -1091,13 +1041,13 @@ const SessionWorkspace = ({ session }) => {
               <div style={{ 
                 textAlign: 'center', 
                 flex: 1,
-                color: processingStage === 'generating' || stageProgress >= 51 ? '#007bff' : '#6c757d'
+                color: displayStage === 'generating' || displayProgress > 66 || isCompleted ? '#007bff' : '#6c757d'
               }}>
                 <div style={{
                   width: '12px',
                   height: '12px',
                   borderRadius: '50%',
-                  backgroundColor: stageProgress >= 100 ? '#28a745' : (processingStage === 'generating' ? '#007bff' : '#6c757d'),
+                  backgroundColor: displayProgress >= 100 || isCompleted ? '#28a745' : (displayStage === 'generating' ? '#007bff' : '#6c757d'),
                   margin: '0 auto 4px'
                 }}></div>
                 <small>Generating Redlines</small>
@@ -1114,9 +1064,9 @@ const SessionWorkspace = ({ session }) => {
               overflow: 'hidden'
             }}>
               <div style={{
-                width: `${stageProgress}%`,
+                width: `${displayProgress}%`,
                 height: '100%',
-                backgroundColor: '#007bff',
+                backgroundColor: isCompleted ? '#28a745' : '#007bff',
                 transition: 'width 0.3s ease',
                 borderRadius: '4px'
               }}></div>
@@ -1124,7 +1074,7 @@ const SessionWorkspace = ({ session }) => {
             
             {/* Current Status */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {processingStage !== 'completed' && (
+              {(!isCompleted && displayProgress < 100) && (
                 <div style={{
                   width: '16px',
                   height: '16px',
@@ -1134,15 +1084,26 @@ const SessionWorkspace = ({ session }) => {
                   animation: 'spin 1s linear infinite'
                 }}></div>
               )}
+              {(isCompleted || displayProgress >= 100) && (
+                <div style={{
+                  width: '16px',
+                  height: '16px',
+                  color: '#28a745',
+                  fontSize: '16px'
+                }}>
+                  ✓
+                </div>
+              )}
               <span style={{ color: '#333' }}>
-                {workflowMessage} ({Math.round(stageProgress)}%)
+                {displayMessage} ({Math.round(displayProgress)}%)
               </span>
             </div>
           </div>
-        )}
+          );
+        })()}
         
         {/* Other Messages (errors, success without progress) */}
-        {workflowMessage && workflowMessageType !== 'progress' && !generating && !processingStage && (
+        {workflowMessage && workflowMessageType !== 'progress' && !generating && !processingStage && redlinedDocuments.filter(doc => doc.success && !doc.processing).length === 0 && (
           <div className={`alert ${
             workflowMessageType === 'success' ? 'alert-success' : 'alert-error'
           }`}>
@@ -1256,7 +1217,6 @@ const SessionWorkspace = ({ session }) => {
           </div>
         )}
       </div>
-      )}
     </div>
   );
 };

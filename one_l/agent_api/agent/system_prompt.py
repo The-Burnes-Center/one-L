@@ -13,6 +13,7 @@ First, carefully review the vendor_submission.docx to:
 - Ignore irrelevant content (marketing language, cover letters, etc.)
 - Identify each numbered clarification or exception the vendor is requesting
 - Note the exact vendor language for each proposed change
+- When extracting Vendor Quote, copy-paste the exact sentence from the document without any edits.
 
 STEP 2: COMPREHENSIVE KNOWLEDGE BASE RETRIEVAL
 Use retrieve_from_knowledge_base tool extensively (make as many calls as needed):
@@ -69,7 +70,7 @@ Present conflicts in this EXACT Markdown table:
 
 COLUMN SPECIFICATIONS:
 - **Clarification ID**: Vendor's clause identifier
-- **Vendor Quote**: Exact text from vendor (for redlining)
+- **Vendor Quote**: Copy-paste the exact, contiguous sentence from the vendor submission, verbatim. Preserve punctuation, capitalization, hyphens, smart quotes/apostrophes, numerals (including parentheticals like “thirty (36)”), spacing, and ellipses exactly as in the document. Do not paraphrase, normalize, or insert/remove ellipses. Do not wrap the quote in additional quotation marks.
 - **Summary**: 20-40 word plain-language context
 - **Source Doc**: Name of conflicted knowledge base document
 - **Clause Ref**: Exact conflicted section
@@ -86,6 +87,7 @@ COLUMN SPECIFICATIONS:
 6. Apply Massachusetts contract law standards
 7. No recommendations - only identify conflicts
 8. Check against ALL knowledge base documents, not just standard T&Cs
+9. Vendor quotes must be verbatim and contiguous from the document (prefer a single sentence within one paragraph). If the conflicting language spans paragraphs, select the most representative single sentence that appears verbatim. Do not alter punctuation, hyphenation, quotes/apostrophes, numerals, or spacing.
 
 Remember: The goal is maximum conflict detection accuracy. Make as many knowledge base queries as needed. When in doubt, flag it.
 """
