@@ -15,7 +15,8 @@ const FileUpload = ({
   onFilesUploaded = null,
   enableAutoSync = true,
   onSyncComplete = null,
-  onSyncStatusChange = null // ← NEW PROP
+  onSyncStatusChange = null, // ← NEW PROP
+  sessionContext = null // ← NEW: Session context for session-based storage
 }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -208,11 +209,12 @@ const FileUpload = ({
       
       setMessage('Uploading files...');
       
-      // Upload files
+      // Upload files with session context
       const response = await knowledgeManagementAPI.uploadFiles(
         preparedFiles,
         bucketType,
-        prefix
+        prefix,
+        sessionContext // ← NEW: Pass session context for session-based storage
       );
       
       // Response is now direct (no body parsing needed)

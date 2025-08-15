@@ -95,7 +95,7 @@ const knowledgeManagementAPI = {
   /**
    * Upload files to S3 using presigned URLs
    */
-  uploadFiles: async (files, bucketType = 'user_documents', prefix = '') => {
+  uploadFiles: async (files, bucketType = 'user_documents', prefix = '', sessionContext = null) => {
     try {
       // Step 1: Request presigned URLs from the backend
       const filesData = files.map(file => ({
@@ -104,11 +104,26 @@ const knowledgeManagementAPI = {
         file_size: file.size
       }));
       
+      // NEW: Get session context for session-based storage
+      const user_id = authService.getUserId();
+      const session_id = sessionContext?.session_id;
+      
       const payload = {
         bucket_type: bucketType,
         files: filesData,
-        prefix: prefix
+        prefix: prefix,
+        // NEW: Include session context for backend processing
+        user_id: user_id,
+        session_id: session_id
       };
+      
+      console.log('Upload payload with session context:', { 
+        bucket_type: bucketType, 
+        prefix, 
+        user_id, 
+        session_id,
+        file_count: files.length 
+      });
       
       const presignedResponse = await apiCall('/knowledge_management/upload', {
         method: 'POST',

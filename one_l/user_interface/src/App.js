@@ -950,6 +950,7 @@ const SessionWorkspace = ({ session }) => {
           onFilesUploaded={handleFilesUploaded}
           enableAutoSync={true}
           onSyncStatusChange={handleKbSyncStatusChange}
+          sessionContext={session} //  Pass session context for session-based storage
         />
       </div>
       
