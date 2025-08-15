@@ -141,8 +141,11 @@ const SessionWorkspace = ({ session }) => {
   const [loadingResults, setLoadingResults] = useState(false);
   
   // ← NEW KB SYNC STATE
+  // eslint-disable-next-line no-unused-vars
   const [kbSyncStatus, setKbSyncStatus] = useState('unknown'); // 'syncing', 'ready', 'unknown'
+  // eslint-disable-next-line no-unused-vars
   const [kbSyncProgress, setKbSyncProgress] = useState(0);
+  // eslint-disable-next-line no-unused-vars
   const [kbSyncMessage, setKbSyncMessage] = useState('');
   
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
@@ -946,7 +949,6 @@ const SessionWorkspace = ({ session }) => {
           maxFiles={null}
           bucketType="user_documents"
           prefix="reference-docs/"
-          description="Select Files"
           acceptedFileTypes=".doc,.docx,.pdf"
           fileTypeDescription="DOC, DOCX, PDF (Max 10MB per file)"
           onFilesUploaded={handleFilesUploaded}

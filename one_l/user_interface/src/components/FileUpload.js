@@ -11,7 +11,6 @@ const FileUpload = ({
   maxFiles = null, 
   bucketType = "user_documents", 
   prefix = "uploads/", 
-  description = "Upload files for processing",
   onFilesUploaded = null,
   enableAutoSync = true,
   onSyncComplete = null,
@@ -25,7 +24,9 @@ const FileUpload = ({
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
   const fileInputRef = useRef(null);
+  // eslint-disable-next-line no-unused-vars
   const [syncing, setSyncing] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [syncJobIds, setSyncJobIds] = useState([]);
 
   const pollSyncCompletion = async (jobIds, maxAttempts = 60) => {
@@ -317,6 +318,7 @@ const FileUpload = ({
     }
   };
 
+  // eslint-disable-next-line no-unused-vars
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -328,7 +330,6 @@ const FileUpload = ({
   return (
     <div className="card">
       <h2>{title}</h2>
-      <p>{description}</p>
       
       <div className="form-group">
         <label className="form-label">

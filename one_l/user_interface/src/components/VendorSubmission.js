@@ -13,6 +13,7 @@ const VendorSubmission = ({ onFilesUploaded }) => {
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
   const fileInputRef = useRef(null);
   
+  // eslint-disable-next-line no-unused-vars
   const maxFiles = 1;
   const bucketType = "agent_processing";
   const prefix = "vendor-submissions/";
@@ -100,11 +101,10 @@ const VendorSubmission = ({ onFilesUploaded }) => {
 
 
 
-
+//DOC, DOCX (Max 10MB per file)
   return (
     <div className="card">
       <h2>Vendor Submission</h2>
-      <p>DOC, DOCX (Max 10MB per file)</p>
       
       <div className="form-group">
         <label className="form-label">
@@ -116,6 +116,7 @@ const VendorSubmission = ({ onFilesUploaded }) => {
           onChange={handleFileSelect}
           className="form-control"
           accept=".doc,.docx"
+          description="DOC, DOCX (Max 10MB per file)"
           disabled={uploading}
         />
       </div>
