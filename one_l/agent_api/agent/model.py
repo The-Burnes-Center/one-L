@@ -216,11 +216,8 @@ class Model:
             logger.info(f"Graceful queuing: waiting {wait_time:.2f}s to prevent token rate limiting")
             time.sleep(wait_time)
         
-        # Update tracking
-        _call_tracker['total_model_calls'] += 1
-        _call_tracker['last_call_time'] = time.time()
-        
-        logger.info(f"Calling Claude with {len(messages)} messages and {len(self.tools)} tools (attempt {retry_count + 1}) - Total model calls: {_call_tracker['total_model_calls']}")
+        # Log attempt (but don't increment counter until successful)
+        logger.info(f"Calling Claude with {len(messages)} messages and {len(self.tools)} tools (attempt {retry_count + 1}) - Total successful calls so far: {_call_tracker['total_model_calls']}")
         
         try:
             # Call Bedrock using Converse API (supports document attachments)
@@ -240,6 +237,12 @@ class Model:
                     }
                 }
             )
+            
+            # SUCCESS: Only now increment the counter for successful calls
+            _call_tracker['total_model_calls'] += 1
+            _call_tracker['last_call_time'] = time.time()
+            
+            logger.info(f"Claude API call successful! Total successful model calls: {_call_tracker['total_model_calls']}")
             
             # Handle tool calls if present
             if response.get("stopReason") == "tool_use":
@@ -289,7 +292,7 @@ class Model:
                 tool_input = tool_use["input"]
                 tool_use_id = tool_use["toolUseId"]
                 
-                # Update tool call tracking
+                # Update tool call tracking (safe to increment here - no retries for tools)
                 _call_tracker['total_tool_calls'] += 1
                 
                 logger.info(f"Executing tool: {tool_name} with input: {tool_input} - Total tool calls: {_call_tracker['total_tool_calls']}")
@@ -303,8 +306,10 @@ class Model:
                             knowledge_base_id=self.knowledge_base_id,
                             region=self.region
                         )
+                        logger.info(f"Tool {tool_name} executed successfully")
                     else:
                         result = {"error": f"Unknown tool: {tool_name}"}
+                        logger.warning(f"Unknown tool requested: {tool_name}")
                     
                     tool_results.append({
                         "tool_name": tool_name,

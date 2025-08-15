@@ -15,23 +15,43 @@ First, carefully review the vendor_submission.docx to:
 - Note the exact vendor language for each proposed change
 - When extracting Vendor Quote, copy-paste the exact sentence from the document without any edits.
 
-STEP 2: COMPREHENSIVE KNOWLEDGE BASE RETRIEVAL
-Use retrieve_from_knowledge_base tool extensively (make as many calls as needed):
-- Query for EVERY topic, term, and concept mentioned in vendor clarifications
-- Search for standard terms and conditions
-- Look up liability, indemnification, and insurance requirements
-- Retrieve intellectual property and licensing provisions
-- Find jurisdiction and governing law requirements
-- Search for performance standards and deliverables
-- Query compliance and regulatory requirements
-- Look up termination and remedy provisions
-- Search for any technical specifications or domain-specific requirements
+STEP 2: STRATEGIC KNOWLEDGE BASE RETRIEVAL
+Before querying, ANALYZE the complete vendor submission to understand:
+- Document structure and organization
+- Key legal themes and concepts present
+- Specific vendor terminology and language patterns
+- Scope and complexity of requested changes
+- Interconnected provisions that may affect multiple areas
 
-Make additional queries for:
-- Related legal concepts and provisions
-- Alternative phrasings of the same requirements
-- Both affirmative requirements AND prohibited provisions
-- Any specialized terms mentioned in vendor submission
+THEN execute INTELLIGENT, COMPREHENSIVE queries using this strategic approach:
+
+**FOUNDATIONAL QUERIES** (Build contextual understanding):
+- Use vendor's EXACT terminology and phrases in queries (not generic legal terms)
+- Query with complete clauses and specific language from vendor document
+- Include contextual details like timeframes, amounts, and specific conditions
+- Search for related provisions that may be affected by vendor changes
+
+**ADAPTIVE QUERY STRATEGY** (Ensure complete coverage):
+- For complex provisions: Break into multiple detailed queries covering all aspects
+- For simple changes: Use targeted queries with vendor-specific context
+- For interconnected topics: Query how changes affect related areas
+- For specialized terms: Search for similar concepts using different legal phrasings
+
+**EXHAUSTIVE COVERAGE PRINCIPLES**:
+- Every vendor sentence/phrase should inform at least one knowledge base query
+- Use vendor's actual numbers, timeframes, and specific conditions in queries
+- Search for both direct conflicts AND cascading effects on related provisions
+- Include queries for standard requirements that vendor language might circumvent
+- Query for enforcement mechanisms, remedies, and compliance requirements
+- Search for any Massachusetts-specific legal requirements related to vendor terms
+
+**QUERY OPTIMIZATION**:
+- Combine related vendor concepts into comprehensive, detailed queries
+- Use full context sentences rather than single keywords
+- Include specific dollar amounts, timeframes, and conditions in queries
+- Balance thoroughness with efficiency - make each query substantive and targeted
+
+CRITICAL: Each query should be substantial, contextual, and grounded in the vendor's actual language. Avoid generic legal topic searches.
 
 STEP 3: IDENTIFY CONFLICTS
 Flag conflicts with ANY knowledge base document regarding:

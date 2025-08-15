@@ -533,6 +533,7 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
 def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> Dict[str, Any]:
     """
     Apply redlining to document by highlighting conflict text in red.
+    Multi-tier search strategy for maximum conflict detection accuracy.
     
     Args:
         doc: python-docx Document object
@@ -546,93 +547,381 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         matches_found = 0
         paragraphs_with_redlines = []
         total_paragraphs = len(doc.paragraphs)
+        failed_matches = []
         
-        logger.info(f"Starting redlining process for {len(redline_items)} conflicts across {total_paragraphs} paragraphs")
+        logger.info(f"Starting enhanced redlining process for {len(redline_items)} conflicts across {total_paragraphs} paragraphs")
         
-        for redline_item in redline_items:
+        # Track unmatched conflicts across tiers
+        unmatched_conflicts = redline_items.copy()
+        
+        # TIER 1: Standard exact matching
+        logger.info(f"TIER 1: Processing {len(unmatched_conflicts)} conflicts with exact matching")
+        remaining_conflicts = []
+        
+        for redline_item in unmatched_conflicts:
             vendor_conflict_text = redline_item.get('text', '').strip()
             if not vendor_conflict_text:
                 continue
                 
-            logger.info(f"Looking for vendor conflict text: '{vendor_conflict_text}'")
+            found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
             
-            # Create variations of the text to try matching (handle various quote formats)
-            text_variations = [
-                vendor_conflict_text,  # Original text
-                vendor_conflict_text.strip('"\''),  # Remove quotes
-                vendor_conflict_text.replace('"', '"').replace('"', '"'),  # Smart quotes to regular
-                vendor_conflict_text.replace(''', "'").replace(''', "'"),  # Smart apostrophes
-            ]
+            if found_match:
+                matches_found += 1
+                if found_match['para_idx'] not in paragraphs_with_redlines:
+                    paragraphs_with_redlines.append(found_match['para_idx'])
+                logger.info(f"TIER 1 SUCCESS: Found match for ID {redline_item.get('clarification_id', 'Unknown')}")
+            else:
+                remaining_conflicts.append(redline_item)
+        
+        # Early exit if all conflicts matched
+        if not remaining_conflicts:
+            logger.info(f"ALL CONFLICTS MATCHED in Tier 1! Total: {matches_found}")
+        else:
+            logger.info(f"TIER 1 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
             
-            # Remove duplicates while preserving order
-            text_variations = list(dict.fromkeys(text_variations))
+            # TIER 2: Fuzzy matching (only for unmatched conflicts)
+            logger.info(f"TIER 2: Processing {len(remaining_conflicts)} remaining conflicts with fuzzy matching")
+            unmatched_conflicts = remaining_conflicts
+            remaining_conflicts = []
             
-            # Search through all paragraphs for exact vendor conflict text
-            found_match = False
-            for para_idx, paragraph in enumerate(doc.paragraphs):
-                para_text = paragraph.text.strip()
-                if not para_text:
-                    continue
-                    
-                # Try each text variation for matching
-                for text_variant in text_variations:
-                    if not text_variant:
-                        continue
-                        
-                    # Try exact substring match (most reliable with exact vendor quotes)
-                    if text_variant in para_text:
-                        logger.info(f"Found EXACT match in paragraph {para_idx}")
-                        logger.info(f"Matched text variant: '{text_variant}'")
-                        _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
-                        matches_found += 1
-                        if para_idx not in paragraphs_with_redlines:
-                            paragraphs_with_redlines.append(para_idx)
-                        found_match = True
-                        break
-                    
-                    # Try case-insensitive match as fallback
-                    elif text_variant.lower() in para_text.lower():
-                        logger.info(f"Found CASE-INSENSITIVE match in paragraph {para_idx}")
-                        # Find the actual text with correct case in the document
-                        start_idx = para_text.lower().find(text_variant.lower())
-                        actual_text = para_text[start_idx:start_idx + len(text_variant)]
-                        logger.info(f"Matched text variant: '{actual_text}'")
-                        _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
-                        matches_found += 1
-                        if para_idx not in paragraphs_with_redlines:
-                            paragraphs_with_redlines.append(para_idx)
-                        found_match = True
-                        break
+            for redline_item in unmatched_conflicts:
+                vendor_conflict_text = redline_item.get('text', '').strip()
+                found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
                 
                 if found_match:
-                    break
+                    matches_found += 1
+                    if found_match['para_idx'] not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(found_match['para_idx'])
+                    logger.info(f"TIER 2 SUCCESS: Found fuzzy match for ID {redline_item.get('clarification_id', 'Unknown')}")
+                else:
+                    remaining_conflicts.append(redline_item)
             
-            if not found_match:
-                logger.warning(f"NO MATCH found for vendor conflict: '{vendor_conflict_text}'")
-                # Sample a few paragraphs to help debug
-                logger.debug("Sample document paragraphs:")
-                for i, para in enumerate(doc.paragraphs[:3]):
-                    if para.text.strip():
-                        logger.debug(f"  Paragraph {i}: '{para.text[:100]}...'")
-                        if i >= 2:  # Limit to 3 samples
-                            break
+            # Early exit if all conflicts matched
+            if not remaining_conflicts:
+                logger.info(f"ALL CONFLICTS MATCHED in Tier 2! Total: {matches_found}")
+            else:
+                logger.info(f"TIER 2 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+                
+                # TIER 3: Cross-paragraph matching (only for unmatched conflicts)
+                logger.info(f"TIER 3: Processing {len(remaining_conflicts)} remaining conflicts with cross-paragraph search")
+                unmatched_conflicts = remaining_conflicts
+                remaining_conflicts = []
+                
+                for redline_item in unmatched_conflicts:
+                    vendor_conflict_text = redline_item.get('text', '').strip()
+                    found_match = _tier3_cross_paragraph_matching(doc, vendor_conflict_text, redline_item)
+                    
+                    if found_match:
+                        matches_found += 1
+                        for para_idx in found_match['para_indices']:
+                            if para_idx not in paragraphs_with_redlines:
+                                paragraphs_with_redlines.append(para_idx)
+                        logger.info(f"TIER 3 SUCCESS: Found cross-paragraph match for ID {redline_item.get('clarification_id', 'Unknown')}")
+                    else:
+                        remaining_conflicts.append(redline_item)
+                
+                # Early exit if all conflicts matched
+                if not remaining_conflicts:
+                    logger.info(f"ALL CONFLICTS MATCHED in Tier 3! Total: {matches_found}")
+                else:
+                    logger.info(f"TIER 3 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+                    
+                    # TIER 4: Partial phrase matching (only for unmatched conflicts)
+                    logger.info(f"TIER 4: Processing {len(remaining_conflicts)} remaining conflicts with partial phrase matching")
+                    unmatched_conflicts = remaining_conflicts
+                    remaining_conflicts = []
+                    
+                    for redline_item in unmatched_conflicts:
+                        vendor_conflict_text = redline_item.get('text', '').strip()
+                        found_match = _tier4_partial_phrase_matching(doc, vendor_conflict_text, redline_item)
+                        
+                        if found_match:
+                            matches_found += 1
+                            if found_match['para_idx'] not in paragraphs_with_redlines:
+                                paragraphs_with_redlines.append(found_match['para_idx'])
+                            logger.info(f"TIER 4 SUCCESS: Found partial phrase match for ID {redline_item.get('clarification_id', 'Unknown')}")
+                        else:
+                            remaining_conflicts.append(redline_item)
+                    
+                    # Early exit if all conflicts matched
+                    if not remaining_conflicts:
+                        logger.info(f"ALL CONFLICTS MATCHED in Tier 4! Total: {matches_found}")
+                    else:
+                        logger.info(f"TIER 4 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+                        
+                        # TIER 5: Tokenized matching (only for unmatched conflicts)
+                        logger.info(f"TIER 5: Processing {len(remaining_conflicts)} remaining conflicts with tokenized matching")
+                        unmatched_conflicts = remaining_conflicts
+                        remaining_conflicts = []
+                        
+                        for redline_item in unmatched_conflicts:
+                            vendor_conflict_text = redline_item.get('text', '').strip()
+                            found_match = _tier5_tokenized_matching(doc, vendor_conflict_text, redline_item)
+                            
+                            if found_match:
+                                matches_found += 1
+                                if found_match['para_idx'] not in paragraphs_with_redlines:
+                                    paragraphs_with_redlines.append(found_match['para_idx'])
+                                logger.info(f"TIER 5 SUCCESS: Found tokenized match for ID {redline_item.get('clarification_id', 'Unknown')}")
+                            else:
+                                remaining_conflicts.append(redline_item)
+                        
+                        # Final failed matches
+                        for redline_item in remaining_conflicts:
+                            failed_matches.append({
+                                'text': redline_item.get('text', ''),
+                                'clarification_id': redline_item.get('clarification_id', 'Unknown')
+                            })
         
-        logger.info(f"Redlining complete: {matches_found} matches found in {len(paragraphs_with_redlines)} paragraphs")
+        # Log final summary
+        if failed_matches:
+            logger.warning(f"FINAL RESULT: {len(failed_matches)} conflicts could not be redlined:")
+            for failed in failed_matches:
+                logger.warning(f"  - ID {failed['clarification_id']}: '{failed['text'][:80]}...'")
+        else:
+            logger.info(f"🎯 PERFECT MATCH: All {len(redline_items)} conflicts successfully redlined!")
+        
+        logger.info(f"Enhanced redlining complete: {matches_found}/{len(redline_items)} matches found in {len(paragraphs_with_redlines)} paragraphs")
         
         return {
             "total_paragraphs": total_paragraphs,
             "matches_found": matches_found,
-            "paragraphs_with_redlines": paragraphs_with_redlines
+            "paragraphs_with_redlines": paragraphs_with_redlines,
+            "failed_matches": failed_matches
         }
         
     except Exception as e:
-        logger.error(f"Error in apply_exact_sentence_redlining: {str(e)}")
+        logger.error(f"Error in enhanced redlining: {str(e)}")
         return {
             "total_paragraphs": 0,
             "matches_found": 0,
             "paragraphs_with_redlines": [],
             "error": str(e)
         }
+
+
+def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 1: Standard exact and case-insensitive matching within paragraphs."""
+    
+    # Create variations of the text to try matching (handle various quote formats)
+    text_variations = [
+        vendor_conflict_text,  # Original text
+        vendor_conflict_text.strip('"\''),  # Remove quotes
+        vendor_conflict_text.replace('"', '"').replace('"', '"'),  # Smart quotes to regular
+        vendor_conflict_text.replace(''', "'").replace(''', "'"),  # Smart apostrophes
+    ]
+    
+    # Remove duplicates while preserving order
+    text_variations = list(dict.fromkeys(text_variations))
+    
+    # Search through all paragraphs for exact vendor conflict text
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text.strip()
+        if not para_text:
+            continue
+            
+        # Try each text variation for matching
+        for text_variant in text_variations:
+            if not text_variant:
+                continue
+                
+            # Try exact substring match (most reliable with exact vendor quotes)
+            if text_variant in para_text:
+                logger.info(f"Found EXACT match in paragraph {para_idx}")
+                _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
+                return {'para_idx': para_idx, 'matched_text': text_variant}
+            
+            # Try case-insensitive match as fallback
+            elif text_variant.lower() in para_text.lower():
+                logger.info(f"Found CASE-INSENSITIVE match in paragraph {para_idx}")
+                # Find the actual text with correct case in the document
+                start_idx = para_text.lower().find(text_variant.lower())
+                actual_text = para_text[start_idx:start_idx + len(text_variant)]
+                _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
+                return {'para_idx': para_idx, 'matched_text': actual_text}
+    
+    return None
+
+
+def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 2: Fuzzy matching with text normalization for slight variations."""
+    
+    import difflib
+    
+    def normalize_text(text):
+        """Normalize text for fuzzy matching."""
+        # Remove extra whitespace and normalize punctuation
+        normalized = re.sub(r'\s+', ' ', text.strip())
+        normalized = re.sub(r'[""''`]', '"', normalized)  # Normalize quotes
+        normalized = re.sub(r'[–—]', '-', normalized)  # Normalize dashes
+        return normalized.lower()
+    
+    def similarity_ratio(a, b):
+        """Calculate similarity ratio between two strings."""
+        return difflib.SequenceMatcher(None, a, b).ratio()
+    
+    # Normalize the search text
+    normalized_search = normalize_text(vendor_conflict_text)
+    
+    # Try fuzzy matching with normalized text
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text.strip()
+        if not para_text or len(para_text) < 20:  # Skip very short paragraphs
+            continue
+        
+        normalized_para = normalize_text(para_text)
+        
+        # Check if normalized search text is in normalized paragraph
+        if normalized_search in normalized_para:
+            logger.info(f"Found NORMALIZED match in paragraph {para_idx}")
+            # Find the original text in the document that corresponds to the match
+            start_idx = normalized_para.find(normalized_search)
+            # This is approximate - try to find the closest matching text in original
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+            return {'para_idx': para_idx, 'matched_text': 'normalized_match'}
+        
+        # Try similarity matching for very close matches (threshold: 0.85)
+        if len(normalized_search) > 50:  # Only for longer texts
+            similarity = similarity_ratio(normalized_search, normalized_para)
+            if similarity > 0.85:
+                logger.info(f"Found HIGH SIMILARITY match ({similarity:.2f}) in paragraph {para_idx}")
+                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                return {'para_idx': para_idx, 'matched_text': 'similarity_match'}
+    
+    return None
+
+
+def _tier3_cross_paragraph_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 3: Cross-paragraph matching for text that spans multiple paragraphs."""
+    
+    # Combine consecutive paragraphs and search across boundaries
+    for start_idx in range(len(doc.paragraphs) - 1):
+        # Try combining 2-5 consecutive paragraphs
+        for span in range(2, min(6, len(doc.paragraphs) - start_idx + 1)):
+            combined_text = ""
+            para_indices = []
+            
+            for i in range(start_idx, start_idx + span):
+                if doc.paragraphs[i].text.strip():
+                    combined_text += doc.paragraphs[i].text.strip() + " "
+                    para_indices.append(i)
+            
+            if not combined_text.strip():
+                continue
+            
+            # Try exact match in combined text
+            if vendor_conflict_text in combined_text:
+                logger.info(f"Found CROSS-PARAGRAPH exact match across paragraphs {para_indices}")
+                # Apply redlining to the first paragraph that contains part of the text
+                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
+                return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
+            
+            # Try case-insensitive match in combined text
+            if vendor_conflict_text.lower() in combined_text.lower():
+                logger.info(f"Found CROSS-PARAGRAPH case-insensitive match across paragraphs {para_indices}")
+                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
+                return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
+    
+    return None
+
+
+def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 4: Partial phrase matching for long sentences - match key phrases."""
+    
+    # Break long conflict text into key phrases (remove common words)
+    def extract_key_phrases(text, min_length=15):
+        """Extract meaningful phrases from text."""
+        # Split on sentence boundaries and conjunctions
+        phrases = re.split(r'[,.;:]|\sand\s|\sor\s|\sbut\s', text)
+        key_phrases = []
+        
+        for phrase in phrases:
+            phrase = phrase.strip()
+            if len(phrase) >= min_length and not phrase.lower().startswith(('the ', 'a ', 'an ', 'to ', 'for ')):
+                key_phrases.append(phrase)
+        
+        return key_phrases
+    
+    # Only try partial matching for longer conflict texts
+    if len(vendor_conflict_text) < 80:
+        return None
+    
+    key_phrases = extract_key_phrases(vendor_conflict_text)
+    
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text.strip()
+        if not para_text or len(para_text) < 30:
+            continue
+        
+        # Check if any key phrase matches
+        for phrase in key_phrases:
+            if len(phrase) > 20 and phrase.lower() in para_text.lower():
+                logger.info(f"Found PARTIAL PHRASE match in paragraph {para_idx}: '{phrase[:50]}...'")
+                # Apply redlining to the found phrase instead of full text
+                start_idx = para_text.lower().find(phrase.lower())
+                actual_phrase = para_text[start_idx:start_idx + len(phrase)]
+                _apply_redline_to_paragraph(paragraph, actual_phrase, redline_item)
+                return {'para_idx': para_idx, 'matched_text': actual_phrase}
+    
+    return None
+
+
+def _tier5_tokenized_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 5: Tokenized matching to handle formatting differences and word boundary issues."""
+    
+    def tokenize_for_matching(text):
+        """Tokenize text for flexible matching."""
+        # Remove punctuation except periods in numbers
+        cleaned = re.sub(r'[^\w\s\.]', ' ', text)
+        # Split into tokens and remove empty strings
+        tokens = [token.lower().strip() for token in cleaned.split() if token.strip()]
+        return tokens
+    
+    def token_sequence_match(search_tokens, text_tokens, min_match_ratio=0.7):
+        """Find token sequence with minimum match ratio."""
+        search_len = len(search_tokens)
+        text_len = len(text_tokens)
+        
+        if search_len == 0 or text_len == 0:
+            return False, -1
+        
+        for start_idx in range(text_len - search_len + 1):
+            matched_tokens = 0
+            for i in range(search_len):
+                if search_tokens[i] == text_tokens[start_idx + i]:
+                    matched_tokens += 1
+            
+            match_ratio = matched_tokens / search_len
+            if match_ratio >= min_match_ratio:
+                return True, start_idx
+        
+        return False, -1
+    
+    # Tokenize the search text
+    search_tokens = tokenize_for_matching(vendor_conflict_text)
+    
+    # Only try tokenized matching for substantial texts
+    if len(search_tokens) < 5:
+        return None
+    
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text.strip()
+        if not para_text:
+            continue
+        
+        para_tokens = tokenize_for_matching(para_text)
+        
+        # Try token sequence matching
+        found, start_pos = token_sequence_match(search_tokens, para_tokens)
+        
+        if found:
+            logger.info(f"Found TOKENIZED match in paragraph {para_idx}")
+            # Reconstruct approximate text for redlining (use first part of vendor text)
+            redline_text = vendor_conflict_text[:min(len(vendor_conflict_text), 150)]
+            _apply_redline_to_paragraph(paragraph, redline_text, redline_item)
+            return {'para_idx': para_idx, 'matched_text': 'tokenized_match'}
+    
+    return None
 
 
 def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dict[str, str]):
