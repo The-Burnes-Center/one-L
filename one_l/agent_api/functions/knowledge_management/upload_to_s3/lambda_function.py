@@ -24,7 +24,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     
     Expected event format from API Gateway:
     {
-        "body": "{\"bucket_type\": \"user_documents\", \"files\": [...], \"prefix\": \"...\"}"
+        "body": "{\"bucket_type\": \"user_documents\", \"files\": [...], \"prefix\": \"...\", \"session_id\": \"...\", \"user_id\": \"...\"}"
     }
     
     Expected direct invocation format:
@@ -37,7 +37,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "file_size": 1024
             }
         ],
-        "prefix": "optional/path/prefix/"
+        "prefix": "optional/path/prefix/",
+        "session_id": "optional session UUID for session-based storage",
+        "user_id": "optional user UUID for session-based storage"
     }
     """
     
@@ -61,10 +63,26 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         files = body_data.get('files', [])
         prefix = body_data.get('prefix', '')
         
-        logger.info(f"Parsed parameters - bucket_type: {bucket_type}, files count: {len(files)}, prefix: {prefix}")
+        # NEW: Extract session context for session-based storage
+        session_id = body_data.get('session_id')
+        user_id = body_data.get('user_id')
+        
+        logger.info(f"Parsed parameters - bucket_type: {bucket_type}, files count: {len(files)}, prefix: {prefix}, session_id: {session_id}, user_id: {user_id}")
         
         # Get bucket name from environment
         bucket_name = get_bucket_name(bucket_type)
+        
+        # NEW: Generate session-based prefix for reference documents
+        if session_id and user_id and bucket_type == 'user_documents':
+            # Check if this is a reference document upload
+            if 'reference-docs' in prefix or prefix == '':
+                # Generate session-based prefix
+                session_prefix = f"sessions/{user_id}/{session_id}/reference-docs"
+                logger.info(f"Converting to session-based storage: {prefix} → {session_prefix}")
+                prefix = session_prefix
+            else:
+                # For other document types, keep existing prefix but add session context
+                logger.info(f"Session context available but keeping existing prefix for non-reference docs: {prefix}")
         
         # Validate parameters
         if not files:
@@ -73,7 +91,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Generate presigned URLs
         presigned_urls = []
         for file_data in files:
-            result = generate_presigned_url(file_data, bucket_name, prefix)
+            result = generate_presigned_url(file_data, bucket_name, prefix, session_id, user_id)
             presigned_urls.append(result)
         
         failed_generations = [r for r in presigned_urls if not r['success']]
@@ -107,7 +125,7 @@ def get_bucket_name(bucket_type: str) -> str:
         raise ValueError(f"Invalid bucket_type: {bucket_type}")
 
 
-def generate_presigned_url(file_data: Dict[str, Any], bucket_name: str, prefix: str) -> Dict[str, Any]:
+def generate_presigned_url(file_data: Dict[str, Any], bucket_name: str, prefix: str, session_id: str = None, user_id: str = None) -> Dict[str, Any]:
     """Generate a presigned URL for direct S3 upload."""
     try:
         filename = file_data.get('filename')
@@ -143,7 +161,9 @@ def generate_presigned_url(file_data: Dict[str, Any], bucket_name: str, prefix: 
                 'ContentType': content_type,
                 'Metadata': {
                     'original_filename': filename,
-                    'upload_timestamp': str(uuid.uuid4())
+                    'upload_timestamp': str(uuid.uuid4()),
+                    'session_id': session_id or 'legacy',
+                    'user_id': user_id or 'unknown'
                 }
             },
             ExpiresIn=3600  # URL expires in 1 hour
@@ -159,7 +179,10 @@ def generate_presigned_url(file_data: Dict[str, Any], bucket_name: str, prefix: 
             'bucket_name': bucket_name,
             'content_type': content_type,
             'presigned_url': presigned_url,
-            'expires_in': 3600
+            'expires_in': 3600,
+            'session_id': session_id,
+            'user_id': user_id,
+            'is_session_based': bool(session_id and user_id)
         }
         
     except Exception as e:

@@ -13,50 +13,28 @@ const VendorSubmission = ({ onFilesUploaded }) => {
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
   const fileInputRef = useRef(null);
   
-  const maxFiles = 2;
+  // eslint-disable-next-line no-unused-vars
+  const maxFiles = 1;
   const bucketType = "agent_processing";
   const prefix = "vendor-submissions/";
 
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files);
     
-    // Check file count limit
-    if (files.length > maxFiles) {
-      setMessage(`You can only upload a maximum of ${maxFiles} vendor submission files.`);
+    if (files.length === 0) return;
+    
+    const file = files[0]; // Only take the first file
+    
+    // Validate file
+    try {
+      fileUtils.validateFile(file);
+      setSelectedFiles([file]); // Replace any existing file
+      setMessage('');
+      setMessageType('');
+    } catch (error) {
+      setMessage(error.message);
       setMessageType('error');
-      return;
     }
-    
-    // Check if adding these files would exceed the limit
-    if ((selectedFiles.length + files.length) > maxFiles) {
-      const remainingSlots = maxFiles - selectedFiles.length;
-      setMessage(`You can only add ${remainingSlots} more file(s). Current limit: ${maxFiles} files.`);
-      setMessageType('error');
-      return;
-    }
-    
-    // Validate files
-    const validFiles = [];
-    const errors = [];
-    
-    files.forEach(file => {
-      try {
-        fileUtils.validateFile(file);
-        validFiles.push(file);
-      } catch (error) {
-        errors.push(error.message);
-      }
-    });
-    
-    if (errors.length > 0) {
-      setMessage(errors.join('\n'));
-      setMessageType('error');
-      return;
-    }
-    
-    setSelectedFiles(validFiles);
-    setMessage('');
-    setMessageType('');
   };
 
   const handleUpload = async () => {
@@ -86,7 +64,7 @@ const VendorSubmission = ({ onFilesUploaded }) => {
       );
       
       if (response.uploaded_count > 0) {
-        setMessage(`Successfully uploaded ${response.uploaded_count} vendor submission file(s)! Ready for AI review.`);
+        setMessage('File uploaded successfully!');
         setMessageType('success');
         
         // Extract uploaded files info
@@ -105,11 +83,7 @@ const VendorSubmission = ({ onFilesUploaded }) => {
           onFilesUploaded(successfulUploads);
         }
         
-        // Clear selection
-        setSelectedFiles([]);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
+        // Keep selectedFiles to maintain preview after upload
       } else {
         setMessage(response.message || 'Upload failed. Please try again.');
         setMessageType('error');
@@ -124,82 +98,79 @@ const VendorSubmission = ({ onFilesUploaded }) => {
     }
   };
 
-  const handleRemoveFile = (index) => {
-    const newFiles = selectedFiles.filter((_, i) => i !== index);
-    setSelectedFiles(newFiles);
-    
-    if (newFiles.length === 0 && fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
 
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
 
+
+//DOC, DOCX (Max 10MB per file)
   return (
     <div className="card">
       <h2>Vendor Submission</h2>
-      <p>Upload vendor submission documents for AI-powered conflict review (maximum 2 files)</p>
       
       <div className="form-group">
         <label className="form-label">
-          Select Vendor Submission Files (Maximum: {maxFiles} files)
+          Select Document
         </label>
         <input
           ref={fileInputRef}
           type="file"
-          multiple
           onChange={handleFileSelect}
           className="form-control"
-          accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
-          disabled={uploading || selectedFiles.length >= maxFiles}
+          accept=".doc,.docx"
+          description="DOC, DOCX (Max 10MB per file)"
+          disabled={uploading}
         />
-        <small style={{ color: '#666', fontSize: '14px' }}>
-          Supported formats: TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)
-        </small>
       </div>
 
       {selectedFiles.length > 0 && (
         <div className="form-group">
-          <label className="form-label">Selected Files ({selectedFiles.length})</label>
-          <div style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '12px' }}>
-            {selectedFiles.map((file, index) => (
-              <div key={index} style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                padding: '8px 0',
-                borderBottom: index < selectedFiles.length - 1 ? '1px solid #eee' : 'none'
-              }}>
-                <div>
-                  <div style={{ fontWeight: '500' }}>{file.name}</div>
-                  <div style={{ fontSize: '12px', color: '#666' }}>
-                    {formatFileSize(file.size)} • {file.type}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveFile(index)}
-                  disabled={uploading}
-                  style={{
-                    background: '#dc3545',
-                    color: 'white',
-                    border: 'none',
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '12px'
-                  }}
-                >
-                  Remove
-                </button>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            padding: '12px 16px',
+            backgroundColor: '#f8f9fa',
+            border: '1px solid #dee2e6',
+            borderRadius: '12px',
+            color: '#333',
+            gap: '12px',
+            maxWidth: '400px'
+          }}>
+            <div style={{
+              width: '40px',
+              height: '40px',
+              backgroundColor: '#ff4757',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '20px'
+            }}>
+              📄
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: '500', fontSize: '14px' }}>
+                {selectedFiles[0].name}
               </div>
-            ))}
+              <div style={{ fontSize: '12px', color: '#666' }}>
+                Document
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedFiles([])}
+              disabled={uploading || messageType === 'success'}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#666',
+                cursor: (uploading || messageType === 'success') ? 'not-allowed' : 'pointer',
+                fontSize: '18px',
+                padding: '4px',
+                borderRadius: '4px',
+                opacity: messageType === 'success' ? 0.5 : 1
+              }}
+            >
+              ✕
+            </button>
           </div>
         </div>
       )}
@@ -207,11 +178,11 @@ const VendorSubmission = ({ onFilesUploaded }) => {
       <div className="form-group">
         <button
           onClick={handleUpload}
-          disabled={uploading || selectedFiles.length === 0}
+          disabled={uploading || selectedFiles.length === 0 || messageType === 'success'}
           className="btn"
-          style={{ opacity: uploading ? 0.6 : 1 }}
+          style={{ opacity: (uploading || messageType === 'success') ? 0.6 : 1 }}
         >
-          {uploading ? 'Uploading...' : `Upload Vendor Submission (${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''})`}
+          {uploading ? 'Uploading...' : messageType === 'success' ? 'Document Uploaded' : 'Upload Document'}
         </button>
       </div>
 
