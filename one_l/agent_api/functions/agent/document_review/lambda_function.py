@@ -240,7 +240,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 redlined_result = agent.create_redlined_document(
                     analysis_data=review_result.get('analysis', ''),
                     document_s3_key=document_s3_key,
-                    bucket_type=bucket_type
+                    bucket_type=bucket_type,
+                    session_id=session_id,
+                    user_id=user_id
                 )
                 
                 # Generate unique analysis ID and save results to DynamoDB using tools
@@ -348,7 +350,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             redlined_result = agent.create_redlined_document(
                 analysis_data=review_result.get('analysis', ''),
                 document_s3_key=document_s3_key,
-                bucket_type=bucket_type
+                bucket_type=bucket_type,
+                session_id=session_id,
+                user_id=user_id
             )
             
             # Generate unique analysis ID and save results to DynamoDB using tools

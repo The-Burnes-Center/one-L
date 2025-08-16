@@ -435,7 +435,8 @@ def redline_document(
         logger.info(f"Redlined document stored in bucket: {agent_processing_bucket}")
         logger.info(f"Full redlined document path: s3://{agent_processing_bucket}/{redlined_s3_key}")
         
-        return {
+        # Original redlining completion
+        result = {
             "success": True,
             "original_document": document_s3_key,
             "agent_document": agent_document_key,
@@ -446,6 +447,31 @@ def redline_document(
             "bucket": agent_processing_bucket,
             "message": f"Successfully created redlined document with {results['matches_found']} conflicts highlighted"
         }
+
+        # NEW: After successful redlining, cleanup session documents
+        if session_id and user_id:
+            logger.info(f"Starting session cleanup for session {session_id}")
+            
+            try:
+                cleanup_result = _cleanup_session_documents(session_id, user_id)
+                result["cleanup_performed"] = True
+                result["cleanup_result"] = cleanup_result
+                
+                if cleanup_result.get('success'):
+                    logger.info(f"Session cleanup completed: deleted {cleanup_result.get('deleted_count', 0)} documents")
+                else:
+                    logger.warning(f"Session cleanup failed: {cleanup_result.get('error')}")
+                    
+            except Exception as cleanup_error:
+                # Don't fail redlining if cleanup fails
+                logger.error(f"Session cleanup error: {cleanup_error}")
+                result["cleanup_performed"] = False
+                result["cleanup_error"] = str(cleanup_error)
+        else:
+            logger.info("No session context provided, skipping cleanup")
+            result["cleanup_performed"] = False
+
+        return result
         
     except Exception as e:
         logger.error(f"Error in redlining workflow: {str(e)}")
@@ -1210,6 +1236,205 @@ def _save_and_upload_document(doc, bucket: str, s3_key: str, metadata: Dict[str,
     except Exception as e:
         logger.error(f"Error saving and uploading document: {str(e)}")
         return False
+
+
+def _cleanup_session_documents(session_id: str, user_id: str) -> Dict[str, Any]:
+    """
+    Clean up session reference documents using existing Lambda functions.
+    
+    Steps:
+    1. List session reference documents
+    2. Call delete_from_s3 Lambda function
+    3. Call sync_knowledge_base Lambda function
+    """
+    try:
+        logger.info(f"Starting cleanup for session {session_id}, user {user_id}")
+        
+        # Step 1: List session reference documents
+        session_s3_keys = _list_session_reference_documents(session_id, user_id)
+        
+        if not session_s3_keys:
+            logger.info(f"No reference documents found for cleanup in session {session_id}")
+            return {
+                'success': True,
+                'deleted_count': 0,
+                'sync_triggered': False,
+                'message': 'No documents to clean up'
+            }
+        
+        logger.info(f"Found {len(session_s3_keys)} reference documents to delete")
+        
+        # Step 2: Delete documents using existing delete_from_s3 Lambda
+        delete_result = _invoke_delete_lambda(session_s3_keys)
+        
+        if not delete_result.get('success'):
+            return {
+                'success': False,
+                'error': f"Document deletion failed: {delete_result.get('error')}",
+                'step_failed': 'delete',
+                'found_documents': len(session_s3_keys)
+            }
+        
+        deleted_count = delete_result.get('deleted_count', 0)
+        logger.info(f"Successfully deleted {deleted_count} reference documents")
+        
+        # Step 3: Trigger knowledge base sync using existing sync Lambda
+        sync_result = _invoke_sync_lambda()
+        
+        return {
+            'success': True,
+            'deleted_count': deleted_count,
+            'sync_triggered': sync_result.get('success', False),
+            'sync_job_id': sync_result.get('job_id'),
+            'message': f"Cleanup completed: {deleted_count} documents deleted, sync triggered"
+        }
+        
+    except Exception as e:
+        logger.error(f"Session cleanup failed: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def _get_function_names() -> Dict[str, str]:
+    """Get Lambda function names based on current function naming pattern."""
+    current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
+    
+    if current_function and 'document-review' in current_function:
+        # Extract stack name: OneLStack-document-review -> OneLStack
+        stack_name = current_function.replace('-document-review', '')
+        
+        return {
+            'delete_function': f"{stack_name}-delete-from-s3",
+            'sync_function': f"{stack_name}-sync-knowledge-base"
+        }
+    else:
+        # Fallback: use known stack name
+        return {
+            'delete_function': 'OneLStack-delete-from-s3',
+            'sync_function': 'OneLStack-sync-knowledge-base'
+        }
+
+
+def _list_session_reference_documents(session_id: str, user_id: str) -> List[str]:
+    """List all reference document S3 keys for a session."""
+    try:
+        bucket_name = 'onelstack-user-documents'
+        if not bucket_name:
+            logger.error('USER_DOCUMENTS_BUCKET not configured')
+            return []
+        
+        # Session reference docs are at: sessions/{user_id}/{session_id}/reference-docs/
+        prefix = f"sessions/{user_id}/{session_id}/reference-docs/"
+        
+        logger.info(f"Listing documents with prefix: {prefix}")
+        
+        # List all objects with this prefix
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+        
+        if 'Contents' not in response:
+            return []
+        
+        # Extract S3 keys
+        s3_keys = [obj['Key'] for obj in response['Contents']]
+        
+        logger.info(f"Found {len(s3_keys)} reference documents: {s3_keys}")
+        return s3_keys
+        
+    except Exception as e:
+        logger.error(f"Error listing session documents: {str(e)}")
+        return []
+
+
+def _invoke_delete_lambda(s3_keys: List[str]) -> Dict[str, Any]:
+    """Invoke the existing delete_from_s3 Lambda function."""
+    try:
+        lambda_client = boto3.client('lambda')
+        
+        function_names = _get_function_names()
+        delete_function_name = function_names['delete_function']
+        
+        # Prepare payload for delete Lambda
+        delete_payload = {
+            'bucket_type': 'user_documents',
+            's3_keys': s3_keys
+        }
+        
+        logger.info(f"Invoking delete Lambda: {delete_function_name}")
+        
+        # Invoke delete Lambda synchronously to ensure completion
+        response = lambda_client.invoke(
+            FunctionName=delete_function_name,
+            InvocationType='RequestResponse',  # Synchronous
+            Payload=json.dumps(delete_payload)
+        )
+        
+        # Parse response
+        response_payload = json.loads(response['Payload'].read())
+        
+        if response_payload.get('statusCode') == 200:
+            body = json.loads(response_payload.get('body', '{}'))
+            logger.info(f"Delete Lambda succeeded: {body.get('message')}")
+            return {
+                'success': True,
+                'deleted_count': body.get('deleted_count', 0),
+                'details': body
+            }
+        else:
+            error_msg = response_payload.get('body', 'Unknown error')
+            logger.error(f"Delete Lambda failed: {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg
+            }
+            
+    except Exception as e:
+        logger.error(f"Error invoking delete Lambda: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def _invoke_sync_lambda() -> Dict[str, Any]:
+    """Invoke the existing sync_knowledge_base Lambda function."""
+    try:
+        lambda_client = boto3.client('lambda')
+        
+        function_names = _get_function_names()
+        sync_function_name = function_names['sync_function']
+        
+        # Prepare payload for sync Lambda
+        sync_payload = {
+            'action': 'start_sync',
+            'data_source': 'user_documents',
+            'triggered_by': 'session_cleanup'
+        }
+        
+        logger.info(f"Invoking sync Lambda: {sync_function_name}")
+        
+        # Invoke sync Lambda asynchronously (sync can take time)
+        response = lambda_client.invoke(
+            FunctionName=sync_function_name,
+            InvocationType='Event',  # Asynchronous
+            Payload=json.dumps(sync_payload)
+        )
+        
+        logger.info(f"Sync Lambda invoked successfully")
+        
+        return {
+            'success': True,
+            'function_invoked': sync_function_name,
+            'message': 'Knowledge base sync triggered'
+        }
+        
+    except Exception as e:
+        logger.error(f"Error invoking sync Lambda: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
 
 
  
