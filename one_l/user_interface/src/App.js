@@ -44,23 +44,23 @@ const SessionView = () => {
 
       // Check if session was passed via navigation state (for newly created sessions)
       if (location.state?.session && location.state.session.session_id === sessionId) {
-        console.log('Using session from navigation state');
+
         setSession(location.state.session);
         setLoading(false);
         return;
       }
 
       // Fallback: Load ALL user sessions (including new ones without results) and find the current one
-      console.log('Loading session from database');
+
       const response = await sessionAPI.getUserSessions(userId, false); // Don't filter by results for session lookup
       if (response.success && response.sessions) {
         const foundSession = response.sessions.find(s => s.session_id === sessionId);
         if (foundSession) {
-          console.log(`Found session: ${foundSession.title} (has_results: ${foundSession.has_results})`);
+
           setSession(foundSession);
         } else {
           // Session not found - might be a new session that hasn't been persisted yet
-          console.warn(`Session ${sessionId} not found in database - creating minimal session object`);
+
           setSession({
             session_id: sessionId,
             title: 'Loading Session...',
@@ -73,7 +73,7 @@ const SessionView = () => {
         setError('Failed to load sessions');
       }
     } catch (err) {
-      console.error('Error loading session:', err);
+
       setError(err.message);
     } finally {
       setLoading(false);
@@ -175,24 +175,24 @@ const SessionWorkspace = ({ session }) => {
       const userId = authService.getUserId();
       
       // Always try to load results - the backend will return empty if none exist
-      console.log(`Loading results for session ${session?.session_id}...`);
+
       
       const response = await sessionAPI.getSessionResults(session.session_id, userId);
       
       if (response.success && response.results) {
         setSessionResults(response.results);
-        console.log(`Loaded ${response.results.length} results for session ${session.session_id}`);
+
       } else {
         // Session might not have results yet
-        console.log(`No results found for session ${session.session_id}`);
+
         setSessionResults([]);
       }
     } catch (error) {
       // Don't log as error for new sessions - they won't have results yet
       if (session?.has_results) {
-        console.error('Error loading session results:', error);
+
       } else {
-        console.log('Session has no results yet:', error.message);
+
       }
       setSessionResults([]);
     } finally {
@@ -210,7 +210,7 @@ const SessionWorkspace = ({ session }) => {
 
   // ← NEW HANDLER FUNCTION
   const handleKbSyncStatusChange = (status, progress, message) => {
-    console.log(`KB Sync Status: ${status}, Progress: ${progress}%, Message: ${message}`);
+
     setKbSyncStatus(status);
     setKbSyncProgress(progress);
     setKbSyncMessage(message);
@@ -220,12 +220,12 @@ const SessionWorkspace = ({ session }) => {
     try {
       // Connect to WebSocket
       await webSocketService.connect();
-      console.log('WebSocket connected for session:', session?.session_id);
+
       
       // Subscribe to session-level updates to catch all notifications for this session
       if (session?.session_id) {
         webSocketService.subscribeToSession(session.session_id);
-        console.log('Subscribed to session-level updates for:', session.session_id);
+
       }
       
       // Set up message handlers
@@ -236,18 +236,18 @@ const SessionWorkspace = ({ session }) => {
       
       // Add catch-all handler to debug any missed messages
       const catchAllHandler = (message) => {
-        console.log('WebSocket received message:', message);
+
         // Look for any completion notifications for this session, regardless of job ID
         if ((message.type === 'job_completed' || message.type === 'document_completed') && 
             message.session_id === session?.session_id) {
-          console.log('Received job completion for current session:', message.session_id);
+
           handleJobCompleted(message);
         }
       };
       webSocketService.onMessageType('*', catchAllHandler);
       
     } catch (error) {
-      console.error('Failed to setup WebSocket:', error);
+
       // WebSocket failure shouldn't break the app - polling will still work
     }
   };
@@ -265,7 +265,7 @@ const SessionWorkspace = ({ session }) => {
   };
 
   const handleJobProgress = (message) => {
-    console.log('WebSocket job progress:', message);
+
     const { job_id, session_id, data } = message;
     
     // Update UI with progress
@@ -289,11 +289,11 @@ const SessionWorkspace = ({ session }) => {
   };
 
   const handleJobCompleted = (message) => {
-    console.log('WebSocket job completed:', message);
+
     const { job_id, session_id, data } = message;
     
     if (session_id === session?.session_id) {
-      console.log('Processing job completion for session:', session_id, 'job:', job_id);
+
       
       // Stop progress and update UI
       if (window.progressInterval) {
@@ -350,12 +350,12 @@ const SessionWorkspace = ({ session }) => {
   };
 
   const handleSessionUpdate = (message) => {
-    console.log('WebSocket session update:', message);
+
     // Handle session updates (e.g., title changes, status updates)
   };
 
   const handleWebSocketError = (message) => {
-    console.error('WebSocket error:', message);
+
     setWorkflowMessage(`WebSocket error: ${message.message}`);
     setWorkflowMessageType('error');
   };
@@ -395,7 +395,7 @@ const SessionWorkspace = ({ session }) => {
         await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
         attempts++;
       } catch (error) {
-        console.error('Error polling job status:', error);
+
         await new Promise(resolve => setTimeout(resolve, 10000));
         attempts++;
       }
@@ -415,7 +415,7 @@ const SessionWorkspace = ({ session }) => {
     setWorkflowMessage(message);
     setWorkflowMessageType('progress');
     
-    console.log(`Processing stage: ${stage}, progress: ${progress}%, message: ${message}`);
+
   };
 
   // Smooth progress flow - 1% per 2 seconds for entire progress bar
@@ -492,7 +492,7 @@ const SessionWorkspace = ({ session }) => {
             // Subscribe to WebSocket notifications for this job
             try {
               webSocketService.subscribeToJob(reviewResponse.job_id, session?.session_id);
-              console.log('Subscribed to WebSocket updates for job:', reviewResponse.job_id);
+
               
               // Add job to tracking with initial progress
               setRedlinedDocuments(prev => [...prev, {
@@ -505,7 +505,7 @@ const SessionWorkspace = ({ session }) => {
               }]);
               
             } catch (error) {
-              console.warn('Failed to subscribe to WebSocket updates:', error);
+
             }
             
             // Poll for completion (WebSocket is primary, polling is fallback)
@@ -557,7 +557,7 @@ const SessionWorkspace = ({ session }) => {
             
             // Don't log timeout/CORS errors as errors - they're expected for long processing
             
-            console.log('API Gateway timeout detected, switching to WebSocket-only mode for:', vendorFile.filename);
+
             
             // DON'T add to redlineResults - just use the unified progress UI
             // Store the job info for WebSocket tracking without showing old UI
@@ -572,15 +572,15 @@ const SessionWorkspace = ({ session }) => {
             // Ensure WebSocket connection is strong and subscribe to any updates for this session
             try {
               if (!webSocketService.getConnectionStatus().isConnected) {
-                console.log('WebSocket not connected, attempting reconnection...');
+
                 await webSocketService.connect();
               }
               
               // Session-level subscription is already set up in setupWebSocket()
-              console.log('Relying on session-level WebSocket subscription for:', session?.session_id);
+
               
             } catch (wsError) {
-              console.warn('Failed to set up WebSocket subscription after timeout:', wsError);
+
             }
             
             // Don't interfere with the natural progress flow
@@ -626,7 +626,7 @@ const SessionWorkspace = ({ session }) => {
       }
       
     } catch (error) {
-      console.error('Redline generation error:', error);
+
       
       // Clean up progress interval on error
       if (window.progressInterval) {
@@ -665,7 +665,7 @@ const SessionWorkspace = ({ session }) => {
         setWorkflowMessageType('error');
       }
     } catch (error) {
-      console.error('Download error:', error);
+
       setWorkflowMessage(`Download failed: ${error.message}`);
       setWorkflowMessageType('error');
     }
@@ -691,7 +691,7 @@ const SessionWorkspace = ({ session }) => {
               background: '#f8f9fa',
               borderRadius: '4px'
             }}>
-              <strong>Session:</strong> {session.title} ({session.session_id.substring(0, 8)}...)
+              <strong>Session:</strong> {session.title}
             </div>
           )}
         </div>
@@ -936,7 +936,7 @@ const SessionWorkspace = ({ session }) => {
             background: '#f8f9fa',
             borderRadius: '4px'
           }}>
-            <strong>Session:</strong> {session.title} ({session.session_id.substring(0, 8)}...)
+            <strong>Session:</strong> {session.title}
           </div>
         )}
       </div>
@@ -1243,11 +1243,11 @@ const AutoSessionRedirect = () => {
         throw new Error('No user ID available. Please try logging in again.');
       }
 
-      console.log('Creating session for user:', userId);
+
       const response = await sessionAPI.createSession(userId);
       
       if (response.success && response.session?.session_id) {
-        console.log('Session created successfully:', response.session.session_id);
+
         navigate(`/${response.session.session_id}`, { 
           replace: true, 
           state: { session: response.session } 
@@ -1256,7 +1256,7 @@ const AutoSessionRedirect = () => {
         throw new Error(response.message || 'Failed to create session');
       }
     } catch (err) {
-      console.error('Error creating session:', err);
+
       
       let errorMessage = err.message;
       if (err.message.includes('timeout')) {
@@ -1354,7 +1354,7 @@ const AppContent = () => {
         // Initialize authentication
         const authInitialized = await authService.initialize();
         if (!authInitialized) {
-          console.warn('Authentication initialization failed - user will need to log in');
+
           setAuthLoading(false);
           return;
         }
@@ -1363,12 +1363,12 @@ const AppContent = () => {
         if (authService.isUserAuthenticated()) {
           setIsAuthenticated(true);
           setCurrentUser(authService.getCurrentUser());
-          console.log('User authenticated:', authService.getCurrentUser());
+
         }
         
         setAuthLoading(false);
       } catch (error) {
-        console.error('Failed to initialize app:', error);
+
         setConfigError('Failed to load application configuration.');
         setAuthLoading(false);
       }
@@ -1411,7 +1411,7 @@ const AppContent = () => {
           });
         }
       } catch (error) {
-        console.error('Error creating session:', error);
+
         navigate('/');
       }
     }

@@ -41,7 +41,7 @@ const FileUpload = ({
     const checkJobsStatus = async () => {
       try {
         attempts++;
-        console.log(`Sync polling attempt ${attempts}/${maxAttempts}`);
+
         
         // Report progress during polling ← NEW
         const progressPercent = Math.min((attempts / maxAttempts) * 95, 95);
@@ -64,7 +64,7 @@ const FileUpload = ({
                 success: true
               };
             } catch (error) {
-              console.error(`Error checking job ${jobId}:`, error);
+
               return {
                 jobId,
                 status: 'FAILED',
@@ -86,7 +86,7 @@ const FileUpload = ({
           job.status === 'IN_PROGRESS' || job.status === 'STARTING'
         );
         
-        console.log(`Sync status: ${completedJobs.length} completed, ${failedJobs.length} failed, ${inProgressJobs.length} in progress`);
+
         
         // All jobs completed successfully (around line 76)
         if (completedJobs.length === jobIds.length) {
@@ -132,7 +132,7 @@ const FileUpload = ({
         }
         
       } catch (error) {
-        console.error('Error during sync polling:', error);
+
         setSyncing(false);
         const errorMessage = `File processing error. Please try uploading again.`;
         setMessage(errorMessage);
@@ -301,7 +301,6 @@ const FileUpload = ({
       }
       
     } catch (error) {
-      console.error('Upload error:', error);
       setMessage(`Upload failed: ${error.message}`);
       setMessageType('error');
     } finally {

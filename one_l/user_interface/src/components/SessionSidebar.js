@@ -48,10 +48,10 @@ const SessionSidebar = ({
       const response = await sessionAPI.getUserSessions(currentUserId, true);
       if (response.success) {
         setSessions(response.sessions || []);
-        console.log(`Loaded ${response.sessions?.length || 0} sessions with results`);
+
       }
     } catch (error) {
-      console.error('Error loading sessions:', error);
+
     } finally {
       setLoading(false);
     }
@@ -68,7 +68,7 @@ const SessionSidebar = ({
         });
       }
     } catch (error) {
-      console.error('Error creating session:', error);
+
     } finally {
       setLoading(false);
     }
@@ -91,7 +91,7 @@ const SessionSidebar = ({
       await loadSessions(); // Reload sessions
       setEditingSession(null);
     } catch (error) {
-      console.error('Error updating session title:', error);
+
     }
   };
 
@@ -106,7 +106,7 @@ const SessionSidebar = ({
           navigate('/');
         }
       } catch (error) {
-        console.error('Error deleting session:', error);
+
       }
     }
   };

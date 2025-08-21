@@ -59,7 +59,7 @@ const apiCall = async (endpoint, options = {}) => {
         // Don't log CORS errors for agent review - they're expected timeouts
         throw new Error('continue in background');
       } else {
-        console.error('API call failed:', error);
+
         throw new Error('Network connectivity issue - please try again');
       }
     }
@@ -77,13 +77,13 @@ const apiCall = async (endpoint, options = {}) => {
         // Don't log timeouts for agent review - they're expected
         throw new Error('continue in background');
       } else {
-        console.error('API call failed:', error);
+
         throw new Error(`Request timeout after ${timeoutMs/1000}s - please try again later`);
       }
     }
     
     // Log other errors normally
-    console.error('API call failed:', error);
+
     throw error;
   }
 };
@@ -109,21 +109,13 @@ const knowledgeManagementAPI = {
       const session_id = sessionContext?.session_id;
       
       const payload = {
-        bucket_type: bucketType,
         files: filesData,
-        prefix: prefix,
-        // NEW: Include session context for backend processing
-        user_id: user_id,
-        session_id: session_id
-      };
-      
-      console.log('Upload payload with session context:', { 
         bucket_type: bucketType, 
         prefix, 
         user_id, 
         session_id,
         file_count: files.length 
-      });
+      };
       
       const presignedResponse = await apiCall('/knowledge_management/upload', {
         method: 'POST',
@@ -201,7 +193,7 @@ const knowledgeManagementAPI = {
       };
       
     } catch (error) {
-      console.error('Upload files error:', error);
+
       // Return consistent error structure
       return {
         message: `Upload failed: ${error.message}`,
@@ -317,10 +309,10 @@ const agentAPI = {
    */
   downloadFile: async (s3Key, bucketType = 'agent_processing', originalFilename = null) => {
     try {
-      console.log('Download API - Attempting to retrieve file:');
-      console.log('  - S3 Key:', s3Key);
-      console.log('  - Bucket Type:', bucketType);
-      console.log('  - Original Filename:', originalFilename);
+
+
+
+
       
       // First get file metadata and content
       const retrieveResponse = await knowledgeManagementAPI.retrieveFile(s3Key, bucketType, true);
@@ -370,7 +362,7 @@ const agentAPI = {
       };
       
     } catch (error) {
-      console.error('Download file error:', error);
+
       
       // Handle specific error cases
       let errorMessage = error.message;
@@ -437,13 +429,10 @@ const fileUtils = {
             type: file.type,
             lastModified: file.lastModified
           });
-          
-          console.log(`Renamed file from "${file.name}" to "${newName}" for vendor submission`);
         }
         
         preparedFiles.push(processedFile);
       } catch (error) {
-        console.error(`Error preparing file ${file.name}:`, error);
         throw new Error(`Failed to prepare file ${file.name} for upload: ${error.message}`);
       }
     }
@@ -488,7 +477,7 @@ const sessionAPI = {
    */
   createSession: async (userId, cognitoSessionId = null) => {
     try {
-      console.log('Creating new session for user:', userId);
+
       
       const response = await apiCall('/knowledge_management/sessions?action=create', {
         method: 'POST',
@@ -499,10 +488,10 @@ const sessionAPI = {
         })
       });
       
-      console.log('Session created:', response.session);
+
       return response;
     } catch (error) {
-      console.error('Error creating session:', error);
+
       throw error;
     }
   },
@@ -512,7 +501,7 @@ const sessionAPI = {
    */
   getUserSessions: async (userId, filterByResults = false) => {
     try {
-      console.log('Getting sessions for user:', userId, 'filterByResults:', filterByResults);
+
       
       const queryParams = new URLSearchParams({
         action: 'list',
@@ -525,10 +514,10 @@ const sessionAPI = {
       
       const response = await apiCall(`/knowledge_management/sessions?${queryParams.toString()}`);
       
-      console.log('Retrieved sessions:', response.sessions?.length || 0);
+
       return response;
     } catch (error) {
-      console.error('Error getting sessions:', error);
+
       throw error;
     }
   },
@@ -538,7 +527,7 @@ const sessionAPI = {
    */
   updateSessionTitle: async (sessionId, userId, title) => {
     try {
-      console.log('Updating session title:', sessionId, title);
+
       
       const response = await apiCall('/knowledge_management/sessions?action=update', {
         method: 'PUT',
@@ -550,7 +539,7 @@ const sessionAPI = {
         })
       });
       
-      console.log('Session title updated');
+
       return response;
     } catch (error) {
       console.error('Error updating session title:', error);
@@ -563,7 +552,7 @@ const sessionAPI = {
    */
   deleteSession: async (sessionId, userId) => {
     try {
-      console.log('Deleting session:', sessionId);
+
       
       const response = await apiCall(`/knowledge_management/sessions?action=delete&session_id=${sessionId}`, {
         method: 'DELETE',
@@ -574,10 +563,10 @@ const sessionAPI = {
         })
       });
       
-      console.log('Session deleted');
+
       return response;
     } catch (error) {
-      console.error('Error deleting session:', error);
+
       throw error;
     }
   },
@@ -587,16 +576,16 @@ const sessionAPI = {
    */
   checkJobStatus: async (jobId, userId) => {
     try {
-      console.log('Checking job status:', jobId);
+
       
       const response = await apiCall(`/knowledge_management/sessions?action=job_status&job_id=${jobId}&user_id=${userId}`, {
         method: 'GET'
       });
       
-      console.log('Job status response:', response);
+
       return response;
     } catch (error) {
-      console.error('Error checking job status:', error);
+
       throw error;
     }
   },
@@ -606,16 +595,16 @@ const sessionAPI = {
    */
   getSessionResults: async (sessionId, userId) => {
     try {
-      console.log('Getting session results:', sessionId);
+
       
       const response = await apiCall(`/knowledge_management/sessions?action=session_results&session_id=${sessionId}&user_id=${userId}`, {
         method: 'GET'
       });
       
-      console.log('Session results response:', response);
+
       return response;
     } catch (error) {
-      console.error('Error getting session results:', error);
+
       throw error;
     }
   }

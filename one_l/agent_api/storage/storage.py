@@ -202,61 +202,7 @@ class StorageConstruct(Construct):
     
     def create_outputs(self):
         """Create CloudFormation outputs."""
-        CfnOutput(
-            self, "KnowledgeBucketName",
-            value=self.knowledge_bucket.bucket_name,
-            description="S3 Knowledge Source Bucket Name",
-            export_name=f"{self._stack_name}-KnowledgeBucketName"
-        )
-        
-        CfnOutput(
-            self, "UserDocumentsBucketName",
-            value=self.user_documents_bucket.bucket_name,
-            description="S3 User Documents Bucket Name",
-            export_name=f"{self._stack_name}-UserDocumentsBucketName"
-        )
-        
-        CfnOutput(
-            self, "KnowledgeBucketArn",
-            value=self.knowledge_bucket.bucket_arn,
-            description="S3 Knowledge Source Bucket ARN",
-            export_name=f"{self._stack_name}-KnowledgeBucketArn"
-        )
-        
-        CfnOutput(
-            self, "UserDocumentsBucketArn",
-            value=self.user_documents_bucket.bucket_arn,
-            description="S3 User Documents Bucket ARN",
-            export_name=f"{self._stack_name}-UserDocumentsBucketArn"
-        )
-        
-        CfnOutput(
-            self, "AgentProcessingBucketName",
-            value=self.agent_processing_bucket.bucket_name,
-            description="S3 Agent Processing Bucket Name",
-            export_name=f"{self._stack_name}-AgentProcessingBucketName"
-        )
-        
-        CfnOutput(
-            self, "AgentProcessingBucketArn",
-            value=self.agent_processing_bucket.bucket_arn,
-            description="S3 Agent Processing Bucket ARN",
-            export_name=f"{self._stack_name}-AgentProcessingBucketArn"
-        )
-        
-        CfnOutput(
-            self, "AnalysisTableName",
-            value=self.analysis_table.table_name,
-            description="DynamoDB Analysis Results Table Name",
-            export_name=f"{self._stack_name}-AnalysisTableName"
-        )
-        
-        CfnOutput(
-            self, "AnalysisTableArn",
-            value=self.analysis_table.table_arn,
-            description="DynamoDB Analysis Results Table ARN",
-            export_name=f"{self._stack_name}-AnalysisTableArn"
-        )
+        pass
     
     def grant_read_access(self, principal, bucket_name: str = "all"):
         """Grant read access to specified bucket(s)."""

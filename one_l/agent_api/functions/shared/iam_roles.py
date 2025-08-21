@@ -256,7 +256,7 @@ class IAMRolesConstruct(Construct):
             )
         )
         
-        # Grant Lambda invoke permissions for WebSocket notifications and session management
+        # Grant Lambda invoke permissions for WebSocket notifications, session management, and cleanup operations
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -265,7 +265,9 @@ class IAMRolesConstruct(Construct):
                 ],
                 resources=[
                     f"arn:aws:lambda:*:*:function:*-websocket-notification",
-                    f"arn:aws:lambda:*:*:function:*-session-management"
+                    f"arn:aws:lambda:*:*:function:*-session-management",
+                    f"arn:aws:lambda:*:*:function:*-delete-from-s3",
+                    f"arn:aws:lambda:*:*:function:*-sync-knowledge-base"
                 ]
             )
         )

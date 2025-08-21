@@ -221,13 +221,7 @@ class AuthorizationConstruct(Construct):
             description="Cognito User Pool Domain URL",
             export_name=f"{self._stack_name}-UserPoolDomainUrl"
         )
-        
-        CfnOutput(
-            self, "AuthLambdaArn",
-            value=self.auth_lambda.function_arn,
-            description="Authentication Lambda Function ARN",
-            export_name=f"{self._stack_name}-AuthLambdaArn"
-        )
+
     
     def add_user_group(self, group_name: str, description: str = None):
         """Add a user group to the user pool."""

@@ -63,7 +63,7 @@ def save_job_status(job_id: str, document_s3_key: str, user_id: str, session_id:
             item['result'] = result
             
         table.put_item(Item=item)
-        logger.info(f"Updated job status: {job_id} -> {status}")
+
         
     except Exception as e:
         logger.error(f"Failed to save job status: {e}")
@@ -80,8 +80,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     
     try:
-        logger.info(f"Document review request received: {json.dumps(event, default=str)}")
-        
         # Handle CORS preflight requests
         if event.get('httpMethod') == 'OPTIONS':
             return {
@@ -112,7 +110,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         session_id = body_data.get('session_id')
         user_id = body_data.get('user_id')
         
-        logger.info(f"Parsed parameters - document_s3_key: {document_s3_key}, bucket_type: {bucket_type}, session_id: {session_id}, user_id: {user_id}")
+
         
         # Validate required parameters
         if not document_s3_key:
@@ -130,7 +128,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         if is_api_gateway_request:
             # For API Gateway requests, start async processing and return immediately
-            logger.info("API Gateway request detected - starting background processing")
+
             
             # Start background processing using the remaining Lambda execution time
             import threading
@@ -164,8 +162,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             
             # Start background processing after responding
             try:
-                logger.info("Starting background document processing")
-                
                 # Initialize Lambda client for notifications
                 lambda_client = boto3.client('lambda')
                 
@@ -200,13 +196,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         Payload=json.dumps(progress_payload)
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to send progress notification: {e}")
+                    pass
                 
                 # Run the document review with direct document attachment
                 review_result = agent.review_document(bucket_type, document_s3_key)
                 
                 if not review_result.get('success', False):
-                    logger.error(f"Document processing failed: {review_result.get('error', 'Unknown error')}")
                     save_job_status(job_id, document_s3_key, user_id, session_id, "failed", 
                                   error=review_result.get('error', 'Unknown error'))
                     return create_success_response(immediate_response)
@@ -234,13 +229,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         Payload=json.dumps(progress_payload)
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to send progress notification: {e}")
+                    pass
                 
                 # Create redlined document using agent (handles all document operations internally)
                 redlined_result = agent.create_redlined_document(
                     analysis_data=review_result.get('analysis', ''),
                     document_s3_key=document_s3_key,
-                    bucket_type=bucket_type
+                    bucket_type=bucket_type,
+                    session_id=session_id,
+                    user_id=user_id
                 )
                 
                 # Generate unique analysis ID and save results to DynamoDB using tools
@@ -257,8 +254,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     citations=review_result.get('citations', [])
                 )
                 
-                logger.info(f"Document processing completed successfully for {document_s3_key}")
-                logger.info(f"Redlined document available at: {redlined_result.get('redlined_document', 'N/A')}")
+
+
                 
                 # Update job status to completed
                 completion_data = {
@@ -290,7 +287,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             InvocationType='Event',  # Async call
                             Payload=json.dumps(session_payload)
                         )
-                        logger.info(f"Marked session {session_id} as having results")
+
                         
                         # Send WebSocket notification for job completion
                         notification_function_name = f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-websocket-notification')}"
@@ -313,10 +310,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             InvocationType='Event',  # Async call
                             Payload=json.dumps(notification_payload)
                         )
-                        logger.info(f"Sent WebSocket completion notification for job {job_id}")
+
                         
                     except Exception as e:
-                        logger.warning(f"Failed to send notifications: {e}")
+                        pass
                 
                 # Return immediate response (API Gateway already closed connection)
                 return create_success_response(immediate_response)
@@ -329,7 +326,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             
         else:
             # For direct Lambda invocation, process synchronously
-            logger.info("Direct Lambda invocation - processing synchronously")
             
             # Clear knowledge base cache for fresh document review session
             from agent_api.agent.tools import clear_knowledge_base_cache
@@ -348,7 +344,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             redlined_result = agent.create_redlined_document(
                 analysis_data=review_result.get('analysis', ''),
                 document_s3_key=document_s3_key,
-                bucket_type=bucket_type
+                bucket_type=bucket_type,
+                session_id=session_id,
+                user_id=user_id
             )
             
             # Generate unique analysis ID and save results to DynamoDB using tools
@@ -379,7 +377,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
             
             if not save_result.get('success', False):
-                logger.warning(f"Failed to save analysis to DynamoDB: {save_result.get('error', 'Unknown error')}")
+
                 response_data["database_warning"] = f"Analysis completed but failed to save: {save_result.get('error', 'Unknown error')}"
             
             return create_success_response(response_data)
@@ -406,7 +404,7 @@ def extract_document_content(bucket_type: str, document_s3_key: str) -> str:
     
     try:
         bucket_name = get_bucket_name(bucket_type)
-        logger.info(f"Extracting content from {bucket_name}/{document_s3_key}")
+
         
         # Download the document from S3
         response = s3_client.get_object(
@@ -429,7 +427,7 @@ def extract_document_content(bucket_type: str, document_s3_key: str) -> str:
         # Join all paragraphs with double newlines
         full_text = '\n\n'.join(text_content)
         
-        logger.info(f"Extracted document content: {len(full_text)} characters from {len(text_content)} paragraphs")
+
         
         return full_text
         
