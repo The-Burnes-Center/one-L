@@ -19,7 +19,7 @@ const loadConfig = async () => {
   
   if (isDevelopment) {
     // Use environment variables directly in development
-    console.log('Development mode: using environment variables');
+
     
     config = {
       apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
@@ -34,8 +34,8 @@ const loadConfig = async () => {
       knowledgeManagementSyncEndpointUrl: process.env.REACT_APP_KNOWLEDGE_SYNC_URL || '',
       webSocketUrl: process.env.REACT_APP_WEBSOCKET_URL || ''
     };
-    console.log('Development configuration loaded successfully');
-    console.log('Development WebSocket URL:', config.webSocketUrl);
+
+
     return config;
   }
   
@@ -58,7 +58,7 @@ const loadConfig = async () => {
     // Check if config contains unresolved CDK tokens
     const configString = JSON.stringify(configData);
     if (configString.includes('${Token[') || configString.includes('${AWS.')) {
-      console.error('Config file contains unresolved CDK tokens:', configData);
+
       throw new Error('Config file contains unresolved CDK tokens - deployment may be incomplete');
     }
     
@@ -67,19 +67,19 @@ const loadConfig = async () => {
       throw new Error('Config file is missing essential values');
     }
     
-    console.log('Successfully loaded config from config.json:', configData);
-    console.log('WebSocket URL from config:', configData.webSocketUrl);
+
+
     config = configData;
     
     return config;
   } catch (error) {
-    console.error('Failed to load production config, falling back to environment variables:', error);
+
     
     // Fallback to environment variables even in production
-    console.warn('Using environment variables for configuration due to config.json issues');
+
     
     // Log configuration loading status (without sensitive values)
-    console.log('Loading configuration from environment variables...');
+
     
     config = {
       apiGatewayUrl: process.env.REACT_APP_API_GATEWAY_URL || '',
@@ -95,7 +95,7 @@ const loadConfig = async () => {
       webSocketUrl: process.env.REACT_APP_WEBSOCKET_URL || ''
     };
     
-    console.log('Configuration loaded from environment variables successfully');
+
     
     // Check if fallback config is valid
     const missingEnvVars = [];
@@ -104,8 +104,8 @@ const loadConfig = async () => {
     if (!config.userPoolClientId) missingEnvVars.push('REACT_APP_USER_POOL_CLIENT_ID');
     
     if (missingEnvVars.length > 0) {
-      console.error('Missing essential environment variables:', missingEnvVars);
-      console.error('Application may not function correctly without these values');
+
+
     } else {
       console.info('Successfully loaded configuration from environment variables');
     }

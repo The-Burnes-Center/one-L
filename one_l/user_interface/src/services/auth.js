@@ -34,7 +34,7 @@ class AuthService {
       this.initialized = true;
       return true;
     } catch (error) {
-      console.error('Failed to initialize auth service:', error);
+
       return false;
     }
   }
@@ -53,7 +53,7 @@ class AuthService {
       `redirect_uri=${encodeURIComponent(this.redirectUri)}&` +
       `state=${state}`;
     
-    console.log('Redirecting to Cognito login:', loginUrl);
+
     window.location.href = loginUrl;
   }
 
@@ -67,7 +67,7 @@ class AuthService {
     const error = urlParams.get('error');
 
     if (error) {
-      console.error('Auth error:', error);
+
       return;
     }
 
@@ -75,7 +75,7 @@ class AuthService {
       // Validate state to prevent CSRF
       const storedState = sessionStorage.getItem('auth_state');
       if (state !== storedState) {
-        console.error('Invalid state parameter');
+
         return;
       }
 
@@ -87,7 +87,7 @@ class AuthService {
         window.history.replaceState({}, document.title, window.location.pathname);
         sessionStorage.removeItem('auth_state');
       } catch (error) {
-        console.error('Token exchange failed:', error);
+
       }
     }
   }

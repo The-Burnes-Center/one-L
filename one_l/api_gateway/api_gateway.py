@@ -138,24 +138,3 @@ class ApiGatewayConstruct(Construct):
             description="Main API Gateway URL",
             export_name=f"{self._stack_name}-MainApiUrl"
         )
-        
-        # Create outputs for each function dynamically
-        self.create_function_outputs()
-    
-    def create_function_outputs(self):
-        """Create CloudFormation outputs for each function endpoint."""
-        
-        function_definitions = self.get_function_definitions()
-        
-        for category, functions in function_definitions.items():
-            for func_name, func_config in functions.items():
-                output_name = f"{category.title()}{func_name.title()}EndpointUrl"
-                endpoint_url = f"{self.main_api.url}{category}/{func_config['path']}"
-                description = func_config.get('description', f"{category.title()} {func_name.title()} endpoint")
-                
-                CfnOutput(
-                    self, output_name,
-                    value=endpoint_url,
-                    description=f"{description} URL",
-                    export_name=f"{self._stack_name}-{output_name.replace('_', '-')}"
-                )

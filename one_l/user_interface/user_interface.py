@@ -236,19 +236,4 @@ class UserInterfaceConstruct(Construct):
             description="Website URL (CloudFront)",
             export_name=f"{self._stack_name}-WebsiteUrl"
         )
-        
-        # CloudFront Distribution ID
-        CfnOutput(
-            self, "CloudFrontDistributionId",
-            value=self.cloudfront_distribution.distribution_id,
-            description="CloudFront Distribution ID",
-            export_name=f"{self._stack_name}-CloudFrontDistributionId"
-        )
-        
-        # S3 Bucket Name
-        CfnOutput(
-            self, "WebsiteBucketName",
-            value=self.website_bucket.bucket_name,
-            description="S3 Website Bucket Name",
-            export_name=f"{self._stack_name}-WebsiteBucketName"
-        ) 
+ 

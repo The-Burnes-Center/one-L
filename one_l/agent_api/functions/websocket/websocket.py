@@ -261,30 +261,7 @@ class WebSocketConstruct(Construct):
             description="WebSocket API URL",
             export_name=f"{self._stack_name}-WebSocketApiUrl"
         )
-        
-        # WebSocket API ID
-        CfnOutput(
-            self, "WebSocketApiId",
-            value=self.websocket_api.api_id,
-            description="WebSocket API ID",
-            export_name=f"{self._stack_name}-WebSocketApiId"
-        )
-        
-        # Connections table name
-        CfnOutput(
-            self, "ConnectionsTableName",
-            value=self.connections_table.table_name,
-            description="WebSocket connections table name",
-            export_name=f"{self._stack_name}-ConnectionsTableName"
-        )
-        
-        # Notification function ARN
-        CfnOutput(
-            self, "NotificationFunctionArn",
-            value=self.notification_function.function_arn,
-            description="WebSocket notification function ARN",
-            export_name=f"{self._stack_name}-NotificationFunctionArn"
-        )
+
     
     def get_function_routes(self) -> dict:
         """

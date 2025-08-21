@@ -90,7 +90,6 @@ const VendorSubmission = ({ onFilesUploaded }) => {
       }
       
     } catch (error) {
-      console.error('Upload error:', error);
       setMessage(`Upload failed: ${error.message}`);
       setMessageType('error');
     } finally {

@@ -160,7 +160,7 @@ def retrieve_from_knowledge_base(
     def _retrieve_with_retry(retry_count: int = 0) -> Dict[str, Any]:
         """Internal function to handle retrieval with exponential backoff."""
         try:
-            logger.info(f"Retrieving from knowledge base {knowledge_base_id} with query: {query} (attempt {retry_count + 1})")
+
             
             response = bedrock_agent_client.retrieve(
                 knowledgeBaseId=knowledge_base_id,
@@ -183,11 +183,11 @@ def retrieve_from_knowledge_base(
                 
                 if retry_count < MAX_RETRIES:
                     delay = min(BASE_DELAY * (BACKOFF_MULTIPLIER ** retry_count), MAX_DELAY)
-                    logger.warning(f"Throttling detected, retrying in {delay} seconds (attempt {retry_count + 1}/{MAX_RETRIES})")
+
                     time.sleep(delay)
                     return _retrieve_with_retry(retry_count + 1)
                 else:
-                    logger.error(f"Max retries exceeded for throttling on query: {query}")
+
                     return {
                         "success": False,
                         "error": f"Throttling limit exceeded after {MAX_RETRIES} retries",
@@ -212,7 +212,7 @@ def retrieve_from_knowledge_base(
         # Check query cache to avoid duplicate requests in same session
         query_hash = _calculate_content_signature(query)
         if query_hash in _query_cache:
-            logger.info(f"Returning cached results for query: {query}")
+
             cached_result = _query_cache[query_hash].copy()
             cached_result["cached"] = True
             return cached_result
@@ -316,8 +316,8 @@ def retrieve_from_knowledge_base(
         # Cache the result for future use in this session
         _query_cache[query_hash] = final_response.copy()
         
-        logger.info(f"Successfully retrieved and optimized {len(optimized_results)} results for query: {query}")
-        logger.info(f"Optimization: {len(raw_results)} raw → {len(optimized_results)} optimized ({duplicates_filtered} duplicates filtered, {chunks_created} chunks created)")
+
+
         
         return final_response
         
@@ -342,7 +342,7 @@ def clear_knowledge_base_cache():
     global _content_cache, _query_cache
     _content_cache.clear()
     _query_cache.clear()
-    logger.info("Knowledge base cache cleared for new session")
+
 
 def get_cache_statistics() -> Dict[str, Any]:
     """
@@ -394,7 +394,7 @@ def redline_document(
                 "error": "Required buckets not configured"
             }
         
-        logger.info(f"Starting redlining workflow for document: {document_s3_key}")
+
         
         # Step 1: Copy document to agent processing bucket
         agent_document_key = _copy_document_to_processing(document_s3_key, source_bucket, agent_processing_bucket)
@@ -406,7 +406,7 @@ def redline_document(
         redline_items = parse_conflicts_for_redlining(analysis_data)
         
         if not redline_items:
-            logger.warning("No conflicts found for redlining")
+
             return {
                 "success": False,
                 "error": "No conflicts found in analysis data for redlining"
@@ -431,9 +431,9 @@ def redline_document(
                 "error": "Failed to upload redlined document"
             }
         
-        logger.info(f"Redlining completed successfully: {redlined_s3_key}")
-        logger.info(f"Redlined document stored in bucket: {agent_processing_bucket}")
-        logger.info(f"Full redlined document path: s3://{agent_processing_bucket}/{redlined_s3_key}")
+
+
+
         
         # Original redlining completion
         result = {
@@ -450,7 +450,7 @@ def redline_document(
 
         # NEW: After successful redlining, cleanup session documents
         if session_id and user_id:
-            logger.info(f"Starting session cleanup for session {session_id}")
+
             
             try:
                 cleanup_result = _cleanup_session_documents(session_id, user_id)
@@ -458,9 +458,9 @@ def redline_document(
                 result["cleanup_result"] = cleanup_result
                 
                 if cleanup_result.get('success'):
-                    logger.info(f"Session cleanup completed: deleted {cleanup_result.get('deleted_count', 0)} documents")
+                    pass
                 else:
-                    logger.warning(f"Session cleanup failed: {cleanup_result.get('error')}")
+                    pass
                     
             except Exception as cleanup_error:
                 # Don't fail redlining if cleanup fails
@@ -468,7 +468,7 @@ def redline_document(
                 result["cleanup_performed"] = False
                 result["cleanup_error"] = str(cleanup_error)
         else:
-            logger.info("No session context provided, skipping cleanup")
+
             result["cleanup_performed"] = False
 
         return result
@@ -548,7 +548,7 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             'summary': summary
                         })
         
-        logger.info(f"Parsed {len(redline_items)} redline items from analysis data")
+
         
     except Exception as e:
         logger.error(f"Error parsing conflicts for redlining: {str(e)}")
@@ -575,13 +575,13 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         total_paragraphs = len(doc.paragraphs)
         failed_matches = []
         
-        logger.info(f"Starting enhanced redlining process for {len(redline_items)} conflicts across {total_paragraphs} paragraphs")
+
         
         # Track unmatched conflicts across tiers
         unmatched_conflicts = redline_items.copy()
         
         # TIER 1: Standard exact matching
-        logger.info(f"TIER 1: Processing {len(unmatched_conflicts)} conflicts with exact matching")
+
         remaining_conflicts = []
         
         for redline_item in unmatched_conflicts:
@@ -595,18 +595,18 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 matches_found += 1
                 if found_match['para_idx'] not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(found_match['para_idx'])
-                logger.info(f"TIER 1 SUCCESS: Found match for ID {redline_item.get('clarification_id', 'Unknown')}")
+
             else:
                 remaining_conflicts.append(redline_item)
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
-            logger.info(f"ALL CONFLICTS MATCHED in Tier 1! Total: {matches_found}")
+            pass
         else:
-            logger.info(f"TIER 1 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+            pass
             
             # TIER 2: Fuzzy matching (only for unmatched conflicts)
-            logger.info(f"TIER 2: Processing {len(remaining_conflicts)} remaining conflicts with fuzzy matching")
+
             unmatched_conflicts = remaining_conflicts
             remaining_conflicts = []
             
@@ -618,18 +618,18 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     matches_found += 1
                     if found_match['para_idx'] not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(found_match['para_idx'])
-                    logger.info(f"TIER 2 SUCCESS: Found fuzzy match for ID {redline_item.get('clarification_id', 'Unknown')}")
+
                 else:
                     remaining_conflicts.append(redline_item)
             
             # Early exit if all conflicts matched
             if not remaining_conflicts:
-                logger.info(f"ALL CONFLICTS MATCHED in Tier 2! Total: {matches_found}")
+                pass
             else:
-                logger.info(f"TIER 2 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+                pass
                 
                 # TIER 3: Cross-paragraph matching (only for unmatched conflicts)
-                logger.info(f"TIER 3: Processing {len(remaining_conflicts)} remaining conflicts with cross-paragraph search")
+
                 unmatched_conflicts = remaining_conflicts
                 remaining_conflicts = []
                 
@@ -642,18 +642,18 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                         for para_idx in found_match['para_indices']:
                             if para_idx not in paragraphs_with_redlines:
                                 paragraphs_with_redlines.append(para_idx)
-                        logger.info(f"TIER 3 SUCCESS: Found cross-paragraph match for ID {redline_item.get('clarification_id', 'Unknown')}")
+
                     else:
                         remaining_conflicts.append(redline_item)
                 
                 # Early exit if all conflicts matched
                 if not remaining_conflicts:
-                    logger.info(f"ALL CONFLICTS MATCHED in Tier 3! Total: {matches_found}")
+                    pass
                 else:
-                    logger.info(f"TIER 3 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+                    pass
                     
                     # TIER 4: Partial phrase matching (only for unmatched conflicts)
-                    logger.info(f"TIER 4: Processing {len(remaining_conflicts)} remaining conflicts with partial phrase matching")
+
                     unmatched_conflicts = remaining_conflicts
                     remaining_conflicts = []
                     
@@ -665,18 +665,18 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                             matches_found += 1
                             if found_match['para_idx'] not in paragraphs_with_redlines:
                                 paragraphs_with_redlines.append(found_match['para_idx'])
-                            logger.info(f"TIER 4 SUCCESS: Found partial phrase match for ID {redline_item.get('clarification_id', 'Unknown')}")
+
                         else:
                             remaining_conflicts.append(redline_item)
                     
                     # Early exit if all conflicts matched
                     if not remaining_conflicts:
-                        logger.info(f"ALL CONFLICTS MATCHED in Tier 4! Total: {matches_found}")
+                        pass
                     else:
-                        logger.info(f"TIER 4 COMPLETE: {len(remaining_conflicts)} conflicts remaining")
+                        pass
                         
                         # TIER 5: Tokenized matching (only for unmatched conflicts)
-                        logger.info(f"TIER 5: Processing {len(remaining_conflicts)} remaining conflicts with tokenized matching")
+
                         unmatched_conflicts = remaining_conflicts
                         remaining_conflicts = []
                         
@@ -688,7 +688,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                                 matches_found += 1
                                 if found_match['para_idx'] not in paragraphs_with_redlines:
                                     paragraphs_with_redlines.append(found_match['para_idx'])
-                                logger.info(f"TIER 5 SUCCESS: Found tokenized match for ID {redline_item.get('clarification_id', 'Unknown')}")
+
                             else:
                                 remaining_conflicts.append(redline_item)
                         
@@ -701,13 +701,13 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         
         # Log final summary
         if failed_matches:
-            logger.warning(f"FINAL RESULT: {len(failed_matches)} conflicts could not be redlined:")
+
             for failed in failed_matches:
-                logger.warning(f"  - ID {failed['clarification_id']}: '{failed['text'][:80]}...'")
+                pass
         else:
-            logger.info(f"🎯 PERFECT MATCH: All {len(redline_items)} conflicts successfully redlined!")
+            pass
         
-        logger.info(f"Enhanced redlining complete: {matches_found}/{len(redline_items)} matches found in {len(paragraphs_with_redlines)} paragraphs")
+        pass
         
         return {
             "total_paragraphs": total_paragraphs,
@@ -753,13 +753,13 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                 
             # Try exact substring match (most reliable with exact vendor quotes)
             if text_variant in para_text:
-                logger.info(f"Found EXACT match in paragraph {para_idx}")
+
                 _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
                 return {'para_idx': para_idx, 'matched_text': text_variant}
             
             # Try case-insensitive match as fallback
             elif text_variant.lower() in para_text.lower():
-                logger.info(f"Found CASE-INSENSITIVE match in paragraph {para_idx}")
+
                 # Find the actual text with correct case in the document
                 start_idx = para_text.lower().find(text_variant.lower())
                 actual_text = para_text[start_idx:start_idx + len(text_variant)]
@@ -799,7 +799,7 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
         
         # Check if normalized search text is in normalized paragraph
         if normalized_search in normalized_para:
-            logger.info(f"Found NORMALIZED match in paragraph {para_idx}")
+
             # Find the original text in the document that corresponds to the match
             start_idx = normalized_para.find(normalized_search)
             # This is approximate - try to find the closest matching text in original
@@ -810,7 +810,7 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
         if len(normalized_search) > 50:  # Only for longer texts
             similarity = similarity_ratio(normalized_search, normalized_para)
             if similarity > 0.85:
-                logger.info(f"Found HIGH SIMILARITY match ({similarity:.2f}) in paragraph {para_idx}")
+
                 _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
                 return {'para_idx': para_idx, 'matched_text': 'similarity_match'}
     
@@ -837,14 +837,14 @@ def _tier3_cross_paragraph_matching(doc, vendor_conflict_text: str, redline_item
             
             # Try exact match in combined text
             if vendor_conflict_text in combined_text:
-                logger.info(f"Found CROSS-PARAGRAPH exact match across paragraphs {para_indices}")
+
                 # Apply redlining to the first paragraph that contains part of the text
                 _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
                 return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
             
             # Try case-insensitive match in combined text
             if vendor_conflict_text.lower() in combined_text.lower():
-                logger.info(f"Found CROSS-PARAGRAPH case-insensitive match across paragraphs {para_indices}")
+
                 _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
                 return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
     
@@ -882,7 +882,7 @@ def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item:
         # Check if any key phrase matches
         for phrase in key_phrases:
             if len(phrase) > 20 and phrase.lower() in para_text.lower():
-                logger.info(f"Found PARTIAL PHRASE match in paragraph {para_idx}: '{phrase[:50]}...'")
+
                 # Apply redlining to the found phrase instead of full text
                 start_idx = para_text.lower().find(phrase.lower())
                 actual_phrase = para_text[start_idx:start_idx + len(phrase)]
@@ -941,7 +941,7 @@ def _tier5_tokenized_matching(doc, vendor_conflict_text: str, redline_item: Dict
         found, start_pos = token_sequence_match(search_tokens, para_tokens)
         
         if found:
-            logger.info(f"Found TOKENIZED match in paragraph {para_idx}")
+
             # Reconstruct approximate text for redlining (use first part of vendor text)
             redline_text = vendor_conflict_text[:min(len(vendor_conflict_text), 150)]
             _apply_redline_to_paragraph(paragraph, redline_text, redline_item)
@@ -989,7 +989,7 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             after_text = paragraph_text[end_pos:]
             run = paragraph.add_run(after_text)
             
-        logger.debug(f"Applied redlining to specific conflict text: {conflict_text[:30]}...")
+
         
     except Exception as e:
         logger.error(f"Error applying redline to paragraph: {str(e)}")
@@ -1032,7 +1032,7 @@ def _copy_document_to_processing(original_s3_key: str, source_bucket: str, agent
             MetadataDirective='COPY'
         )
         
-        logger.info(f"Document copied to agent processing bucket: {agent_key}")
+
         return agent_key
         
     except Exception as e:
@@ -1053,7 +1053,7 @@ def _download_and_load_document(bucket: str, s3_key: str):
     """
     
     try:
-        logger.info(f"Downloading document from s3://{bucket}/{s3_key}")
+
         
         # Download the document from S3
         response = s3_client.get_object(Bucket=bucket, Key=s3_key)
@@ -1062,7 +1062,7 @@ def _download_and_load_document(bucket: str, s3_key: str):
         # Load the document using python-docx
         doc = Document(io.BytesIO(document_content))
         
-        logger.info(f"Successfully loaded document with {len(doc.paragraphs)} paragraphs")
+
         return doc
         
     except Exception as e:
@@ -1183,7 +1183,7 @@ def save_analysis_to_dynamodb(
         # Save to DynamoDB
         table.put_item(Item=item)
         
-        logger.info(f"Successfully saved analysis {analysis_id} to DynamoDB with {len(conflicts)} conflicts")
+
         
         return {
             "success": True,
@@ -1214,7 +1214,7 @@ def _save_and_upload_document(doc, bucket: str, s3_key: str, metadata: Dict[str,
     """
     
     try:
-        logger.info(f"Saving and uploading redlined document to s3://{bucket}/{s3_key}")
+
         
         # Save document to memory buffer
         buffer = io.BytesIO()
@@ -1230,7 +1230,7 @@ def _save_and_upload_document(doc, bucket: str, s3_key: str, metadata: Dict[str,
             Metadata=metadata
         )
         
-        logger.info(f"Successfully uploaded redlined document to S3: {s3_key}")
+
         return True
         
     except Exception as e:
@@ -1248,7 +1248,7 @@ def _cleanup_session_documents(session_id: str, user_id: str) -> Dict[str, Any]:
     3. Call sync_knowledge_base Lambda function
     """
     try:
-        logger.info(f"Starting cleanup for session {session_id}, user {user_id}")
+
         
         # Step 1: List session reference documents
         session_s3_keys = _list_session_reference_documents(session_id, user_id)

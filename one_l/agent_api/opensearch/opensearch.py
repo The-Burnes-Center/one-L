@@ -154,33 +154,7 @@ class OpenSearchConstruct(Construct):
     
     def create_outputs(self):
         """Create CloudFormation outputs."""
-        CfnOutput(
-            self, "OpenSearchCollectionName",
-            value=self.collection.name,
-            description="OpenSearch Serverless Collection Name",
-            export_name=f"{self._stack_name}-OpenSearchCollectionName"
-        )
-        
-        CfnOutput(
-            self, "OpenSearchCollectionEndpoint", 
-            value=self.collection.attr_collection_endpoint,
-            description="OpenSearch Serverless Collection Endpoint",
-            export_name=f"{self._stack_name}-OpenSearchCollectionEndpoint"
-        )
-        
-        CfnOutput(
-            self, "OpenSearchCollectionArn",
-            value=self.collection.attr_arn,
-            description="OpenSearch Serverless Collection ARN", 
-            export_name=f"{self._stack_name}-OpenSearchCollectionArn"
-        )
-        
-        CfnOutput(
-            self, "VectorIndexName",
-            value=self.vector_index_name,
-            description="Vector Index Name for Knowledge Base",
-            export_name=f"{self._stack_name}-VectorIndexName"
-        )
+        pass
     
     def get_collection_endpoint(self) -> str:
         """Get the OpenSearch Serverless collection endpoint."""

@@ -30,7 +30,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     
     try:
-        logger.info(f"Delete request received: {json.dumps(event, default=str)}")
+
         
         # Parse request body - handle both API Gateway proxy and direct invocation
         if 'body' in event and event['body']:
@@ -48,11 +48,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         bucket_type = body_data.get('bucket_type', 'user_documents')
         s3_keys = body_data.get('s3_keys', [])
         
-        logger.info(f"Parsed parameters - bucket_type: {bucket_type}, s3_keys count: {len(s3_keys)}")
+
         
         # Get bucket name from environment
         bucket_name = get_bucket_name(bucket_type)
-        logger.info(f"Resolved bucket_name '{bucket_name}' for bucket_type '{bucket_type}'")
+
         
         # Validate parameters
         if not s3_keys:
@@ -98,12 +98,12 @@ def get_bucket_name(bucket_type: str) -> str:
 def delete_file_from_s3(bucket_name: str, s3_key: str) -> Dict[str, Any]:
     """Delete a single file from S3."""
     try:
-        logger.info(f"Attempting to delete from bucket: {bucket_name}, key: {s3_key}")
+
         
         # Delete the file (S3 delete is idempotent - succeeds even if file doesn't exist)
         s3_client.delete_object(Bucket=bucket_name, Key=s3_key)
         
-        logger.info(f"Successfully deleted {s3_key} from {bucket_name}")
+
         
         return {
             'success': True,
@@ -125,7 +125,7 @@ def file_exists(bucket_name: str, s3_key: str) -> bool:
     """Check if file exists in S3."""
     try:
         s3_client.head_object(Bucket=bucket_name, Key=s3_key)
-        logger.info(f"File exists: s3://{bucket_name}/{s3_key}")
+
         return True
     except Exception as e:
         logger.error(f"File does not exist or access denied: s3://{bucket_name}/{s3_key}, Error: {str(e)}")

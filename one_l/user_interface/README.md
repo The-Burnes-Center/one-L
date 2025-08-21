@@ -1,144 +1,78 @@
-# One-L User Interface
+# One-L Frontend
 
-This directory contains the React frontend for the One-L document management system.
+React frontend for the One-L legal document analysis system.
 
-## Architecture
-
-The user interface is built using React and follows a clean, modular architecture:
-
-```
-src/
-├── components/     # React components
-│   └── FileUpload.js
-├── services/       # API service layer
-│   └── api.js
-├── utils/          # Utility functions
-│   └── config.js
-├── App.js          # Main App component
-└── index.js        # Entry point
-```
-
-## Key Features
-
-- **Multiple File Upload**: Upload multiple files at once with drag-and-drop support
-- **File Validation**: Client-side validation for file types and sizes
-- **API Integration**: Uses API Gateway instead of direct AWS SDK calls
-- **Configuration Management**: Dynamic configuration loading from CDK deployment
-- **Error Handling**: Comprehensive error handling and user feedback
-- **Responsive Design**: Modern, responsive UI with clean styling
-
-## Development
+## Local Development Setup
 
 ### Prerequisites
+- Node.js 18+ 
+- npm
 
-- Node.js 16 or later
-- npm or yarn
+### Quick Start
 
-### Setup
-
-1. Install dependencies:
+1. **Install dependencies**
    ```bash
    npm install
    ```
 
-2. For local development, create a `.env` file with:
-   ```
-   REACT_APP_API_GATEWAY_URL=your-api-gateway-url
-   REACT_APP_USER_POOL_ID=your-user-pool-id
-   REACT_APP_USER_POOL_CLIENT_ID=your-user-pool-client-id
-   REACT_APP_USER_POOL_DOMAIN=your-user-pool-domain
+2. **Create environment file**
+   
+   Create a `.env` file in this directory:
+   ```env
+   REACT_APP_API_GATEWAY_URL=https://your-api-id.execute-api.region.amazonaws.com/prod
+   REACT_APP_USER_POOL_ID=region_userPoolId
+   REACT_APP_USER_POOL_CLIENT_ID=userPoolClientId
+   REACT_APP_USER_POOL_DOMAIN=https://domain.auth.region.amazoncognito.com
+   REACT_APP_WEBSOCKET_URL=wss://websocket-api-id.execute-api.region.amazonaws.com/prod
    REACT_APP_REGION=us-east-1
    REACT_APP_STACK_NAME=OneLStack
    ```
 
-3. Start development server:
+3. **Start development server**
    ```bash
    npm start
    ```
 
-### Building
+4. **Build for production**
+   ```bash
+   npm run build
+   ```
 
-To build the application for production:
+## Environment Configuration
+
+### Getting Values from CloudFormation Outputs
+
+After deploying the CDK stack, obtain the required values from CloudFormation outputs:
 
 ```bash
+# Get all stack outputs
+aws cloudformation describe-stacks --stack-name OneLStack --query 'Stacks[0].Outputs'
+
+# Or get specific values:
+aws cloudformation describe-stacks --stack-name OneLStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`MainApiUrl`].OutputValue' --output text
+
+aws cloudformation describe-stacks --stack-name OneLStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' --output text
+```
+
+### CI/CD Usage
+
+For automated deployments, extract environment variables from CloudFormation:
+
+```bash
+#!/bin/bash
+# Example CI/CD script
+export REACT_APP_API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneLStack --query 'Stacks[0].Outputs[?OutputKey==`MainApiUrl`].OutputValue' --output text)
+export REACT_APP_USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneLStack --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' --output text)
+# ... other exports
+
 npm run build
 ```
 
-Or use the provided build script:
+## Production Deployment
 
-```bash
-./build.sh
-```
-
-## Deployment
-
-The application is deployed using AWS CDK:
-
-1. **S3 Bucket**: Static website hosting
-2. **CloudFront**: Global content delivery
-3. **Automatic Configuration**: Configuration is automatically generated during CDK deployment
-
-## Configuration
-
-The application automatically loads configuration from `/config.json` which is generated during CDK deployment. This includes:
-
-- API Gateway URL
-- Cognito User Pool settings
-- AWS region
-- Stack name
-
-## API Integration
-
-The frontend communicates with the backend through the API Gateway:
-
-- **Upload**: `POST /knowledge_management/upload`
-- **Retrieve**: `POST /knowledge_management/retrieve`
-- **Delete**: `DELETE /knowledge_management/delete`
-
-## Security
-
-- No AWS credentials stored in frontend
-- All API calls go through API Gateway
-- File validation on client and server side
-- CORS properly configured
-
-## File Structure Changes
-
-**Previous structure (removed):**
-```
-user-interface/
-└── app/
-    ├── package.json (heavy dependencies)
-    ├── src/
-    │   ├── App.js
-    │   ├── fileUpload.js (AWS SDK direct calls)
-    │   └── index.js (redundant code)
-    └── public/
-```
-
-**New structure:**
-```
-user_interface/
-├── src/
-│   ├── components/
-│   ├── services/
-│   ├── utils/
-│   ├── App.js
-│   └── index.js
-├── public/
-├── build/
-├── package.json (clean dependencies)
-├── build.sh
-└── README.md
-```
-
-## Benefits of New Structure
-
-1. **Clean Dependencies**: Only necessary packages included
-2. **Better Organization**: Logical separation of concerns
-3. **API Abstraction**: Centralized API service layer
-4. **Configuration Management**: Dynamic configuration loading
-5. **Error Handling**: Comprehensive error handling
-6. **Multiple Files**: Support for multiple file uploads
-7. **Security**: No AWS credentials in frontend code
-8. **Maintainability**: Clean, documented code structure 
+The app is automatically deployed via CDK to:
+- **S3**: Static hosting
+- **CloudFront**: Global CDN
+- **Auto-config**: Runtime configuration generated automatically 

@@ -30,17 +30,17 @@ class WebSocketService {
    */
   async connect() {
     if (this.isConnected || (this.ws && this.ws.readyState === WebSocket.CONNECTING)) {
-      console.log('WebSocket already connected or connecting');
+
       return Promise.resolve();
     }
 
     try {
       const wsUrl = await getWebSocketUrl();
-      console.log('Retrieved WebSocket URL:', wsUrl);
+
       const userId = authService.getUserId();
       
       if (!wsUrl) {
-        console.error('WebSocket URL is null/undefined from config');
+
         throw new Error('WebSocket URL not configured');
       }
       
@@ -52,7 +52,7 @@ class WebSocketService {
       const url = new URL(wsUrl);
       url.searchParams.append('userId', userId);
       
-      console.log('Connecting to WebSocket:', url.toString());
+
       
       return new Promise((resolve, reject) => {
         this.ws = new WebSocket(url.toString());
@@ -76,7 +76,7 @@ class WebSocketService {
       });
       
     } catch (error) {
-      console.error('Failed to connect to WebSocket:', error);
+
       throw error;
     }
   }
@@ -86,7 +86,7 @@ class WebSocketService {
    */
   disconnect() {
     if (this.ws) {
-      console.log('Disconnecting WebSocket');
+
       this.isConnected = false;
       this.ws.close(1000, 'Client disconnect');
       this.ws = null;
@@ -100,7 +100,7 @@ class WebSocketService {
    */
   subscribeToJob(jobId, sessionId = null) {
     if (!this.isConnected) {
-      console.warn('WebSocket not connected, queuing subscription');
+
       this.subscriptions.add({ type: 'job', jobId, sessionId });
       return;
     }
@@ -112,7 +112,7 @@ class WebSocketService {
     };
     
     this.send(message);
-    console.log('Subscribed to job updates:', jobId);
+
   }
 
   /**
@@ -120,7 +120,7 @@ class WebSocketService {
    */
   subscribeToSession(sessionId) {
     if (!this.isConnected) {
-      console.warn('WebSocket not connected, queuing session subscription');
+
       this.subscriptions.add({ type: 'session', sessionId });
       return;
     }
@@ -132,7 +132,7 @@ class WebSocketService {
     };
     
     this.send(message);
-    console.log('Subscribed to session updates:', sessionId);
+
   }
 
   /**
@@ -148,7 +148,7 @@ class WebSocketService {
     };
     
     this.send(message);
-    console.log('Unsubscribed from job updates');
+
   }
 
   /**
@@ -158,7 +158,7 @@ class WebSocketService {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
-      console.warn('WebSocket not connected, cannot send message:', message);
+
     }
   }
 
@@ -189,7 +189,7 @@ class WebSocketService {
    * Handle WebSocket connection open
    */
   onOpen(event) {
-    console.log('WebSocket connected successfully');
+
     this.isConnected = true;
     this.reconnectAttempts = 0;
     this.reconnectDelay = 1000;
@@ -225,14 +225,14 @@ class WebSocketService {
   onMessage(event) {
     try {
       const message = JSON.parse(event.data);
-      console.log('WebSocket message received:', message);
+
       
       const messageType = message.type;
       
       // Handle connection establishment
       if (messageType === 'connection_established') {
         this.connectionId = message.connectionId;
-        console.log('WebSocket connection ID:', this.connectionId);
+
         return;
       }
       
@@ -242,7 +242,7 @@ class WebSocketService {
           try {
             handler(message);
           } catch (error) {
-            console.error('Error in message handler:', error);
+
           }
         });
       }
@@ -253,13 +253,13 @@ class WebSocketService {
           try {
             handler(message);
           } catch (error) {
-            console.error('Error in generic message handler:', error);
+
           }
         });
       }
       
     } catch (error) {
-      console.error('Failed to parse WebSocket message:', error);
+
     }
   }
 
@@ -267,7 +267,7 @@ class WebSocketService {
    * Handle WebSocket errors
    */
   onError(event) {
-    console.error('WebSocket error:', event);
+
     
     if (this._connectReject) {
       this._connectReject(new Error('WebSocket connection failed'));
@@ -280,7 +280,7 @@ class WebSocketService {
    * Handle WebSocket connection close
    */
   onClose(event) {
-    console.log('WebSocket connection closed:', event.code, event.reason);
+
     this.isConnected = false;
     this.connectionId = null;
     
@@ -305,13 +305,13 @@ class WebSocketService {
     this.reconnectAttempts++;
     const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), this.maxReconnectDelay);
     
-    console.log(`Scheduling WebSocket reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
+
     
     setTimeout(() => {
       if (!this.isConnected) {
-        console.log(`Attempting WebSocket reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
         this.connect().catch(error => {
-          console.error('WebSocket reconnect failed:', error);
+
         });
       }
     }, delay);

@@ -204,47 +204,7 @@ class KnowledgeBaseConstruct(Construct):
     
     def create_outputs(self):
         """Create CloudFormation outputs."""
-        CfnOutput(
-            self, "KnowledgeBaseId",
-            value=self.knowledge_base.attr_knowledge_base_id,
-            description="Bedrock Knowledge Base ID",
-            export_name=f"{self._stack_name}-KnowledgeBaseId"
-        )
-        
-        CfnOutput(
-            self, "KnowledgeBaseName",
-            value=self.knowledge_base.name,
-            description="Bedrock Knowledge Base Name",
-            export_name=f"{self._stack_name}-KnowledgeBaseName"
-        )
-        
-        CfnOutput(
-            self, "KnowledgeBaseArn",
-            value=self.knowledge_base.attr_knowledge_base_arn,
-            description="Bedrock Knowledge Base ARN",
-            export_name=f"{self._stack_name}-KnowledgeBaseArn"
-        )
-        
-        CfnOutput(
-            self, "KnowledgeDataSourceId",
-            value=self.knowledge_data_source.attr_data_source_id,
-            description="Knowledge Bucket Data Source ID",
-            export_name=f"{self._stack_name}-KnowledgeDataSourceId"
-        )
-        
-        CfnOutput(
-            self, "UserDocumentsDataSourceId",
-            value=self.user_documents_data_source.attr_data_source_id,
-            description="User Documents Bucket Data Source ID",
-            export_name=f"{self._stack_name}-UserDocumentsDataSourceId"
-        )
-        
-        CfnOutput(
-            self, "EmbeddingModel",
-            value="amazon.titan-embed-text-v2:0",
-            description="Embedding Model Used",
-            export_name=f"{self._stack_name}-EmbeddingModel"
-        )
+        pass
     
     def get_knowledge_base_id(self) -> str:
         """Get the Knowledge Base ID."""
