@@ -181,7 +181,7 @@ const VendorSubmission = ({ onFilesUploaded }) => {
           className="btn"
           style={{ opacity: (uploading || messageType === 'success') ? 0.6 : 1 }}
         >
-          {uploading ? 'Uploading...' : messageType === 'success' ? 'Document Uploaded' : 'Upload Document'}
+          {uploading ? 'Uploading...' : messageType === 'success' ? 'Document Uploaded' : 'Upload Vendor Submission'}
         </button>
       </div>
 
