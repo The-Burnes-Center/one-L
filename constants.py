@@ -2,7 +2,7 @@
 # Users can modify these values before deployment
 
 # Stack name for the development CDK deployment
-STACK_NAME = "OneL-test"
+STACK_NAME = "OneL-dv"
 
 # Cognito domain name for authentication
 COGNITO_DOMAIN_NAME = "one-l-auth" 

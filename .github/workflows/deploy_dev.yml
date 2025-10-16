@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ENVIRONMENT: dev
-      STACK_NAME: OneL-test
+      STACK_NAME: OneL-dv
 
     steps:
     # Step 1: Check out the repository's code
