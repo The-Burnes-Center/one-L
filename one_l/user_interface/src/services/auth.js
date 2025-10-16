@@ -23,10 +23,10 @@ class AuthService {
 
     try {
       const config = await getAuthConfig();
-      this.cognitoDomain = `https://${config.userPoolDomain}.auth.${config.region}.amazoncognito.com`;
+      // userPoolDomain already contains the full URL with https://
+      //       this.cognitoDomain = `https://${config.userPoolDomain}.auth.${config.region}.amazoncognito.com`;
+      this.cognitoDomain = config.userPoolDomain;
       this.clientId = config.userPoolClientId;
-      
-
       
       // Check if we just returned from Cognito
       await this.handleCallback();
