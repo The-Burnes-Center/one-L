@@ -17,8 +17,12 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients
 bedrock_client = boto3.client('bedrock-runtime')
 
-# Model configuration - Using inference profile for Claude Sonnet 4
-CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+# Model configuration - Hybrid approach with Haiku 4.5 for preprocessing and Sonnet 4.5 for redlining
+CLAUDE_HAIKU_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"  # Fast preprocessing
+CLAUDE_SONNET_MODEL_ID = "anthropic.claude-sonnet-4-5-20250929-v1:0"    # Sophisticated redlining
+# Fallback models (older, more stable versions)
+CLAUDE_HAIKU_FALLBACK_ID = "anthropic.claude-3-5-haiku-20241022-v1:0"  # Claude 3.5 Haiku fallback
+CLAUDE_SONNET_FALLBACK_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"  # Claude 3.5 Sonnet v2 fallback
 MAX_TOKENS = 8000
 TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
 THINKING_BUDGET_TOKENS = 4000
@@ -40,7 +44,7 @@ _call_tracker = {
 
 class Model:
     """
-    Handles document review using Claude 4 Sonnet thinking with tool calling.
+    Handles document review using hybrid approach: Haiku 4.5 for preprocessing, Sonnet 4.5 for redlining.
     """
     
     def __init__(self, knowledge_base_id: str, region: str):
@@ -52,7 +56,7 @@ class Model:
     
     def review_document(self, bucket_type: str, document_s3_key: str) -> Dict[str, Any]:
         """
-        Review a vendor document for conflicts using Claude 4 Sonnet thinking with tools.
+        Review a vendor document using hybrid approach: Haiku 4.5 preprocessing + Sonnet 4.5 redlining.
         
         Args:
             bucket_type: Type of source bucket
@@ -63,75 +67,37 @@ class Model:
         """
         
         try:
-            logger.info(f"Starting document review with Claude 4 Sonnet thinking and tools")
+            logger.info(f"Starting hybrid document review: Haiku 4.5 preprocessing + Sonnet 4.5 redlining")
             
-            # Get document from S3 for attachment
-            bucket_name = self._get_bucket_name(bucket_type)
-            s3_client = boto3.client('s3')
+            # Step 1: Preprocessing with Haiku 4.5 (fast, less throttling)
+            preprocessing_result = self._preprocess_document_with_haiku(bucket_type, document_s3_key)
+            if not preprocessing_result["success"]:
+                return preprocessing_result
             
-            response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
-            document_data = response['Body'].read()
+            # Step 2: Redlining with Sonnet 4.5 (sophisticated analysis)
+            redlining_result = self._redline_document_with_sonnet(preprocessing_result)
+            if not redlining_result["success"]:
+                return redlining_result
             
-            # Prepare the conversation with document attachment
-            import base64
-            import os
-            
-            # Extract and sanitize filename for document name
-            filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
-            
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "text": "Please analyze this vendor submission document."
-                        },
-                        {
-                            "document": {
-                                "format": self._get_document_format(document_s3_key),
-                                "name": filename,
-                                "source": {
-                                    "bytes": document_data
-                                }
-                            }
-                        }
-                    ]
-                }
-            ]
-            
-            # Make the initial request to Claude with tools
-            response = self._call_claude_with_tools(messages)
-            
-            # Extract content from Converse API response
-            content = ""
-            if response.get("output", {}).get("message", {}).get("content"):
-                for content_block in response["output"]["message"]["content"]:
-                    if content_block.get("text"):
-                        content += content_block["text"]
-            
-            # Count conflicts detected in the analysis
-            try:
-                conflicts = parse_conflicts_for_redlining(content)
-                conflicts_count = len(conflicts)
-                _call_tracker['total_conflicts_detected'] += conflicts_count
-            except Exception as e:
-                logger.warning(f"Error counting conflicts: {str(e)}")
-                conflicts_count = 0
-            
-            # Log final summary with all metrics
-            logger.info(f"DOCUMENT REVIEW COMPLETE - Total Tool Calls: {_call_tracker['total_tool_calls']}, Total Model Calls: {_call_tracker['total_model_calls']}, Total Conflicts Detected: {_call_tracker['total_conflicts_detected']} (this document: {conflicts_count})")
-            
-            return {
+            # Combine results
+            final_result = {
                 "success": True,
-                "analysis": content,
-                "tool_results": response.get("tool_results", []),
-                "usage": response.get("usage", {}),
-                "thinking": response.get("thinking", ""),
-                "conflicts_count": conflicts_count
+                "preprocessing": preprocessing_result,
+                "redlining": redlining_result,
+                "analysis": redlining_result.get("analysis", ""),
+                "tool_results": preprocessing_result.get("tool_results", []) + redlining_result.get("tool_results", []),
+                "usage": {
+                    "haiku": preprocessing_result.get("usage", {}),
+                    "sonnet": redlining_result.get("usage", {})
+                },
+                "conflicts_count": redlining_result.get("conflicts_count", 0)
             }
             
+            logger.info(f"HYBRID DOCUMENT REVIEW COMPLETE - Haiku preprocessing + Sonnet redlining successful")
+            return final_result
+            
         except Exception as e:
-            logger.error(f"Error in document review: {str(e)}")
+            logger.error(f"Error in hybrid document review: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
@@ -201,7 +167,7 @@ class Model:
         logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
         return sanitized
     
-    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0) -> Dict[str, Any]:
+    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, model_id: str = None, use_fallback: bool = False) -> Dict[str, Any]:
         """
         Call Claude 4 Sonnet thinking with tool support using Converse API.
         Implements graceful queuing with call spacing to prevent token rate limiting.
@@ -221,8 +187,24 @@ class Model:
         
         try:
             # Call Bedrock using Converse API (supports document attachments)
+            if use_fallback:
+                # Use fallback models if primary models fail
+                if model_id == CLAUDE_HAIKU_MODEL_ID:
+                    selected_model = CLAUDE_HAIKU_FALLBACK_ID
+                    logger.info(f"Using Haiku fallback model: {selected_model}")
+                elif model_id == CLAUDE_SONNET_MODEL_ID:
+                    selected_model = CLAUDE_SONNET_FALLBACK_ID
+                    logger.info(f"Using Sonnet fallback model: {selected_model}")
+                else:
+                    selected_model = CLAUDE_SONNET_FALLBACK_ID  # Default fallback
+                    logger.info(f"Using default Sonnet fallback model: {selected_model}")
+            else:
+                # Use primary models
+                selected_model = model_id if model_id else CLAUDE_SONNET_MODEL_ID
+                logger.info(f"Using primary model: {selected_model}")
+            
             response = bedrock_client.converse(
-                modelId=CLAUDE_MODEL_ID,
+                modelId=selected_model,
                 messages=messages,
                 system=[{"text": SYSTEM_PROMPT}],
                 inferenceConfig={
@@ -262,10 +244,15 @@ class Model:
                     delay = min(BASE_DELAY * (BACKOFF_MULTIPLIER ** retry_count), MAX_DELAY)
                     logger.warning(f"Claude API throttling detected, retrying in {delay} seconds (attempt {retry_count + 1}/{MAX_RETRIES + 1})")
                     time.sleep(delay)
-                    return self._call_claude_with_tools(messages, retry_count + 1)
+                    return self._call_claude_with_tools(messages, retry_count + 1, model_id, use_fallback)
                 else:
-                    logger.error(f"Max retries exceeded for Claude API throttling after {MAX_RETRIES + 1} attempts")
-                    raise Exception(f"Claude API throttling limit exceeded after {MAX_RETRIES + 1} retries. Please try again later when token limits reset.")
+                    # Try fallback model if not already using it
+                    if not use_fallback:
+                        logger.warning(f"Primary model throttled, trying fallback model")
+                        return self._call_claude_with_tools(messages, 0, model_id, use_fallback=True)
+                    else:
+                        logger.error(f"Max retries exceeded for Claude API throttling after {MAX_RETRIES + 1} attempts")
+                        raise Exception(f"Claude API throttling limit exceeded after {MAX_RETRIES + 1} retries. Please try again later when token limits reset.")
             else:
                 # Non-throttling error - don't retry
                 logger.error(f"Error calling Claude (non-throttling): {str(e)}")
@@ -357,4 +344,176 @@ class Model:
         final_response["tool_results"] = tool_results
         
         return final_response
+    
+    def _preprocess_document_with_haiku(self, bucket_type: str, document_s3_key: str) -> Dict[str, Any]:
+        """
+        Preprocess document with Haiku 4.5 for fast analysis and knowledge base queries.
+        
+        Args:
+            bucket_type: Type of source bucket
+            document_s3_key: S3 key of the document to review
+            
+        Returns:
+            Dictionary containing preprocessing results
+        """
+        try:
+            logger.info(f"Starting Haiku 4.5 preprocessing for document: {document_s3_key}")
+            
+            # Get document from S3 for attachment
+            bucket_name = self._get_bucket_name(bucket_type)
+            s3_client = boto3.client('s3')
+            
+            response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
+            document_data = response['Body'].read()
+            
+            # Prepare the conversation with document attachment
+            import base64
+            import os
+            
+            # Extract and sanitize filename for document name
+            filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": "Please perform initial analysis of this vendor submission document. Focus on:\n1. Document structure and key sections\n2. Identify potential legal terms and clauses\n3. Extract key information for knowledge base queries\n4. Provide a structured summary for further analysis"
+                        },
+                        {
+                            "document": {
+                                "format": self._get_document_format(document_s3_key),
+                                "name": filename,
+                                "source": {
+                                    "bytes": document_data
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Call Haiku 4.5 for preprocessing
+            response = self._call_claude_with_tools(messages, model_id=CLAUDE_HAIKU_MODEL_ID)
+            
+            # Extract content from response
+            content = ""
+            if response.get("output", {}).get("message", {}).get("content"):
+                for content_block in response["output"]["message"]["content"]:
+                    if content_block.get("text"):
+                        content += content_block["text"]
+            
+            logger.info(f"Haiku 4.5 preprocessing completed successfully")
+            
+            return {
+                "success": True,
+                "analysis": content,
+                "tool_results": response.get("tool_results", []),
+                "usage": response.get("usage", {}),
+                "document_s3_key": document_s3_key,
+                "bucket_type": bucket_type,
+                "filename": filename
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Haiku preprocessing: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "analysis": "",
+                "tool_results": [],
+                "usage": {}
+            }
+    
+    def _redline_document_with_sonnet(self, preprocessing_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Perform sophisticated redlining with Sonnet 4.5 using preprocessing results.
+        
+        Args:
+            preprocessing_result: Results from Haiku preprocessing
+            
+        Returns:
+            Dictionary containing redlining results
+        """
+        try:
+            logger.info(f"Starting Sonnet 4.5 redlining using preprocessing results")
+            
+            # Get document from S3 for attachment
+            bucket_name = self._get_bucket_name(preprocessing_result["bucket_type"])
+            s3_client = boto3.client('s3')
+            
+            response = s3_client.get_object(Bucket=bucket_name, Key=preprocessing_result["document_s3_key"])
+            document_data = response['Body'].read()
+            
+            # Prepare enhanced conversation with preprocessing context
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": f"""Based on the preprocessing analysis below, perform comprehensive legal redlining of this vendor submission document.
+
+PREPROCESSING ANALYSIS:
+{preprocessing_result.get("analysis", "")}
+
+Please:
+1. Perform detailed legal analysis against Massachusetts state requirements
+2. Identify specific conflicts and compliance issues
+3. Generate detailed redlining annotations
+4. Provide comprehensive conflict resolution recommendations
+5. Create structured output for document markup"""
+                        },
+                        {
+                            "document": {
+                                "format": self._get_document_format(preprocessing_result["document_s3_key"]),
+                                "name": preprocessing_result["filename"],
+                                "source": {
+                                    "bytes": document_data
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Call Sonnet 4.5 for sophisticated redlining
+            response = self._call_claude_with_tools(messages, model_id=CLAUDE_SONNET_MODEL_ID)
+            
+            # Extract content from response
+            content = ""
+            if response.get("output", {}).get("message", {}).get("content"):
+                for content_block in response["output"]["message"]["content"]:
+                    if content_block.get("text"):
+                        content += content_block["text"]
+            
+            # Count conflicts detected in the analysis
+            try:
+                conflicts = parse_conflicts_for_redlining(content)
+                conflicts_count = len(conflicts)
+                _call_tracker['total_conflicts_detected'] += conflicts_count
+            except Exception as e:
+                logger.warning(f"Error counting conflicts: {str(e)}")
+                conflicts_count = 0
+            
+            logger.info(f"Sonnet 4.5 redlining completed successfully with {conflicts_count} conflicts detected")
+            
+            return {
+                "success": True,
+                "analysis": content,
+                "tool_results": response.get("tool_results", []),
+                "usage": response.get("usage", {}),
+                "thinking": response.get("thinking", ""),
+                "conflicts_count": conflicts_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Sonnet redlining: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "analysis": "",
+                "tool_results": [],
+                "usage": {},
+                "thinking": ""
+            }
  

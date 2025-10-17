@@ -217,10 +217,12 @@ class IAMRolesConstruct(Construct):
                     "bedrock:ConverseStream"
                 ],
                 resources=[
-                    # Inference profile with account ID
-                    f"arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
-                    # Foundation model as fallback
-                    f"arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-20250514-v1:0"
+                    # Inference profiles for hybrid approach
+                    f"arn:aws:bedrock:*:*:inference-profile/anthropic.claude-haiku-4-5-20251001-v1:0",  # Haiku 4.5 for preprocessing
+                    f"arn:aws:bedrock:*:*:inference-profile/anthropic.claude-sonnet-4-5-20250929-v1:0",  # Sonnet 4.5 for redlining
+                    # Foundation models as fallback (older, more stable versions)
+                    f"arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0",  # Claude 3.5 Haiku fallback
+                    f"arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"   # Claude 3.5 Sonnet v2 fallback
                 ]
             )
         )
