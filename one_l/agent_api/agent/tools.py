@@ -1320,7 +1320,7 @@ def _get_function_names() -> Dict[str, str]:
 def _list_session_reference_documents(session_id: str, user_id: str) -> List[str]:
     """List all reference document S3 keys for a session."""
     try:
-        bucket_name = 'onelstack-user-documents'
+        bucket_name = os.environ.get('USER_DOCUMENTS_BUCKET')
         if not bucket_name:
             logger.error('USER_DOCUMENTS_BUCKET not configured')
             return []
