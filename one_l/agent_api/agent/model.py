@@ -5,6 +5,7 @@ Handles tool calling for comprehensive document review.
 
 import json
 import boto3
+from botocore.config import Config
 import logging
 import time
 from typing import Dict, Any, List
@@ -14,8 +15,13 @@ from .tools import retrieve_from_knowledge_base, redline_document, get_tool_defi
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
-bedrock_client = boto3.client('bedrock-runtime')
+# Initialize AWS clients with optimized timeout for Claude Sonnet 4 with thinking
+# Optimized timeout based on typical document processing times (2-3 minutes)
+# Reference: https://repost.aws/knowledge-center/bedrock-large-model-read-timeouts
+bedrock_config = Config(
+    read_timeout=300,  # 5 minutes - target completion within 5 minutes
+)
+bedrock_client = boto3.client('bedrock-runtime', config=bedrock_config)
 
 # Model configuration - Using inference profile for Claude Sonnet 4
 CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"

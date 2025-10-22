@@ -5,6 +5,7 @@ Provides knowledge base retrieval and document red-lining capabilities.
 
 import json
 import boto3
+from botocore.config import Config
 import os
 import logging
 import re
@@ -19,8 +20,13 @@ import io
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
-bedrock_agent_client = boto3.client('bedrock-agent-runtime')
+# Initialize AWS clients with optimized timeout for knowledge base retrieval
+# Knowledge base queries are typically fast (under 30 seconds)
+# Reference: https://repost.aws/knowledge-center/bedrock-large-model-read-timeouts
+bedrock_agent_config = Config(
+    read_timeout=120,  # 2 minutes - more than sufficient for knowledge base queries
+)
+bedrock_agent_client = boto3.client('bedrock-agent-runtime', config=bedrock_agent_config)
 s3_client = boto3.client('s3')
 
 # Knowledge base optimization constants - TUNED FOR MAXIMUM CONFLICT DETECTION
