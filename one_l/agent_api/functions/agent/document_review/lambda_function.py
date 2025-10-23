@@ -38,7 +38,7 @@ s3_client = boto3.client('s3')
 
 # Initialize DynamoDB for job status tracking
 dynamodb = boto3.resource('dynamodb')
-JOB_STATUS_TABLE = os.environ.get('ANALYSIS_TABLE', 'OneLStack-analysis-results')
+JOB_STATUS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE', 'OneL-DV2-analysis-results')
 
 def save_job_status(job_id: str, document_s3_key: str, user_id: str, session_id: str, 
                    status: str, error: str = None, result: dict = None):

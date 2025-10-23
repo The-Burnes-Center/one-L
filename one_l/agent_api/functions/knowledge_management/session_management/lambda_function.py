@@ -274,8 +274,16 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
 def get_job_status(job_id: str, user_id: str) -> Dict[str, Any]:
     """Get job status for document processing"""
     try:
+        # Validate environment variables
+        if not ANALYSIS_RESULTS_TABLE:
+            logger.error("ANALYSIS_RESULTS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Analysis results table not configured'
+            }
+        
         # Use the same DynamoDB table structure as analysis results
-        table = dynamodb.Table('OneLStack-analysis-results')
+        table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
         
         response = table.get_item(
             Key={'analysis_id': f"job_{job_id}"}
@@ -318,8 +326,16 @@ def get_job_status(job_id: str, user_id: str) -> Dict[str, Any]:
 def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any]:
     """Get all analysis results for a specific session"""
     try:
+        # Validate environment variables
+        if not ANALYSIS_RESULTS_TABLE:
+            logger.error("ANALYSIS_RESULTS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Analysis results table not configured'
+            }
+        
         # Get analysis results from DynamoDB
-        table = dynamodb.Table('OneLStack-analysis-results')
+        table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
         
         # Scan for items with this session_id (since session_id is not the primary key)
         response = table.scan(
@@ -350,7 +366,9 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
                 'timestamp': result.get('timestamp'),
                 'conflicts_count': result.get('conflicts_count', 0),
                 'conflicts': result.get('conflicts', []),
-                'document_name': result.get('document_s3_key', '').split('/')[-1] if result.get('document_s3_key') else 'Unknown Document'
+                'document_name': result.get('document_s3_key', '').split('/')[-1] if result.get('document_s3_key') else 'Unknown Document',
+                'redlined_document_s3_key': result.get('redlined_document_s3_key'),  # Add missing field for download
+                'analysis_data': result.get('analysis_data', '')  # Add analysis data for preview
             }
             formatted_results.append(formatted_result)
         

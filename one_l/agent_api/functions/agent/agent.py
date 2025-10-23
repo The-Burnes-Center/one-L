@@ -87,6 +87,7 @@ class AgentConstruct(Construct):
                 "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
                 "AGENT_PROCESSING_BUCKET": self.agent_processing_bucket.bucket_name,
                 "ANALYSIS_TABLE": self.analysis_table.table_name,
+                "ANALYSIS_RESULTS_TABLE": self.analysis_table.table_name,  # Add this for job status tracking
                 "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
                 "OPENSEARCH_COLLECTION_ENDPOINT": f"{self.opensearch_collection.attr_id}.{Stack.of(self).region}.aoss.amazonaws.com",
                 "REGION": Stack.of(self).region,
