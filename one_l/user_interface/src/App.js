@@ -362,7 +362,8 @@ const SessionWorkspace = ({ session }) => {
 
   // Add polling function for job status
   const pollJobStatus = async (jobId, userId, filename) => {
-    const maxAttempts = 30; // 5 minutes with 10-second intervals
+    /*
+    const maxAttempts = 75; // 10 minutes with 8-second intervals (75 * 8 = 600 seconds = 10 minutes)
     let attempts = 0;
     
     while (attempts < maxAttempts) {
@@ -406,6 +407,7 @@ const SessionWorkspace = ({ session }) => {
       processing: false,
       error: 'Processing timeout - document may still be processing in background'
     };
+    */
   };
 
   // Unified progress management system
@@ -437,7 +439,7 @@ const SessionWorkspace = ({ session }) => {
       } else if (currentProgress < 99) {
         // Stage 3: Generating redlines (67-98%)
         updateProcessingStage('generating', currentProgress, 'Generating redlines...');
-      } else {
+        } else {
         // Wait at 99% until WebSocket completion
         updateProcessingStage('generating', 99, 'Generating redlines...');
         clearInterval(progressInterval);
@@ -620,9 +622,13 @@ const SessionWorkspace = ({ session }) => {
           `${processingResults.length} document(s) are processing in background due to complexity. Please wait for completion.`
         );
         setWorkflowMessageType('');
-      } else {
+      } else if (failedResults.length > 0) {
         setWorkflowMessage('All redline generation attempts failed. Please check your documents and try again.');
         setWorkflowMessageType('error');
+      } else {
+        // No results yet - processing is starting, show processing message
+        setWorkflowMessage('Starting document processing... Please wait for completion.');
+        setWorkflowMessageType('');
       }
       
     } catch (error) {

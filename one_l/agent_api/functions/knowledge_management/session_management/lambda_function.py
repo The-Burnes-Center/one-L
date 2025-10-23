@@ -370,6 +370,9 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
                 'redlined_document_s3_key': result.get('redlined_document_s3_key'),  # Add missing field for download
                 'analysis_data': result.get('analysis_data', '')  # Add analysis data for preview
             }
+            logger.info(f"SESSION: Storing analysis result - Conflicts: {result.get('conflicts_count', 0)}")
+            logger.info(f"SESSION: Redlined document: {formatted_result.get('redlined_document_s3_key')}")    
+         
             formatted_results.append(formatted_result)
         
         logger.info(f"Retrieved {len(formatted_results)} analysis results for session {session_id}")

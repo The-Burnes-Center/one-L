@@ -390,6 +390,7 @@ def redline_document(
     """
     
     try:
+        logger.info(f"REDLINE_START: Document={document_s3_key}, Analysis={len(analysis_data)} chars")
         # Get bucket configurations
         source_bucket = _get_bucket_name(bucket_type)
         agent_processing_bucket = os.environ.get('AGENT_PROCESSING_BUCKET')
@@ -410,6 +411,8 @@ def redline_document(
         
         # Step 3: Parse conflicts and create redline items from analysis data
         redline_items = parse_conflicts_for_redlining(analysis_data)
+        logger.info(f"REDLINE_PARSE: Found {len(redline_items)} conflicts to redline")
+        logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         if not redline_items:
 
@@ -419,8 +422,13 @@ def redline_document(
             }
         
         # Step 4: Apply redlining with exact sentence matching
-        results = apply_exact_sentence_redlining(doc, redline_items)
+        logger.info(f"REDLINE_APPLY: Starting redlining - {len(redline_items)} conflicts, {len(doc.paragraphs)} paragraphs")
         
+        results = apply_exact_sentence_redlining(doc, redline_items)
+        logger.info(f"REDLINE_RESULTS: Matches found: {results['matches_found']}")
+        logger.info(f"REDLINE_RESULTS: Failed matches: {len(results.get('failed_matches', []))}")
+        logger.info(f"REDLINE_RESULTS: Success rate: {(results['matches_found']/len(redline_items)*100):.1f}%")
+
         # Step 5: Save and upload redlined document
         redlined_s3_key = _create_redlined_filename(agent_document_key, session_id, user_id)
         upload_success = _save_and_upload_document(doc, agent_processing_bucket, redlined_s3_key, {
@@ -499,7 +507,9 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     Returns:
         List of redline items with exact text to match and comments
     """
-    
+    logger.info(f"PARSE_START: Analysis data length: {len(analysis_data)} characters")
+    logger.info(f"PARSE_START: Analysis preview: {analysis_data[:150]}...")
+
     redline_items = []
     
     try:
@@ -553,7 +563,10 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             'clause_ref': clause_ref,
                             'summary': summary
                         })
-        
+                        
+        logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from analysis")
+        for i, item in enumerate(redline_items[:2]):
+            logger.info(f"PARSE_CONFLICT_{i+1}: ID={item.get('clarification_id')}, Text='{item.get('text', '')[:60]}...'")
 
         
     except Exception as e:
@@ -574,7 +587,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     Returns:
         Dictionary with redlining results
     """
-    
+    logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs")
     try:
         matches_found = 0
         paragraphs_with_redlines = []
@@ -587,8 +600,8 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         unmatched_conflicts = redline_items.copy()
         
         # TIER 1: Standard exact matching
-
         remaining_conflicts = []
+        logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
         
         for redline_item in unmatched_conflicts:
             vendor_conflict_text = redline_item.get('text', '').strip()
@@ -612,7 +625,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             pass
             
             # TIER 2: Fuzzy matching (only for unmatched conflicts)
-
+            logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
             unmatched_conflicts = remaining_conflicts
             remaining_conflicts = []
             
@@ -635,7 +648,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 pass
                 
                 # TIER 3: Cross-paragraph matching (only for unmatched conflicts)
-
+                logger.info(f"APPLY_TIER3: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
                 unmatched_conflicts = remaining_conflicts
                 remaining_conflicts = []
                 
@@ -659,7 +672,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     pass
                     
                     # TIER 4: Partial phrase matching (only for unmatched conflicts)
-
+                    logger.info(f"APPLY_TIER4: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
                     unmatched_conflicts = remaining_conflicts
                     remaining_conflicts = []
                     
@@ -682,6 +695,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                         pass
                         
                         # TIER 5: Tokenized matching (only for unmatched conflicts)
+                        logger.info(f"APPLY_TIER5: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
 
                         unmatched_conflicts = remaining_conflicts
                         remaining_conflicts = []
@@ -699,6 +713,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                                 remaining_conflicts.append(redline_item)
                         
                         # Final failed matches
+                        logger.info(f"APPLY_FINAL: About to process {len(remaining_conflicts)} remaining conflicts as failed matches")
                         for redline_item in remaining_conflicts:
                             failed_matches.append({
                                 'text': redline_item.get('text', ''),
@@ -706,15 +721,16 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                             })
         
         # Log final summary
-        if failed_matches:
+        logger.info(f"REDLINE_SUMMARY: {matches_found}/{len(redline_items)} conflicts redlined successfully")
 
+        if failed_matches:
+            logger.warning(f"REDLINING FAILED: {len(failed_matches)} conflicts could not be matched")
             for failed in failed_matches:
-                pass
+                logger.warning(f"FAILED TO REDLINE: Clarification ID {failed['clarification_id']} - Text: '{failed['text'][:100]}...'")
+                logger.warning(f"  - Reason: {failed.get('reason', 'No reason provided')}")
         else:
-            pass
-        
-        pass
-        
+            logger.info("REDLINE_SUCCESS: All conflicts redlined successfully")
+
         return {
             "total_paragraphs": total_paragraphs,
             "matches_found": matches_found,
