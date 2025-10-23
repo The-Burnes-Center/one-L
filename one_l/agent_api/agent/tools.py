@@ -5,6 +5,7 @@ Provides knowledge base retrieval and document red-lining capabilities.
 
 import json
 import boto3
+from botocore.config import Config
 import os
 import logging
 import re
@@ -19,8 +20,13 @@ import io
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
-bedrock_agent_client = boto3.client('bedrock-agent-runtime')
+# Initialize AWS clients with optimized timeout for knowledge base retrieval
+# Knowledge base queries are typically fast (under 30 seconds)
+# Reference: https://repost.aws/knowledge-center/bedrock-large-model-read-timeouts
+bedrock_agent_config = Config(
+    read_timeout=120,  # 2 minutes - more than sufficient for knowledge base queries
+)
+bedrock_agent_client = boto3.client('bedrock-agent-runtime', config=bedrock_agent_config)
 s3_client = boto3.client('s3')
 
 # Knowledge base optimization constants - TUNED FOR MAXIMUM CONFLICT DETECTION
@@ -1320,7 +1326,7 @@ def _get_function_names() -> Dict[str, str]:
 def _list_session_reference_documents(session_id: str, user_id: str) -> List[str]:
     """List all reference document S3 keys for a session."""
     try:
-        bucket_name = 'onelstack-user-documents'
+        bucket_name = os.environ.get('USER_DOCUMENTS_BUCKET')
         if not bucket_name:
             logger.error('USER_DOCUMENTS_BUCKET not configured')
             return []
