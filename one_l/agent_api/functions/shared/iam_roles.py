@@ -267,7 +267,8 @@ class IAMRolesConstruct(Construct):
                     f"arn:aws:lambda:*:*:function:*-websocket-notification",
                     f"arn:aws:lambda:*:*:function:*-session-management",
                     f"arn:aws:lambda:*:*:function:*-delete-from-s3",
-                    f"arn:aws:lambda:*:*:function:*-sync-knowledge-base"
+                    f"arn:aws:lambda:*:*:function:*-sync-knowledge-base",
+                    f"arn:aws:lambda:*:*:function:*-document-review"
                 ]
             )
         )

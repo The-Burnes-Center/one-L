@@ -8,7 +8,8 @@ from aws_cdk import (
     aws_apigateway as apigateway,
     aws_lambda as _lambda,
     Stack,
-    CfnOutput
+    CfnOutput,
+    Duration
 )
 
 
@@ -59,6 +60,27 @@ class ApiGatewayConstruct(Construct):
                 allow_methods=apigateway.Cors.ALL_METHODS,
                 allow_headers=["Content-Type", "X-Amz-Date", "Authorization", "X-Api-Key", "X-Amz-Security-Token"],
             ),
+        )
+        
+        # Add gateway responses to ensure CORS headers are returned for all responses
+        self.main_api.add_gateway_response(
+            "DEFAULT_4XX",
+            type=apigateway.ResponseType.DEFAULT_4_XX,
+            response_headers={
+                "Access-Control-Allow-Origin": "'*'",
+                "Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE,OPTIONS'",
+                "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            }
+        )
+        
+        self.main_api.add_gateway_response(
+            "DEFAULT_5XX",
+            type=apigateway.ResponseType.DEFAULT_5_XX,
+            response_headers={
+                "Access-Control-Allow-Origin": "'*'",
+                "Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE,OPTIONS'",
+                "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            }
         )
     
     def create_function_routes(self):
@@ -115,13 +137,14 @@ class ApiGatewayConstruct(Construct):
         integration = apigateway.LambdaIntegration(
             lambda_function,
             proxy=True,  # Use Lambda proxy integration
+            timeout=Duration.seconds(29),  # Maximum API Gateway timeout (29 seconds)
         )
         
         # Add methods to the resource
         for method in methods:
             function_resource.add_method(
                 method,
-                integration,
+                integration
             )
         
         # Note: OPTIONS method is automatically added by default_cors_preflight_options
