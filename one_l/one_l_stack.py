@@ -4,7 +4,7 @@ from .authorization.authorization import AuthorizationConstruct
 from .agent_api.agent_api import AgentApiConstruct
 from .api_gateway.api_gateway import ApiGatewayConstruct
 from .user_interface.user_interface import UserInterfaceConstruct
-from constants import TEST_COGNITO_DOMAIN_NAME, DEV_COGNITO_DOMAIN_NAME, ONEL_TEST_COGNITO_DOMAIN_NAME
+# Removed unused imports - using environment variables instead
 
 class OneLStack(Stack):
 
