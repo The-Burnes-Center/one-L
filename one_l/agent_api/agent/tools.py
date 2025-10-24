@@ -241,16 +241,22 @@ def retrieve_from_knowledge_base(
         
         # Process and optimize the results
         raw_results = []
+        source_documents = set()
         for result in response.get('retrievalResults', []):
             content = result.get('content', {})
             metadata = result.get('metadata', {})
+            source = metadata.get('source', 'Unknown')
+            source_documents.add(source)
             
             raw_results.append({
                 "text": content.get('text', ''),
                 "score": result.get('score', 0),
-                "source": metadata.get('source', 'Unknown'),
+                "source": source,
                 "metadata": metadata
             })
+        
+        # Enhanced logging: Track which reference documents were found
+        logger.info(f"KNOWLEDGE_BASE_QUERY: '{query[:100]}...' found {len(raw_results)} results from {len(source_documents)} source documents: {list(source_documents)}")
         
         # Apply intelligent filtering and prioritization
         filtered_results = _filter_and_prioritize_results(raw_results, max_results)
@@ -581,6 +587,11 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         total_paragraphs = len(doc.paragraphs)
         failed_matches = []
         
+        # Enhanced logging: Document structure analysis
+        logger.info(f"DOCUMENT_STRUCTURE: Total paragraphs: {total_paragraphs}")
+        logger.info(f"DOCUMENT_STRUCTURE: Total pages estimated: {total_paragraphs // 20}")  # Rough estimate
+        logger.info(f"REDLINE_ITEMS: Processing {len(redline_items)} conflicts")
+        
 
         
         # Track unmatched conflicts across tiers
@@ -595,15 +606,21 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             if not vendor_conflict_text:
                 continue
                 
+            # Enhanced logging: Track each conflict attempt
+            conflict_id = redline_item.get('id', 'Unknown')
+            source_doc = redline_item.get('source_doc', 'Unknown')
+            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+                
             found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
             
             if found_match:
                 matches_found += 1
                 if found_match['para_idx'] not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(found_match['para_idx'])
-
+                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
             else:
                 remaining_conflicts.append(redline_item)
+                logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
@@ -612,21 +629,24 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             pass
             
             # TIER 2: Fuzzy matching (only for unmatched conflicts)
+            logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
 
             unmatched_conflicts = remaining_conflicts
             remaining_conflicts = []
             
             for redline_item in unmatched_conflicts:
                 vendor_conflict_text = redline_item.get('text', '').strip()
+                conflict_id = redline_item.get('id', 'Unknown')
                 found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
                 
                 if found_match:
                     matches_found += 1
                     if found_match['para_idx'] not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(found_match['para_idx'])
-
+                    logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
                 else:
                     remaining_conflicts.append(redline_item)
+                    logger.info(f"TIER2_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
             
             # Early exit if all conflicts matched
             if not remaining_conflicts:
@@ -705,21 +725,28 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                                 'clarification_id': redline_item.get('clarification_id', 'Unknown')
                             })
         
+        # Enhanced logging: Page distribution analysis
+        if paragraphs_with_redlines:
+            pages_affected = set(para_idx // 20 for para_idx in paragraphs_with_redlines)
+            logger.info(f"PAGE_DISTRIBUTION: {len(pages_affected)} pages affected: {sorted(pages_affected)}")
+            logger.info(f"PARAGRAPH_DISTRIBUTION: {len(paragraphs_with_redlines)} paragraphs redlined: {sorted(paragraphs_with_redlines)}")
+        
         # Log final summary
         if failed_matches:
-
+            logger.warning(f"REDLINING_FAILED: {len(failed_matches)} conflicts could not be matched")
             for failed in failed_matches:
-                pass
+                logger.warning(f"FAILED_TO_REDLINE: Clarification ID {failed.get('id', 'Unknown')} - Text: '{failed.get('text', '')[:100]}...'")
         else:
-            pass
+            logger.info("REDLINING_SUCCESS: All conflicts successfully redlined")
         
-        pass
+        logger.info(f"REDLINE_SUMMARY: {matches_found}/{len(redline_items)} conflicts redlined successfully")
         
         return {
             "total_paragraphs": total_paragraphs,
             "matches_found": matches_found,
             "paragraphs_with_redlines": paragraphs_with_redlines,
-            "failed_matches": failed_matches
+            "failed_matches": failed_matches,
+            "pages_affected": len(set(para_idx // 20 for para_idx in paragraphs_with_redlines)) if paragraphs_with_redlines else 0
         }
         
     except Exception as e:
@@ -733,14 +760,19 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
 
 
 def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 1: Standard exact and case-insensitive matching within paragraphs."""
+    """TIER 1: Enhanced exact and case-insensitive matching within paragraphs."""
     
-    # Create variations of the text to try matching (handle various quote formats)
+    # Create comprehensive variations of the text to try matching
     text_variations = [
         vendor_conflict_text,  # Original text
         vendor_conflict_text.strip('"\''),  # Remove quotes
         vendor_conflict_text.replace('"', '"').replace('"', '"'),  # Smart quotes to regular
         vendor_conflict_text.replace(''', "'").replace(''', "'"),  # Smart apostrophes
+        # Additional variations for better matching
+        re.sub(r'\s+', ' ', vendor_conflict_text.strip()),  # Normalize whitespace
+        vendor_conflict_text.replace('\n', ' ').replace('\r', ' '),  # Remove line breaks
+        re.sub(r'[^\w\s]', '', vendor_conflict_text),  # Remove punctuation
+        vendor_conflict_text.replace('  ', ' '),  # Remove double spaces
     ]
     
     # Remove duplicates while preserving order
