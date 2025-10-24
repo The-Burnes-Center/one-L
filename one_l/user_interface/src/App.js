@@ -932,7 +932,7 @@ const SessionWorkspace = ({ session }) => {
     <div className="main-content">
       <div className="card">
         <h1>One L</h1>
-        <p>AI-based First pass review of Vendor submission</p>
+        <p>AI-powered intelligent review of vendor submissions</p>
         {session && (
           <div style={{ 
             fontSize: '14px', 
@@ -1544,7 +1544,7 @@ const AppContent = () => {
         <div style={{ textAlign: 'center' }}>
           <h1 style={{ color: '#333', marginBottom: '16px' }}>Welcome to One-L</h1>
           <p style={{ color: '#666', marginBottom: '24px' }}>
-            AI-based First pass review of Vendor submission
+            AI-powered intelligent review of vendor submissions
           </p>
           <button
             onClick={handleLogin}
