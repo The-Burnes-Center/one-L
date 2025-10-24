@@ -1,0 +1,91 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches: dev
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: us-east-1
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: one_l/user_interface/package-lock.json
+
+    - name: Build React frontend
+      run: |
+        cd one_l/user_interface/
+        npm ci
+        npm run build
+        echo "React frontend built successfully"
+
+    - name: Build Lambda deployment package
+      run: |
+        # Configuration
+        FUNCTION_NAME="document-review"
+        DOCKER_IMAGE="one-l-lambda-builder"
+        OUTPUT_DIR="./build"
+        
+        echo "Building Lambda deployment package for ${FUNCTION_NAME}..."
+        
+        # Create output directory
+        mkdir -p ${OUTPUT_DIR}
+        
+        # Build Docker image (force x86_64 platform for Lambda compatibility)
+        echo "Building Docker image with Lambda-compatible environment..."
+        docker build --platform linux/amd64 -t ${DOCKER_IMAGE} -f Dockerfile.lambda .
+        
+        # Run container to build deployment package
+        echo "Creating deployment package in Lambda-compatible environment..."
+        docker run --rm \
+            -v $(pwd)/${OUTPUT_DIR}:/output \
+            ${DOCKER_IMAGE}
+        
+        # Check if package was created
+        if [ -f "${OUTPUT_DIR}/lambda-deployment.zip" ]; then
+            echo "Deployment package created successfully"
+            echo "Location: ${OUTPUT_DIR}/lambda-deployment.zip"
+            echo "Package size: $(du -h ${OUTPUT_DIR}/lambda-deployment.zip | cut -f1)"
+            echo "Package contents (sample):"
+            unzip -l ${OUTPUT_DIR}/lambda-deployment.zip | head -20
+        else
+            echo "Failed to create deployment package"
+            exit 1
+        fi
+
+    - name: Set up Python and install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        npm install -g aws-cdk
+
+    - name: CDK Diff
+      run: |
+        cdk diff
+
+    - name: CDK Synth
+      run: |
+        cdk synth
+
+    - name: CDK Deploy
+      run: |
+        cdk deploy --require-approval never
+
+    - name: Invalidate CloudFront
+      run: |
+        aws cloudfront create-invalidation --distribution-id EPST42DQLKU70 --paths "/*"
