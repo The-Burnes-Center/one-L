@@ -33,7 +33,7 @@ jobs:
     - name: Build React frontend
       run: |
         cd one_l/user_interface/
-        npm ci
+        npm install
         npm run build
         echo "React frontend built successfully"
 
