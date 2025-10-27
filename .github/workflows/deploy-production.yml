@@ -73,17 +73,40 @@ jobs:
         pip install -r requirements.txt
         npm install -g aws-cdk
 
-    - name: CDK Diff
+    # Skip CDK Deploy to avoid Cognito conflicts - only updating Lambda code
+    # - name: CDK Diff
+    #   run: |
+    #     cdk diff
+    # 
+    # - name: CDK Synth
+    #   run: |
+    #     cdk synth
+    # 
+    # - name: CDK Deploy
+    #   run: |
+    #     cdk deploy --require-approval never
+    
+    - name: Update Lambda functions
       run: |
-        cdk diff
-
-    - name: CDK Synth
-      run: |
-        cdk synth
-
-    - name: CDK Deploy
-      run: |
-        cdk deploy --require-approval never
+        echo "Updating Lambda function code only (skipping infrastructure changes)..."
+        
+        # Find and update the document-review Lambda function
+        LAMBDA_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`) && contains(FunctionName, `document-review`)].FunctionName' --output text)
+        
+        if [ -n "$LAMBDA_FUNCTION" ]; then
+          echo "Updating Lambda function: $LAMBDA_FUNCTION"
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_FUNCTION" \
+            --zip-file fileb://build/lambda-deployment.zip
+          
+          echo "Waiting for Lambda update to complete..."
+          aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION"
+          echo "Lambda function updated successfully"
+        else
+          echo "No Lambda function found matching pattern"
+          echo "Listing all OneL-v2 Lambda functions:"
+          aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`)].FunctionName' --output table
+        fi
 
     - name: Get stack outputs
       id: stack-outputs
