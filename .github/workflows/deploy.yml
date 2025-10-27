@@ -123,6 +123,13 @@ jobs:
         echo "USER_POOL_ID=${USER_POOL_ID}" >> $GITHUB_ENV
         echo "USER_POOL_CLIENT_ID=${USER_POOL_CLIENT_ID}" >> $GITHUB_ENV
         
+        # Debug output
+        echo "=== Debug: Stack Output Values ==="
+        echo "WEBSITE_BUCKET: ${WEBSITE_BUCKET}"
+        echo "COGNITO_DOMAIN: ${COGNITO_DOMAIN}"
+        echo "API_GATEWAY_URL: ${API_GATEWAY_URL}"
+        echo "CloudFront Domain: ${CLOUDFRONT_DOMAIN}"
+        
         echo "Stack outputs retrieved successfully"
 
     - name: Update Cognito OAuth settings
