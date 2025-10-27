@@ -185,6 +185,8 @@ jobs:
         echo "Config.json uploaded successfully"
 
     - name: Invalidate CloudFront
+      continue-on-error: true
       run: |
-        aws cloudfront create-invalidation --distribution-id ${DISTRIBUTION_ID} --paths "/*"
-        echo "CloudFront invalidation created successfully"
+        echo "Attempting CloudFront invalidation (this may fail due to rate limits)..."
+        aws cloudfront create-invalidation --distribution-id ${DISTRIBUTION_ID} --paths "/*" || echo "CloudFront invalidation skipped (rate limit exceeded or other error)"
+        echo "CloudFront cache will expire naturally within 24 hours"
