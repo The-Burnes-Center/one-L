@@ -69,29 +69,18 @@ def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
     while start_idx < total_paragraphs:
         end_idx = min(start_idx + chunk_size, total_paragraphs)
         
-        # Create a new minimal document structure
+        # Create a new document for this chunk
         chunk_doc = Document()
         
-        # Copy the essential document structure
-        chunk_doc.settings = doc.settings
-        if hasattr(doc, 'styles') and hasattr(doc.styles, '_document'):
-            chunk_doc.styles._document = doc.styles._document
-        
-        # Copy paragraphs
+        # Copy paragraphs with their content
         for i in range(start_idx, end_idx):
             src_para = doc.paragraphs[i]
             new_para = chunk_doc.add_paragraph()
-            # Copy the paragraph content
-            for run in src_para.runs:
-                new_run = new_para.add_run(run.text)
-                new_run.bold = run.bold
-                new_run.italic = run.italic
-                new_run.underline = run.underline
-                # Copy font properties if they exist
-                if run.font and run.font.color:
-                    from docx.shared import RGBColor
-                    if isinstance(run.font.color.rgb, tuple):
-                        new_run.font.color.rgb = RGBColor(*run.font.color.rgb)
+            
+            # Copy the paragraph text
+            para_text = src_para.text
+            if para_text.strip():  # Only add non-empty paragraphs
+                new_para.add_run(para_text)
         
         # Save to bytes
         buffer = io.BytesIO()
