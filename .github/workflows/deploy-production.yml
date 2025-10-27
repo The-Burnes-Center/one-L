@@ -1,0 +1,189 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: us-east-1
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Build React frontend
+      run: |
+        cd one_l/user_interface/
+        npm install
+        npm run build
+        echo "React frontend built successfully"
+
+    - name: Build Lambda deployment package
+      run: |
+        # Configuration
+        FUNCTION_NAME="document-review"
+        DOCKER_IMAGE="one-l-lambda-builder"
+        OUTPUT_DIR="./build"
+        
+        echo "Building Lambda deployment package for ${FUNCTION_NAME}..."
+        
+        # Create output directory
+        mkdir -p ${OUTPUT_DIR}
+        
+        # Build Docker image (force x86_64 platform for Lambda compatibility)
+        echo "Building Docker image with Lambda-compatible environment..."
+        docker build --platform linux/amd64 -t ${DOCKER_IMAGE} -f Dockerfile.lambda .
+        
+        # Run container to build deployment package
+        echo "Creating deployment package in Lambda-compatible environment..."
+        docker run --rm \
+            -v $(pwd)/${OUTPUT_DIR}:/output \
+            ${DOCKER_IMAGE}
+        
+        # Check if package was created
+        if [ -f "${OUTPUT_DIR}/lambda-deployment.zip" ]; then
+            echo "Deployment package created successfully"
+            echo "Location: ${OUTPUT_DIR}/lambda-deployment.zip"
+            echo "Package size: $(du -h ${OUTPUT_DIR}/lambda-deployment.zip | cut -f1)"
+            echo "Package contents (sample):"
+            unzip -l ${OUTPUT_DIR}/lambda-deployment.zip | head -20
+        else
+            echo "Failed to create deployment package"
+            exit 1
+        fi
+
+    - name: Set up Python and install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        npm install -g aws-cdk
+
+    - name: CDK Diff
+      run: |
+        cdk diff
+
+    - name: CDK Synth
+      run: |
+        cdk synth
+
+    - name: CDK Deploy
+      run: |
+        cdk deploy --require-approval never
+
+    - name: Get stack outputs
+      id: stack-outputs
+      run: |
+        # First, list ALL outputs to see what's available
+        echo "=== Listing ALL CloudFormation Outputs ==="
+        aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
+        
+        # Get CloudFront distribution ID
+        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDistributionId8824EC56`].OutputValue' --output text)
+        
+        # Get CloudFront domain name
+        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDomainName896373DA`].OutputValue' --output text)
+        
+        # Get Cognito domain
+        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolDomainUrl533E5574`].OutputValue' --output text)
+        
+        # Get API Gateway URL
+        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayMainApiUrl65B78421`].OutputValue' --output text)
+        
+        # Get WebSocket URL
+        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AgentApiFunctionsWebSocketWebSocketApiUrl63196B11`].OutputValue' --output text)
+        
+        # Get website bucket name
+        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceWebsiteBucketNameEE842B3A`].OutputValue' --output text)
+        
+        # Get Cognito User Pool ID and Client ID
+        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolId47D46FEF`].OutputValue' --output text)
+        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolClientId24468C3D`].OutputValue' --output text)
+        
+        echo "DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> $GITHUB_ENV
+        echo "CLOUDFRONT_DOMAIN=${CLOUDFRONT_DOMAIN}" >> $GITHUB_ENV
+        echo "COGNITO_DOMAIN=${COGNITO_DOMAIN}" >> $GITHUB_ENV
+        echo "API_GATEWAY_URL=${API_GATEWAY_URL}" >> $GITHUB_ENV
+        echo "WEBSOCKET_URL=${WEBSOCKET_URL}" >> $GITHUB_ENV
+        echo "WEBSITE_BUCKET=${WEBSITE_BUCKET}" >> $GITHUB_ENV
+        echo "USER_POOL_ID=${USER_POOL_ID}" >> $GITHUB_ENV
+        echo "USER_POOL_CLIENT_ID=${USER_POOL_CLIENT_ID}" >> $GITHUB_ENV
+        
+        # Debug output
+        echo "=== Debug: Stack Output Values ==="
+        echo "WEBSITE_BUCKET: ${WEBSITE_BUCKET}"
+        echo "COGNITO_DOMAIN: ${COGNITO_DOMAIN}"
+        echo "API_GATEWAY_URL: ${API_GATEWAY_URL}"
+        echo "CloudFront Domain: ${CLOUDFRONT_DOMAIN}"
+        
+        echo "Stack outputs retrieved successfully"
+
+    - name: Update Cognito OAuth settings
+      run: |
+        echo "Updating Cognito User Pool Client OAuth settings..."
+        
+        # Update with OAuth 2.0 settings enabled
+        aws cognito-idp update-user-pool-client \
+          --user-pool-id $USER_POOL_ID \
+          --client-id $USER_POOL_CLIENT_ID \
+          --callback-urls "https://${CLOUDFRONT_DOMAIN}" "https://${CLOUDFRONT_DOMAIN}/" \
+          --logout-urls "https://${CLOUDFRONT_DOMAIN}" "https://${CLOUDFRONT_DOMAIN}/" \
+          --supported-identity-providers "COGNITO" \
+          --allowed-o-auth-flows "code" \
+          --allowed-o-auth-scopes "openid" "email" "profile" \
+          --allowed-o-auth-flows-user-pool-client \
+          --explicit-auth-flows "ALLOW_USER_SRP_AUTH" "ALLOW_REFRESH_TOKEN_AUTH" \
+          || (echo "Note: OAuth settings update may have failed, continuing..." && true)
+
+    - name: Generate config.json
+      run: |
+        # Create config.json with proper Cognito domain format
+        # Use the FULL domain URL for userPoolDomain field (not just the prefix)
+        config_data=$(cat <<EOF
+        {
+          "apiGatewayUrl": "${API_GATEWAY_URL}",
+          "userPoolId": "${USER_POOL_ID}",
+          "userPoolClientId": "${USER_POOL_CLIENT_ID}",
+          "userPoolDomain": "${COGNITO_DOMAIN}",
+          "region": "us-east-1",
+          "stackName": "OneL-v2",
+          "knowledgeManagementUploadEndpointUrl": "${API_GATEWAY_URL}knowledge_management/upload",
+          "knowledgeManagementRetrieveEndpointUrl": "${API_GATEWAY_URL}knowledge_management/retrieve",
+          "knowledgeManagementDeleteEndpointUrl": "${API_GATEWAY_URL}knowledge_management/delete",
+          "knowledgeManagementSyncEndpointUrl": "${API_GATEWAY_URL}knowledge_management/sync",
+          "webSocketUrl": "${WEBSOCKET_URL}",
+          "callbackUrl": "https://${CLOUDFRONT_DOMAIN}"
+        }
+        EOF
+        )
+        
+        echo "$config_data" > config.json
+        echo "Generated config.json:"
+        cat config.json
+
+    - name: Upload config.json to S3
+      run: |
+        aws s3 cp config.json s3://${WEBSITE_BUCKET}/config.json --content-type application/json
+        echo "Config.json uploaded successfully"
+
+    - name: Invalidate CloudFront
+      continue-on-error: true
+      run: |
+        echo "Attempting CloudFront invalidation (this may fail due to rate limits)..."
+        aws cloudfront create-invalidation --distribution-id ${DISTRIBUTION_ID} --paths "/*" || echo "CloudFront invalidation skipped (rate limit exceeded or other error)"
+        echo "CloudFront cache will expire naturally within 24 hours"
+
