@@ -92,6 +92,10 @@ jobs:
     - name: Get stack outputs
       id: stack-outputs
       run: |
+        # First, list ALL outputs to see what's available
+        echo "=== Listing ALL CloudFormation Outputs ==="
+        aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
+        
         # Get CloudFront distribution ID
         DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' --output text)
         
