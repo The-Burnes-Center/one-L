@@ -143,13 +143,13 @@ jobs:
         COGNITO_DOMAIN_PREFIX=$(echo $COGNITO_DOMAIN | sed 's|https://||' | sed 's|\.auth\.us-east-1\.amazoncognito\.com||')
         
         # Create config.json with proper Cognito domain format
-        # Use the full domain for userPoolDomain field
+        # Use the domain prefix (not full URL) for userPoolDomain field
         config_data=$(cat <<EOF
         {
           "apiGatewayUrl": "${API_GATEWAY_URL}",
           "userPoolId": "${USER_POOL_ID}",
           "userPoolClientId": "${USER_POOL_CLIENT_ID}",
-          "userPoolDomain": "${COGNITO_DOMAIN}",
+          "userPoolDomain": "${COGNITO_DOMAIN_PREFIX}",
           "region": "us-east-1",
           "stackName": "OneL-DV2",
           "knowledgeManagementUploadEndpointUrl": "${API_GATEWAY_URL}knowledge_management/upload",

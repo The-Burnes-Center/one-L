@@ -1543,7 +1543,7 @@ const AppContent = () => {
       }}>
         <div style={{ textAlign: 'center' }}>
           <h1 style={{ color: '#333', marginBottom: '16px' }}>Welcome to One-L</h1>
-          <p style={{ color: '#666', marginBottom: '24px' }}>
+          <p style={{ color: '#666', marginBottom: '24px', fontSize: '18px', fontWeight: '500' }}>
             AI-powered intelligent review of vendor submissions
           </p>
           <button
