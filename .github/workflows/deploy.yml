@@ -89,6 +89,89 @@ jobs:
       run: |
         cdk deploy --require-approval never
 
+    - name: Get stack outputs
+      id: stack-outputs
+      run: |
+        # Get CloudFront distribution ID
+        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' --output text)
+        
+        # Get CloudFront domain name
+        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomainName`].OutputValue' --output text)
+        
+        # Get Cognito domain
+        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`UserPoolDomainUrl`].OutputValue' --output text)
+        
+        # Get API Gateway URL
+        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' --output text)
+        
+        # Get WebSocket URL
+        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`WebSocketUrl`].OutputValue' --output text)
+        
+        # Get website bucket name
+        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' --output text)
+        
+        # Get Cognito User Pool ID and Client ID
+        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' --output text)
+        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' --output text)
+        
+        echo "DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> $GITHUB_ENV
+        echo "CLOUDFRONT_DOMAIN=${CLOUDFRONT_DOMAIN}" >> $GITHUB_ENV
+        echo "COGNITO_DOMAIN=${COGNITO_DOMAIN}" >> $GITHUB_ENV
+        echo "API_GATEWAY_URL=${API_GATEWAY_URL}" >> $GITHUB_ENV
+        echo "WEBSOCKET_URL=${WEBSOCKET_URL}" >> $GITHUB_ENV
+        echo "WEBSITE_BUCKET=${WEBSITE_BUCKET}" >> $GITHUB_ENV
+        echo "USER_POOL_ID=${USER_POOL_ID}" >> $GITHUB_ENV
+        echo "USER_POOL_CLIENT_ID=${USER_POOL_CLIENT_ID}" >> $GITHUB_ENV
+        
+        echo "Stack outputs retrieved successfully"
+
+    - name: Update Cognito OAuth settings
+      run: |
+        # Update Cognito User Pool Client with correct callback URLs and OAuth settings
+        aws cognito-idp update-user-pool-client \
+          --user-pool-id $USER_POOL_ID \
+          --client-id $USER_POOL_CLIENT_ID \
+          --callback-urls "https://${CLOUDFRONT_DOMAIN}" "https://${CLOUDFRONT_DOMAIN}/" \
+          --logout-urls "https://${CLOUDFRONT_DOMAIN}" "https://${CLOUDFRONT_DOMAIN}/" \
+          --supported-identity-providers "COGNITO" || true
+
+    - name: Generate config.json
+      run: |
+        # Extract Cognito domain prefix from the full URL
+        # COGNITO_DOMAIN format: https://onel-dv2-one-l-auth-dv2.auth.us-east-1.amazoncognito.com
+        # Extract the domain prefix (onel-dv2-one-l-auth-dv2)
+        COGNITO_DOMAIN_PREFIX=$(echo $COGNITO_DOMAIN | sed 's|https://||' | sed 's|\.auth\.us-east-1\.amazoncognito\.com||')
+        
+        # Create config.json with proper Cognito domain format
+        # Use the full domain for userPoolDomain field
+        config_data=$(cat <<EOF
+        {
+          "apiGatewayUrl": "${API_GATEWAY_URL}",
+          "userPoolId": "${USER_POOL_ID}",
+          "userPoolClientId": "${USER_POOL_CLIENT_ID}",
+          "userPoolDomain": "${COGNITO_DOMAIN}",
+          "region": "us-east-1",
+          "stackName": "OneL-DV2",
+          "knowledgeManagementUploadEndpointUrl": "${API_GATEWAY_URL}knowledge_management/upload",
+          "knowledgeManagementRetrieveEndpointUrl": "${API_GATEWAY_URL}knowledge_management/retrieve",
+          "knowledgeManagementDeleteEndpointUrl": "${API_GATEWAY_URL}knowledge_management/delete",
+          "knowledgeManagementSyncEndpointUrl": "${API_GATEWAY_URL}knowledge_management/sync",
+          "webSocketUrl": "${WEBSOCKET_URL}",
+          "callbackUrl": "https://${CLOUDFRONT_DOMAIN}"
+        }
+        EOF
+        )
+        
+        echo "$config_data" > config.json
+        echo "Generated config.json:"
+        cat config.json
+
+    - name: Upload config.json to S3
+      run: |
+        aws s3 cp config.json s3://${WEBSITE_BUCKET}/config.json --content-type application/json
+        echo "Config.json uploaded successfully"
+
     - name: Invalidate CloudFront
       run: |
-        aws cloudfront create-invalidation --distribution-id EPST42DQLKU70 --paths "/*"
+        aws cloudfront create-invalidation --distribution-id ${DISTRIBUTION_ID} --paths "/*"
+        echo "CloudFront invalidation created successfully"
