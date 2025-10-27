@@ -44,15 +44,15 @@ _call_tracker = {
     'last_call_time': 0
 }
 
-def _split_document_into_chunks(doc, chunk_size=60, overlap=10):
+def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
     """
     Split a document into chunks for better processing.
     Uses simple paragraph slicing - each chunk becomes its own smaller document.
     
     Args:
         doc: python-docx Document object
-        chunk_size: Number of paragraphs per chunk (~3 pages, 60 paragraphs)
-        overlap: Number of paragraphs to overlap between chunks (ensures boundary coverage)
+        chunk_size: Number of paragraphs per chunk (~5 pages)
+        overlap: Number of paragraphs to overlap between chunks
         
     Returns:
         List of (start_idx, end_idx, chunk_doc) tuples
@@ -153,9 +153,8 @@ class Model:
                 total_paragraphs = len(doc.paragraphs)
                 logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
                 
-                # If document is large (>60 paragraphs ≈ 3+ pages), split into chunks
-                # This ensures Claude can see ALL content even in medium-sized documents
-                if total_paragraphs > 60:
+                # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
+                if total_paragraphs > 100:
                     logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
                     return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
                 else:
@@ -244,8 +243,8 @@ class Model:
         try:
             logger.info(f"Starting chunked document review")
             
-            # Split document into chunks (60 paragraphs ≈ 3 pages per chunk with 10 paragraph overlap)
-            chunks = _split_document_into_chunks(doc, chunk_size=60, overlap=10)
+            # Split document into chunks
+            chunks = _split_document_into_chunks(doc, chunk_size=100, overlap=5)
             logger.info(f"Split document into {len(chunks)} chunks for analysis")
             
             all_content = []
