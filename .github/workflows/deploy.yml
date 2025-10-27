@@ -138,13 +138,20 @@ jobs:
 
     - name: Update Cognito OAuth settings
       run: |
-        # Update Cognito User Pool Client with correct callback URLs and OAuth settings
+        echo "Updating Cognito User Pool Client OAuth settings..."
+        
+        # Update with OAuth 2.0 settings enabled
         aws cognito-idp update-user-pool-client \
           --user-pool-id $USER_POOL_ID \
           --client-id $USER_POOL_CLIENT_ID \
           --callback-urls "https://${CLOUDFRONT_DOMAIN}" "https://${CLOUDFRONT_DOMAIN}/" \
           --logout-urls "https://${CLOUDFRONT_DOMAIN}" "https://${CLOUDFRONT_DOMAIN}/" \
-          --supported-identity-providers "COGNITO" || true
+          --supported-identity-providers "COGNITO" \
+          --allowed-o-auth-flows "code" \
+          --allowed-o-auth-scopes "openid" "email" "profile" \
+          --allowed-o-auth-flows-user-pool-client \
+          --explicit-auth-flows "ALLOW_USER_SRP_AUTH" "ALLOW_REFRESH_TOKEN_AUTH" \
+          || (echo "Note: OAuth settings update may have failed, continuing..." && true)
 
     - name: Generate config.json
       run: |
