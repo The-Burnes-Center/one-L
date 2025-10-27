@@ -102,10 +102,10 @@ jobs:
         COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`UserPoolDomainUrl`].OutputValue' --output text)
         
         # Get API Gateway URL
-        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' --output text)
+        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`MainApiUrl`].OutputValue' --output text)
         
         # Get WebSocket URL
-        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`WebSocketUrl`].OutputValue' --output text)
+        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`WebSocketApiUrl`].OutputValue' --output text)
         
         # Get website bucket name
         WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' --output text)
