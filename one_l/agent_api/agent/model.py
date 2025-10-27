@@ -44,6 +44,77 @@ _call_tracker = {
     'last_call_time': 0
 }
 
+def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
+    """
+    Split a document into chunks for better processing.
+    Uses simple paragraph slicing - each chunk becomes its own smaller document.
+    
+    Args:
+        doc: python-docx Document object
+        chunk_size: Number of paragraphs per chunk (~5 pages)
+        overlap: Number of paragraphs to overlap between chunks
+        
+    Returns:
+        List of (start_idx, end_idx, chunk_doc) tuples
+    """
+    from docx import Document
+    from docx.oxml import OxmlElement
+    import io
+    
+    chunks = []
+    total_paragraphs = len(doc.paragraphs)
+    start_idx = 0
+    chunk_num = 0
+    
+    while start_idx < total_paragraphs:
+        end_idx = min(start_idx + chunk_size, total_paragraphs)
+        
+        # Create a new minimal document structure
+        chunk_doc = Document()
+        
+        # Copy the essential document structure
+        chunk_doc.settings = doc.settings
+        if hasattr(doc, 'styles') and hasattr(doc.styles, '_document'):
+            chunk_doc.styles._document = doc.styles._document
+        
+        # Copy paragraphs
+        for i in range(start_idx, end_idx):
+            src_para = doc.paragraphs[i]
+            new_para = chunk_doc.add_paragraph()
+            # Copy the paragraph content
+            for run in src_para.runs:
+                new_run = new_para.add_run(run.text)
+                new_run.bold = run.bold
+                new_run.italic = run.italic
+                new_run.underline = run.underline
+                # Copy font properties if they exist
+                if run.font and run.font.color:
+                    from docx.shared import RGBColor
+                    if isinstance(run.font.color.rgb, tuple):
+                        new_run.font.color.rgb = RGBColor(*run.font.color.rgb)
+        
+        # Save to bytes
+        buffer = io.BytesIO()
+        chunk_doc.save(buffer)
+        chunk_bytes = buffer.getvalue()
+        
+        chunks.append({
+            'bytes': chunk_bytes,
+            'start_para': start_idx,
+            'end_para': end_idx,
+            'num_paragraphs': end_idx - start_idx,
+            'chunk_num': chunk_num
+        })
+        
+        chunk_num += 1
+        start_idx += chunk_size - overlap
+        
+        if start_idx >= total_paragraphs - overlap:
+            break
+    
+    return chunks
+
+
 class Model:
     """
     Handles document review using Claude 4 Sonnet thinking with tool calling.
@@ -85,7 +156,7 @@ class Model:
             # Extract and sanitize filename for document name
             filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
             
-            # Check document size - extract text to count paragraphs
+            # Check document size and decide whether to chunk
             try:
                 from docx import Document
                 import io
@@ -93,10 +164,10 @@ class Model:
                 total_paragraphs = len(doc.paragraphs)
                 logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
                 
-                # If document is very large (>150 paragraphs ≈ 7+ pages), add specific instruction to analyze all pages
-                if total_paragraphs > 150:
-                    logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Adding explicit page analysis instruction.")
-                    instruction_text = f"CRITICAL: This document has approximately {total_paragraphs//20} pages. You MUST analyze ALL pages, including pages 4-16. Do NOT stop after the first few pages."
+                # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
+                if total_paragraphs > 100:
+                    logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
+                    return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
                 else:
                     instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
             except Exception as e:
@@ -156,6 +227,120 @@ class Model:
             
         except Exception as e:
             logger.error(f"Error in document review: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "analysis": "",
+                "tool_results": [],
+                "usage": {},
+                "thinking": ""
+            }
+    
+    def _review_document_chunked(self, doc, document_data, document_s3_key: str, bucket_type: str, filename: str) -> Dict[str, Any]:
+        """
+        Review large documents by splitting into chunks and analyzing each separately.
+        This ensures Claude can see ALL pages of large documents.
+        
+        Args:
+            doc: python-docx Document object
+            document_data: Raw document bytes
+            document_s3_key: S3 key of the document
+            bucket_type: Type of source bucket
+            filename: Sanitized filename
+            
+        Returns:
+            Dictionary containing merged review results from all chunks
+        """
+        try:
+            logger.info(f"Starting chunked document review")
+            
+            # Split document into chunks
+            chunks = _split_document_into_chunks(doc, chunk_size=100, overlap=5)
+            logger.info(f"Split document into {len(chunks)} chunks for analysis")
+            
+            all_content = []
+            all_tool_results = []
+            all_conflicts = []
+            total_tokens_used = 0
+            
+            # Process each chunk
+            for chunk_info in chunks:
+                chunk_num = chunk_info['chunk_num']
+                start_para = chunk_info['start_para']
+                end_para = chunk_info['end_para']
+                chunk_bytes = chunk_info['bytes']
+                
+                logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (paragraphs {start_para}-{end_para})")
+                
+                # Create instruction for this specific chunk
+                approx_pages = f"(approximately pages {start_para//20}-{end_para//20})"
+                instruction_text = f"Analyze this vendor submission section {approx_pages}. Focus on this specific portion of the document. Find ALL conflicts in this section."
+                
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": instruction_text
+                            },
+                            {
+                                "document": {
+                                    "format": self._get_document_format(document_s3_key),
+                                    "name": f"{filename}_chunk_{chunk_num}",
+                                    "source": {
+                                        "bytes": chunk_bytes
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+                
+                # Analyze this chunk
+                response = self._call_claude_with_tools(messages)
+                
+                # Extract content
+                content = ""
+                if response.get("output", {}).get("message", {}).get("content"):
+                    for content_block in response["output"]["message"]["content"]:
+                        if content_block.get("text"):
+                            content += content_block["text"]
+                
+                all_content.append(content)
+                all_tool_results.append(response.get("tool_results", []))
+                
+                # Track usage
+                if response.get("usage"):
+                    total_tokens_used += response.get("usage", {}).get("totalTokens", 0)
+                
+                # Count conflicts in this chunk
+                try:
+                    conflicts = parse_conflicts_for_redlining(content)
+                    all_conflicts.extend(conflicts)
+                    logger.info(f"Found {len(conflicts)} conflicts in chunk {chunk_num + 1}")
+                except Exception as e:
+                    logger.warning(f"Error parsing conflicts from chunk {chunk_num + 1}: {str(e)}")
+            
+            # Merge all content
+            merged_content = "\n\n--- ANALYSIS CONTINUED FROM NEXT SECTION ---\n\n".join(all_content)
+            
+            # Log final summary
+            total_conflicts = len(all_conflicts)
+            _call_tracker['total_conflicts_detected'] += total_conflicts
+            
+            logger.info(f"CHUNKED DOCUMENT REVIEW COMPLETE - Total Chunks: {len(chunks)}, Total Conflicts: {total_conflicts}, Total Tokens Used: {total_tokens_used}")
+            
+            return {
+                "success": True,
+                "analysis": merged_content,
+                "tool_results": all_tool_results,
+                "usage": {"totalTokens": total_tokens_used},
+                "thinking": "",
+                "conflicts_count": total_conflicts
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in chunked document review: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
