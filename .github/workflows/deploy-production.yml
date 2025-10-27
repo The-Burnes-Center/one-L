@@ -72,6 +72,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         npm install -g aws-cdk
+        sudo apt-get update && sudo apt-get install -y jq
 
     # Skip CDK Deploy to avoid Cognito conflicts - only updating Lambda code
     # - name: CDK Diff
@@ -113,31 +114,43 @@ jobs:
       run: |
         # First, list ALL outputs to see what's available
         echo "=== Listing ALL CloudFormation Outputs ==="
+        aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output json > outputs.json
         aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
         
-        # Use the actual output keys from V2 stack (different from DV2)
+        # Use jq to extract values safely
         # Get website bucket name
-        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `WebsiteBucket`)].OutputValue' --output text | head -1)
+        WEBSITE_BUCKET=$(jq -r '.[] | select(.Key | contains("WebsiteBucket")) | .Value' outputs.json | head -1)
         
         # Get CloudFront distribution ID
-        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `CloudFrontDistributionId`)].OutputValue' --output text | head -1)
+        DISTRIBUTION_ID=$(jq -r '.[] | select(.Key | contains("CloudFrontDistributionId")) | .Value' outputs.json | head -1)
         
         # Get CloudFront domain name
-        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `CloudFrontDomain`)].OutputValue' --output text | head -1)
+        CLOUDFRONT_DOMAIN=$(jq -r '.[] | select(.Key | contains("CloudFrontDomain")) | .Value' outputs.json | head -1)
         
         # Get Cognito domain
-        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `UserPoolDomain`)].OutputValue' --output text | head -1)
+        COGNITO_DOMAIN=$(jq -r '.[] | select(.Key | contains("UserPoolDomain")) | .Value' outputs.json | head -1)
         
         # Get API Gateway URL
-        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `ApiUrl`)].OutputValue' --output text | head -1)
+        API_GATEWAY_URL=$(jq -r '.[] | select(.Key | contains("ApiUrl")) | .Value' outputs.json | head -1)
         
         # Get WebSocket URL
-        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `WebSocket`)].OutputValue' --output text | head -1)
+        WEBSOCKET_URL=$(jq -r '.[] | select(.Key | contains("WebSocket")) | .Value' outputs.json | head -1)
         
         # Get Cognito User Pool ID and Client ID
-        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `UserPoolId`)].OutputValue' --output text | head -1)
-        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `UserPoolClientId`)].OutputValue' --output text | head -1)
+        USER_POOL_ID=$(jq -r '.[] | select(.Key | contains("UserPoolId")) | .Value' outputs.json | head -1)
+        USER_POOL_CLIENT_ID=$(jq -r '.[] | select(.Key | contains("UserPoolClientId")) | .Value' outputs.json | head -1)
         
+        # Debug output BEFORE setting environment variables
+        echo "=== Debug: Retrieved Values ==="
+        echo "WEBSITE_BUCKET: ${WEBSITE_BUCKET}"
+        echo "CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DOMAIN}"
+        echo "COGNITO_DOMAIN: ${COGNITO_DOMAIN}"
+        echo "API_GATEWAY_URL: ${API_GATEWAY_URL}"
+        echo "WEBSOCKET_URL: ${WEBSOCKET_URL}"
+        echo "USER_POOL_ID: ${USER_POOL_ID}"
+        echo "USER_POOL_CLIENT_ID: ${USER_POOL_CLIENT_ID}"
+        
+        # Set environment variables
         echo "DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> $GITHUB_ENV
         echo "CLOUDFRONT_DOMAIN=${CLOUDFRONT_DOMAIN}" >> $GITHUB_ENV
         echo "COGNITO_DOMAIN=${COGNITO_DOMAIN}" >> $GITHUB_ENV
@@ -146,13 +159,6 @@ jobs:
         echo "WEBSITE_BUCKET=${WEBSITE_BUCKET}" >> $GITHUB_ENV
         echo "USER_POOL_ID=${USER_POOL_ID}" >> $GITHUB_ENV
         echo "USER_POOL_CLIENT_ID=${USER_POOL_CLIENT_ID}" >> $GITHUB_ENV
-        
-        # Debug output
-        echo "=== Debug: Stack Output Values ==="
-        echo "WEBSITE_BUCKET: ${WEBSITE_BUCKET}"
-        echo "COGNITO_DOMAIN: ${COGNITO_DOMAIN}"
-        echo "API_GATEWAY_URL: ${API_GATEWAY_URL}"
-        echo "CloudFront Domain: ${CLOUDFRONT_DOMAIN}"
         
         echo "Stack outputs retrieved successfully"
 
