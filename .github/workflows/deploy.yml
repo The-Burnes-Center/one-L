@@ -148,19 +148,14 @@ jobs:
 
     - name: Generate config.json
       run: |
-        # Extract Cognito domain prefix from the full URL
-        # COGNITO_DOMAIN format: https://onel-dv2-one-l-auth-dv2.auth.us-east-1.amazoncognito.com
-        # Extract the domain prefix (onel-dv2-one-l-auth-dv2)
-        COGNITO_DOMAIN_PREFIX=$(echo $COGNITO_DOMAIN | sed 's|https://||' | sed 's|\.auth\.us-east-1\.amazoncognito\.com||')
-        
         # Create config.json with proper Cognito domain format
-        # Use the domain prefix (not full URL) for userPoolDomain field
+        # Use the FULL domain URL for userPoolDomain field (not just the prefix)
         config_data=$(cat <<EOF
         {
           "apiGatewayUrl": "${API_GATEWAY_URL}",
           "userPoolId": "${USER_POOL_ID}",
           "userPoolClientId": "${USER_POOL_CLIENT_ID}",
-          "userPoolDomain": "${COGNITO_DOMAIN_PREFIX}",
+          "userPoolDomain": "${COGNITO_DOMAIN}",
           "region": "us-east-1",
           "stackName": "OneL-DV2",
           "knowledgeManagementUploadEndpointUrl": "${API_GATEWAY_URL}knowledge_management/upload",
