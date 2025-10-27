@@ -85,12 +85,30 @@ class Model:
             # Extract and sanitize filename for document name
             filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
             
+            # Check document size - extract text to count paragraphs
+            try:
+                from docx import Document
+                import io
+                doc = Document(io.BytesIO(document_data))
+                total_paragraphs = len(doc.paragraphs)
+                logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
+                
+                # If document is very large (>150 paragraphs ≈ 7+ pages), add specific instruction to analyze all pages
+                if total_paragraphs > 150:
+                    logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Adding explicit page analysis instruction.")
+                    instruction_text = f"CRITICAL: This document has approximately {total_paragraphs//20} pages. You MUST analyze ALL pages, including pages 4-16. Do NOT stop after the first few pages."
+                else:
+                    instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+            except Exception as e:
+                logger.warning(f"Could not pre-analyze document structure: {e}")
+                instruction_text = "Please analyze this vendor submission document completely."
+            
             messages = [
                 {
                     "role": "user",
                     "content": [
                         {
-                            "text": "Please analyze this vendor submission document."
+                            "text": instruction_text
                         },
                         {
                             "document": {
