@@ -115,27 +115,28 @@ jobs:
         echo "=== Listing ALL CloudFormation Outputs ==="
         aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
         
+        # Use the actual output keys from V2 stack (different from DV2)
+        # Get website bucket name
+        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `WebsiteBucket`)].OutputValue' --output text | head -1)
+        
         # Get CloudFront distribution ID
-        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDistributionId8824EC56`].OutputValue' --output text)
+        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `CloudFrontDistributionId`)].OutputValue' --output text | head -1)
         
         # Get CloudFront domain name
-        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDomainName896373DA`].OutputValue' --output text)
+        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `CloudFrontDomain`)].OutputValue' --output text | head -1)
         
         # Get Cognito domain
-        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolDomainUrl533E5574`].OutputValue' --output text)
+        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `UserPoolDomain`)].OutputValue' --output text | head -1)
         
         # Get API Gateway URL
-        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayMainApiUrl65B78421`].OutputValue' --output text)
+        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `ApiUrl`)].OutputValue' --output text | head -1)
         
         # Get WebSocket URL
-        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AgentApiFunctionsWebSocketWebSocketApiUrl63196B11`].OutputValue' --output text)
-        
-        # Get website bucket name
-        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceWebsiteBucketNameEE842B3A`].OutputValue' --output text)
+        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `WebSocket`)].OutputValue' --output text | head -1)
         
         # Get Cognito User Pool ID and Client ID
-        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolId47D46FEF`].OutputValue' --output text)
-        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolClientId24468C3D`].OutputValue' --output text)
+        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `UserPoolId`)].OutputValue' --output text | head -1)
+        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?contains(OutputKey, `UserPoolClientId`)].OutputValue' --output text | head -1)
         
         echo "DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> $GITHUB_ENV
         echo "CLOUDFRONT_DOMAIN=${CLOUDFRONT_DOMAIN}" >> $GITHUB_ENV
