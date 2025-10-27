@@ -229,6 +229,30 @@ class UserInterfaceConstruct(Construct):
     def create_outputs(self):
         """Create CloudFormation outputs."""
         
+        # Website Bucket Name
+        CfnOutput(
+            self, "WebsiteBucketName",
+            value=self.website_bucket.bucket_name,
+            description="S3 bucket name for website",
+            export_name=f"{self._stack_name}-WebsiteBucketName"
+        )
+        
+        # CloudFront Distribution ID
+        CfnOutput(
+            self, "CloudFrontDistributionId",
+            value=self.cloudfront_distribution.distribution_id,
+            description="CloudFront Distribution ID",
+            export_name=f"{self._stack_name}-CloudFrontDistributionId"
+        )
+        
+        # CloudFront Domain Name
+        CfnOutput(
+            self, "CloudFrontDomainName",
+            value=self.cloudfront_distribution.distribution_domain_name,
+            description="CloudFront Distribution Domain Name",
+            export_name=f"{self._stack_name}-CloudFrontDomainName"
+        )
+        
         # Website URL
         CfnOutput(
             self, "WebsiteUrl",
