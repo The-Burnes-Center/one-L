@@ -877,7 +877,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         # Check if ultra-normalized search text is in ultra-normalized paragraph
         if ultra_normalized_search in ultra_normalized_para:
             logger.info(f"TIER0_MATCH: Found ultra-normalized match in paragraph {para_idx}")
-            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+            _apply_redline_to_paragraph(paragraph, para_text, redline_item)
             return {'para_idx': para_idx, 'matched_text': 'ultra_normalized_match'}
         
         # NEW: Try sentence-level matching within paragraphs
@@ -889,19 +889,19 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             # Check if search text matches this sentence
             if ultra_normalized_search in ultra_normalized_sentence:
                 logger.info(f"TIER0_SENTENCE_MATCH: Found sentence-level match in paragraph {para_idx}, sentence {sentence_idx}")
-                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                _apply_redline_to_paragraph(paragraph, sentence, redline_item)
                 return {'para_idx': para_idx, 'matched_text': 'sentence_match'}
             
             # Try word sequence matching within sentences
             if len(search_words) >= 3 and find_word_sequence_match(search_words, sentence_words):
                 logger.info(f"TIER0_SENTENCE_WORDS: Found sentence word sequence match in paragraph {para_idx}, sentence {sentence_idx}")
-                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                _apply_redline_to_paragraph(paragraph, sentence, redline_item)
                 return {'para_idx': para_idx, 'matched_text': 'sentence_word_sequence'}
         
         # Try word sequence matching at paragraph level
         if len(search_words) >= 3 and find_word_sequence_match(search_words, para_words):
             logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}")
-            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+            _apply_redline_to_paragraph(paragraph, para_text, redline_item)
             return {'para_idx': para_idx, 'matched_text': 'word_sequence_match'}
         
         # Try partial word matching (at least 70% of meaningful words match)
@@ -909,7 +909,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
             if word_matches / len(search_words) >= 0.7:
                 logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}")
-                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                _apply_redline_to_paragraph(paragraph, para_text, redline_item)
                 return {'para_idx': para_idx, 'matched_text': 'word_partial_match'}
     
     return None
@@ -1211,12 +1211,39 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
     """Apply redline formatting to specific text within a paragraph."""
     
     try:
-        # Clear existing runs and rebuild with redlined text
         paragraph_text = paragraph.text
         
-        # Find the position of conflict text
+        # Try multiple approaches to find the conflict text
+        start_pos = -1
+        actual_conflict_text = conflict_text
+        
+        # Approach 1: Exact match
         start_pos = paragraph_text.find(conflict_text)
+        if start_pos != -1:
+            actual_conflict_text = conflict_text
+        else:
+            # Approach 2: Case-insensitive match
+            start_pos = paragraph_text.lower().find(conflict_text.lower())
+            if start_pos != -1:
+                actual_conflict_text = paragraph_text[start_pos:start_pos + len(conflict_text)]
+            else:
+                # Approach 3: Try with normalized text variations
+                normalized_conflict = re.sub(r'[^\w\s]', ' ', conflict_text).strip()
+                normalized_para = re.sub(r'[^\w\s]', ' ', paragraph_text).strip()
+                
+                start_pos = normalized_para.lower().find(normalized_conflict.lower())
+                if start_pos != -1:
+                    # Find the actual text in the original paragraph
+                    # This is approximate - we'll highlight a reasonable portion
+                    actual_conflict_text = conflict_text[:50] + "..." if len(conflict_text) > 50 else conflict_text
+                    start_pos = paragraph_text.lower().find(actual_conflict_text.lower())
+                    if start_pos == -1:
+                        # Last resort: highlight the entire paragraph
+                        actual_conflict_text = paragraph_text
+                        start_pos = 0
+        
         if start_pos == -1:
+            logger.warning(f"Could not find conflict text '{conflict_text[:50]}...' in paragraph")
             return
             
         # Clear all runs
@@ -1229,11 +1256,11 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             run = paragraph.add_run(before_text)
         
         # Add conflict text with red strikethrough formatting (redlined)
-        conflict_run = paragraph.add_run(conflict_text)
+        conflict_run = paragraph.add_run(actual_conflict_text)
         conflict_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
         conflict_run.font.strike = True  # Strikethrough for redlining
         
-        # Add comment to the specific conflict text run (not entire paragraph)
+        # Add comment to the specific conflict text run
         comment = redline_item.get('comment', '')
         if comment:
             author = "One L"
@@ -1241,12 +1268,12 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             conflict_run.add_comment(comment, author=author, initials=initials)
         
         # Add text after conflict (normal formatting)
-        end_pos = start_pos + len(conflict_text)
+        end_pos = start_pos + len(actual_conflict_text)
         if end_pos < len(paragraph_text):
             after_text = paragraph_text[end_pos:]
             run = paragraph.add_run(after_text)
-            
-
+        
+        logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' in paragraph")
         
     except Exception as e:
         logger.error(f"Error applying redline to paragraph: {str(e)}")
