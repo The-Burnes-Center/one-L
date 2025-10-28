@@ -195,10 +195,13 @@ class PDFProcessor:
                 if not conflict_text:
                     continue
                 
-                # Find the conflict in the PDF
+                # Find the conflict in the PDF - use position_mapping if available
+                matches = []
                 if position_mapping and conflict_text in position_mapping:
                     matches = position_mapping[conflict_text]
+                    logger.info(f"PDF_ANNOTATION: Using cached matches for conflict: {len(matches)} matches")
                 else:
+                    logger.warning(f"PDF_ANNOTATION: No cached matches found for conflict, searching again")
                     matches = self.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
                 
                 # Group annotations by page
@@ -228,19 +231,20 @@ class PDFProcessor:
                         for item in annotations
                     ])
                     
-                    # Create annotation
+                    # Create annotation using PyMuPDF text annotation
                     # Use position from first match or default to top-left
                     x = annotations[0].get('x', 50)
                     y = annotations[0].get('y', 750)
                     
-                    # Create rectangular area for annotation
-                    rect = fitz.Rect(x, y, x + 200, y + 100)
+                    # Create point for annotation
+                    point = fitz.Point(x, y)
                     
-                    # Add sticky note annotation
-                    annot = page.add_sticky_note(rect.tl, icon="note", color=(1, 0, 0))  # Red sticky note
+                    # Add text annotation (note-like popup)
+                    annot = page.add_text_annot(point, "Legal-AI Conflict")
                     
-                    # Set annotation content
+                    # Set annotation content and appearance
                     annot.set_info(title="Legal-AI Conflict", content=combined_comment)
+                    annot.set_colors(stroke=(1, 0, 0))  # Red color
                     annot.update()
                     
                     logger.info(f"PDF_ANNOTATION_ADDED: Page {page_num} with {len(annotations)} conflicts")
