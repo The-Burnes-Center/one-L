@@ -654,25 +654,25 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             remaining_conflicts = []
             
             for redline_item in unmatched_conflicts:
-            vendor_conflict_text = redline_item.get('text', '').strip()
-            if not vendor_conflict_text:
-                continue
+                vendor_conflict_text = redline_item.get('text', '').strip()
+                if not vendor_conflict_text:
+                    continue
+                    
+                # Enhanced logging: Track each conflict attempt
+                conflict_id = redline_item.get('id', 'Unknown')
+                source_doc = redline_item.get('source_doc', 'Unknown')
+                logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+                    
+                found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
                 
-            # Enhanced logging: Track each conflict attempt
-            conflict_id = redline_item.get('id', 'Unknown')
-            source_doc = redline_item.get('source_doc', 'Unknown')
-            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
-                
-            found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
-            
-            if found_match:
-                matches_found += 1
-                if found_match['para_idx'] not in paragraphs_with_redlines:
-                    paragraphs_with_redlines.append(found_match['para_idx'])
-                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
-            else:
-                remaining_conflicts.append(redline_item)
-                logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                if found_match:
+                    matches_found += 1
+                    if found_match['para_idx'] not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(found_match['para_idx'])
+                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
+                else:
+                    remaining_conflicts.append(redline_item)
+                    logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
