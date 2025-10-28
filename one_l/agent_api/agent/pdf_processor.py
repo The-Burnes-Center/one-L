@@ -146,12 +146,48 @@ class PDFProcessor:
                         normalized_page = self._normalize_text(page_text)
                         
                         if normalized_search in normalized_page:
-                            matches.append({
-                                'page_number': page_num + 1,
-                                'position': None,  # Fuzzy match, no exact position
-                                'text': search_text,
-                                'fuzzy_match': True
-                            })
+                            # Try to find the first word of the search text to get approximate position
+                            words = search_text.split()
+                            if words:
+                                first_word = words[0]
+                                word_instances = page.search_for(first_word, flags=fitz.TEXT_DEHYPHENATE)
+                                
+                                if word_instances:
+                                    # Use the first occurrence of the first word
+                                    rect = word_instances[0]
+                                    matches.append({
+                                        'page_number': page_num + 1,
+                                        'position': rect,
+                                        'text': search_text,
+                                        'x': rect.x0,
+                                        'y': rect.y0,
+                                        'fuzzy_match': True
+                                    })
+                                else:
+                                    # Fallback: try any word in the search text
+                                    for word in words[:5]:  # Try first 5 words
+                                        word_instances = page.search_for(word, flags=fitz.TEXT_DEHYPHENATE)
+                                        if word_instances:
+                                            rect = word_instances[0]
+                                            matches.append({
+                                                'page_number': page_num + 1,
+                                                'position': rect,
+                                                'text': search_text,
+                                                'x': rect.x0,
+                                                'y': rect.y0,
+                                                'fuzzy_match': True
+                                            })
+                                            break
+                                    else:
+                                        # Last resort: add annotation at top-left of page
+                                        matches.append({
+                                            'page_number': page_num + 1,
+                                            'position': None,
+                                            'text': search_text,
+                                            'x': 50,
+                                            'y': 50,
+                                            'fuzzy_match': True
+                                        })
                         
                 except Exception as page_error:
                     logger.warning(f"Error searching page {page_num + 1}: {page_error}")
@@ -220,6 +256,21 @@ class PDFProcessor:
                         'y': match.get('y', 750)
                     })
             
+            # Log summary before adding annotations
+            logger.info(f"PDF_ANNOTATION_SUMMARY: {len(conflicts)} conflicts processed, {len(page_annotations)} pages will have annotations")
+            
+            if not page_annotations:
+                logger.warning(f"PDF_ANNOTATION_WARNING: No page annotations created - conflicts may not have been found in PDF")
+                # Add a warning annotation to the first page if no matches found
+                if len(doc) > 0:
+                    page = doc[0]
+                    point = fitz.Point(50, 50)
+                    annot = page.add_text_annot(point, "Legal-AI: Conflicts Detected")
+                    annot.set_info(title="Legal-AI Conflict Detection", content=f"AI detected {len(conflicts)} conflicts but exact text matches could not be found in PDF. Check the analysis report for details.")
+                    annot.set_colors(stroke=(1, 0, 0))
+                    annot.update()
+                    logger.info("PDF_ANNOTATION: Added warning annotation to first page")
+            
             # Add annotations to pages
             for page_num, annotations in page_annotations.items():
                 try:
@@ -235,6 +286,8 @@ class PDFProcessor:
                     # Use position from first match or default to top-left
                     x = annotations[0].get('x', 50)
                     y = annotations[0].get('y', 750)
+                    
+                    logger.info(f"PDF_ANNOTATION: Adding annotation to page {page_num} at position ({x}, {y})")
                     
                     # Create point for annotation
                     point = fitz.Point(x, y)

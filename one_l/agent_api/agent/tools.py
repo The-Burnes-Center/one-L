@@ -413,8 +413,11 @@ def _redline_pdf_document(
             conflict_text = conflict.get('text', '').strip()
             if conflict_text:
                 matches = pdf_processor.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
+                logger.info(f"PDF_REDLINE: Conflict text '{conflict_text[:50]}...' -> {len(matches)} matches")
                 if matches:
                     position_mapping[conflict_text] = matches
+                else:
+                    logger.warning(f"PDF_REDLINE: NO MATCHES found for conflict: '{conflict_text[:100]}...'")
         
         # Create redlined PDF
         redlined_pdf = pdf_processor.redline_pdf(pdf_bytes, redline_items, position_mapping)
