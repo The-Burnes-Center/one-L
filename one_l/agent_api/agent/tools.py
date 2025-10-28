@@ -814,7 +814,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
 
 
 def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 0: Ultra-aggressive matching for the most difficult cases."""
+    """TIER 0: Ultra-aggressive matching with sentence-level search."""
     
     def ultra_normalize_text(text):
         """Ultra-aggressive text normalization."""
@@ -852,6 +852,12 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         
         return False
     
+    def extract_sentences_from_paragraph(para_text):
+        """Extract individual sentences from a paragraph."""
+        # Split on sentence boundaries but be careful with abbreviations
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', para_text)
+        return [s.strip() for s in sentences if s.strip()]
+    
     # Ultra-normalize the search text
     ultra_normalized_search = ultra_normalize_text(vendor_conflict_text)
     search_words = extract_meaningful_words(ultra_normalized_search)
@@ -874,7 +880,25 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
             return {'para_idx': para_idx, 'matched_text': 'ultra_normalized_match'}
         
-        # Try word sequence matching
+        # NEW: Try sentence-level matching within paragraphs
+        sentences = extract_sentences_from_paragraph(para_text)
+        for sentence_idx, sentence in enumerate(sentences):
+            ultra_normalized_sentence = ultra_normalize_text(sentence)
+            sentence_words = extract_meaningful_words(ultra_normalized_sentence)
+            
+            # Check if search text matches this sentence
+            if ultra_normalized_search in ultra_normalized_sentence:
+                logger.info(f"TIER0_SENTENCE_MATCH: Found sentence-level match in paragraph {para_idx}, sentence {sentence_idx}")
+                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                return {'para_idx': para_idx, 'matched_text': 'sentence_match'}
+            
+            # Try word sequence matching within sentences
+            if len(search_words) >= 3 and find_word_sequence_match(search_words, sentence_words):
+                logger.info(f"TIER0_SENTENCE_WORDS: Found sentence word sequence match in paragraph {para_idx}, sentence {sentence_idx}")
+                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                return {'para_idx': para_idx, 'matched_text': 'sentence_word_sequence'}
+        
+        # Try word sequence matching at paragraph level
         if len(search_words) >= 3 and find_word_sequence_match(search_words, para_words):
             logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}")
             _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
@@ -924,6 +948,12 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
     # Enhanced logging for debugging
     logger.info(f"TIER1_SEARCH: Looking for '{vendor_conflict_text[:50]}...' with {len(text_variations)} variations")
     
+    def extract_sentences_from_paragraph(para_text):
+        """Extract individual sentences from a paragraph."""
+        # Split on sentence boundaries but be careful with abbreviations
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', para_text)
+        return [s.strip() for s in sentences if s.strip()]
+    
     # Search through all paragraphs for exact vendor conflict text
     for para_idx, paragraph in enumerate(doc.paragraphs):
         para_text = paragraph.text.strip()
@@ -949,6 +979,21 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                 actual_text = para_text[start_idx:start_idx + len(text_variant)]
                 _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
                 return {'para_idx': para_idx, 'matched_text': actual_text}
+            
+            # NEW: Try sentence-level matching within paragraphs
+            sentences = extract_sentences_from_paragraph(para_text)
+            for sentence_idx, sentence in enumerate(sentences):
+                if text_variant in sentence:
+                    logger.info(f"TIER1_SENTENCE_MATCH: Found sentence-level exact match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}")
+                    _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
+                    return {'para_idx': para_idx, 'matched_text': text_variant}
+                
+                elif text_variant.lower() in sentence.lower():
+                    logger.info(f"TIER1_SENTENCE_CASE_MATCH: Found sentence-level case-insensitive match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}")
+                    start_idx = sentence.lower().find(text_variant.lower())
+                    actual_text = sentence[start_idx:start_idx + len(text_variant)]
+                    _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
+                    return {'para_idx': para_idx, 'matched_text': actual_text}
     
     return None
 
