@@ -117,28 +117,39 @@ jobs:
         aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output json > outputs.json
         aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
         
-        # Use jq to extract values safely
-        # Get website bucket name
-        WEBSITE_BUCKET=$(jq -r '.[] | select(.Key | contains("WebsiteBucket")) | .Value' outputs.json | head -1)
+        # Extract values using actual output key names from V2 stack (not DV2!)
+        # Get Cognito values
+        COGNITO_DOMAIN=$(jq -r '.[] | select(.Key == "AuthorizationUserPoolDomainUrl533E5574") | .Value' outputs.json)
+        USER_POOL_ID=$(jq -r '.[] | select(.Key == "AuthorizationUserPoolId47D46FEF") | .Value' outputs.json)
+        USER_POOL_CLIENT_ID=$(jq -r '.[] | select(.Key == "AuthorizationUserPoolClientId24468C3D") | .Value' outputs.json)
         
-        # Get CloudFront distribution ID
-        DISTRIBUTION_ID=$(jq -r '.[] | select(.Key | contains("CloudFrontDistributionId")) | .Value' outputs.json | head -1)
+        # Get API Gateway and WebSocket
+        API_GATEWAY_URL=$(jq -r '.[] | select(.Key == "ApiGatewayMainApiUrl65B78421") | .Value' outputs.json)
+        WEBSOCKET_URL=$(jq -r '.[] | select(.Key == "AgentApiFunctionsWebSocketWebSocketApiUrl63196B11") | .Value' outputs.json)
         
-        # Get CloudFront domain name
-        CLOUDFRONT_DOMAIN=$(jq -r '.[] | select(.Key | contains("CloudFrontDomain")) | .Value' outputs.json | head -1)
+        # Get CloudFront URL and extract domain
+        CLOUDFRONT_FULL_URL=$(jq -r '.[] | select(.Key == "UserInterfaceWebsiteUrlE8AF1FB6") | .Value' outputs.json)
+        CLOUDFRONT_DOMAIN=$(echo $CLOUDFRONT_FULL_URL | sed 's|https://||')
         
-        # Get Cognito domain
-        COGNITO_DOMAIN=$(jq -r '.[] | select(.Key | contains("UserPoolDomain")) | .Value' outputs.json | head -1)
+        # Find CloudFront distribution ID from the domain
+        DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?DomainName=='${CLOUDFRONT_DOMAIN}'].Id" --output text)
         
-        # Get API Gateway URL
-        API_GATEWAY_URL=$(jq -r '.[] | select(.Key | contains("ApiUrl")) | .Value' outputs.json | head -1)
+        # Find the origin bucket for this CloudFront distribution
+        echo "Finding bucket for CloudFront distribution: $DISTRIBUTION_ID"
+        ORIGIN_BUCKET=$(aws cloudfront get-distribution --id $DISTRIBUTION_ID --query 'Distribution.DistributionConfig.Origins.Items[0].DomainName' --output text 2>/dev/null | sed 's/.s3.amazonaws.com//' | sed 's/.s3.us-east-1.amazonaws.com//' || echo "")
         
-        # Get WebSocket URL
-        WEBSOCKET_URL=$(jq -r '.[] | select(.Key | contains("WebSocket")) | .Value' outputs.json | head -1)
-        
-        # Get Cognito User Pool ID and Client ID
-        USER_POOL_ID=$(jq -r '.[] | select(.Key | contains("UserPoolId")) | .Value' outputs.json | head -1)
-        USER_POOL_CLIENT_ID=$(jq -r '.[] | select(.Key | contains("UserPoolClientId")) | .Value' outputs.json | head -1)
+        if [ -n "$ORIGIN_BUCKET" ]; then
+          WEBSITE_BUCKET=$ORIGIN_BUCKET
+          echo "Found origin bucket: $WEBSITE_BUCKET"
+        else
+          # Fallback: try common bucket naming patterns
+          echo "Could not auto-detect bucket, trying common patterns..."
+          WEBSITE_BUCKET=$(aws s3 ls | grep -E "onel.*website|onel-v2-website" | awk '{print $3}' | head -1)
+          if [ -z "$WEBSITE_BUCKET" ]; then
+            echo "ERROR: Could not find website bucket!"
+            exit 1
+          fi
+        fi
         
         # Debug output BEFORE setting environment variables
         echo "=== Debug: Retrieved Values ==="
