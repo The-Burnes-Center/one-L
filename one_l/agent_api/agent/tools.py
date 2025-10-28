@@ -592,6 +592,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     Apply redlining to document by highlighting conflict text in red.
     Multi-tier search strategy for maximum conflict detection accuracy.
     Now processes both paragraphs and tables for comprehensive coverage.
+    Enhanced with additional conflict detection strategies.
     
     Args:
         doc: python-docx Document object
@@ -615,10 +616,22 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         logger.info(f"DOCUMENT_STRUCTURE: Total pages estimated: {total_paragraphs // 20}")  # Rough estimate
         logger.info(f"REDLINE_ITEMS: Processing {len(redline_items)} conflicts")
         
+        # ENHANCEMENT 1: Generate additional conflict variations
+        enhanced_redline_items = _generate_conflict_variations(redline_items)
+        logger.info(f"ENHANCEMENT: Generated {len(enhanced_redline_items)} total conflicts (including variations)")
+        
+        # ENHANCEMENT 2: Cross-reference matching for related concepts
+        cross_reference_items = _generate_cross_reference_conflicts(enhanced_redline_items)
+        logger.info(f"ENHANCEMENT: Generated {len(cross_reference_items)} cross-reference conflicts")
+        
+        # Combine all conflicts for processing
+        all_conflicts = enhanced_redline_items + cross_reference_items
+        logger.info(f"ENHANCEMENT: Processing {len(all_conflicts)} total conflicts (original + variations + cross-references)")
+        
 
         
         # Track unmatched conflicts across tiers
-        unmatched_conflicts = redline_items.copy()
+        unmatched_conflicts = all_conflicts.copy()
         
         # TIER 0: Ultra-aggressive matching for difficult cases
         remaining_conflicts = []
@@ -683,8 +696,16 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                         paragraphs_with_redlines.append(found_match['para_idx'])
                     logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
                 else:
-                    remaining_conflicts.append(redline_item)
-                    logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                    # Try semantic similarity matching before giving up
+                    semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
+                    if semantic_result:
+                        matches_found += 1
+                        if semantic_result['para_idx'] not in paragraphs_with_redlines:
+                            paragraphs_with_redlines.append(semantic_result['para_idx'])
+                        logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={semantic_result['para_idx']}, Page≈{semantic_result['para_idx'] // 20}")
+                    else:
+                        remaining_conflicts.append(redline_item)
+                        logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
@@ -1010,6 +1031,190 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                         logger.info(f"TIER0_TABLE_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in table {table_idx}, cell ({row_idx},{cell_idx})")
                         _apply_redline_to_table_cell(cell, cell_text, redline_item)
                         return {'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_partial_match'}
+    
+    return None
+
+
+def _generate_conflict_variations(redline_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Generate additional conflict variations to catch more matches."""
+    enhanced_items = []
+    
+    for item in redline_items:
+        # Add original item
+        enhanced_items.append(item)
+        
+        text = item.get('text', '').strip()
+        if not text:
+            continue
+            
+        # Variation 1: Remove quotes and normalize punctuation
+        normalized_text = re.sub(r'["""''`]', '"', text)
+        normalized_text = re.sub(r'[–—]', '-', normalized_text)
+        if normalized_text != text:
+            enhanced_items.append({
+                **item,
+                'text': normalized_text,
+                'variation_type': 'punctuation_normalized'
+            })
+        
+        # Variation 2: Remove common prefixes/suffixes
+        prefixes_to_remove = ['SMX ', 'The ', 'Our ', 'We ', 'This ', 'These ']
+        for prefix in prefixes_to_remove:
+            if text.startswith(prefix):
+                shortened_text = text[len(prefix):].strip()
+                if len(shortened_text) > 20:  # Only if meaningful length remains
+                    enhanced_items.append({
+                        **item,
+                        'text': shortened_text,
+                        'variation_type': f'prefix_removed_{prefix.strip()}'
+                    })
+        
+        # Variation 3: Extract key phrases (sentences)
+        sentences = re.split(r'[.!?]+', text)
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) > 30 and sentence != text:  # Meaningful sentence, not the whole text
+                enhanced_items.append({
+                    **item,
+                    'text': sentence,
+                    'variation_type': 'sentence_extract'
+                })
+        
+        # Variation 4: Remove parenthetical content
+        no_parentheses = re.sub(r'\([^)]*\)', '', text).strip()
+        if no_parentheses != text and len(no_parentheses) > 20:
+            enhanced_items.append({
+                **item,
+                'text': no_parentheses,
+                'variation_type': 'parentheses_removed'
+            })
+        
+        # Variation 5: Extract numbers and key terms
+        numbers_and_terms = re.findall(r'\b\d+(?:\.\d+)?%?\b|\b(?:SLA|API|AWS|Azure|GCP|HIPAA|FedRAMP|SOC2|ISO|NIST)\b', text)
+        if numbers_and_terms and len(' '.join(numbers_and_terms)) > 10:
+            enhanced_items.append({
+                **item,
+                'text': ' '.join(numbers_and_terms),
+                'variation_type': 'key_terms_extract'
+            })
+    
+    return enhanced_items
+
+
+def _generate_cross_reference_conflicts(redline_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Generate cross-reference conflicts for related concepts."""
+    cross_reference_items = []
+    
+    # Define concept mappings for related terms
+    concept_mappings = {
+        'security': ['security', 'compliance', 'certification', 'audit', 'vulnerability', 'patch', 'encryption'],
+        'availability': ['uptime', 'availability', 'downtime', 'maintenance', 'SLA', 'service level'],
+        'support': ['support', 'service', 'response', 'resolution', 'escalation', 'tier'],
+        'data': ['data', 'information', 'storage', 'backup', 'retention', 'privacy'],
+        'network': ['network', 'connectivity', 'VPN', 'firewall', 'routing', 'bandwidth'],
+        'cloud': ['cloud', 'AWS', 'Azure', 'GCP', 'infrastructure', 'platform'],
+        'access': ['access', 'authentication', 'authorization', 'RBAC', 'identity', 'user']
+    }
+    
+    for item in redline_items:
+        text = item.get('text', '').lower()
+        if not text:
+            continue
+            
+        # Find related concepts
+        for concept, keywords in concept_mappings.items():
+            if any(keyword in text for keyword in keywords):
+                # Generate variations with related terms
+                for related_concept, related_keywords in concept_mappings.items():
+                    if related_concept != concept:
+                        for keyword in related_keywords:
+                            if keyword not in text:
+                                # Create a variation with the related term
+                                variation_text = text.replace(concept, related_concept)
+                                if variation_text != text:
+                                    cross_reference_items.append({
+                                        **item,
+                                        'text': variation_text,
+                                        'variation_type': f'cross_reference_{concept}_to_{related_concept}'
+                                    })
+    
+    return cross_reference_items
+
+
+def _tier1_5_semantic_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 1.5: Semantic similarity matching for related concepts."""
+    
+    def extract_key_concepts(text):
+        """Extract key concepts from text."""
+        # Extract technical terms, numbers, and important phrases
+        concepts = []
+        
+        # Technical terms
+        tech_terms = re.findall(r'\b(?:SLA|API|AWS|Azure|GCP|HIPAA|FedRAMP|SOC2|ISO|NIST|RBAC|VPN|SIEM|IDS|IPS)\b', text, re.IGNORECASE)
+        concepts.extend(tech_terms)
+        
+        # Numbers and percentages
+        numbers = re.findall(r'\b\d+(?:\.\d+)?%?\b', text)
+        concepts.extend(numbers)
+        
+        # Important phrases (3+ words)
+        phrases = re.findall(r'\b\w+(?:\s+\w+){2,}\b', text)
+        concepts.extend([p for p in phrases if len(p) > 10])
+        
+        return list(set(concepts))
+    
+    def calculate_concept_similarity(concepts1, concepts2):
+        """Calculate similarity between two sets of concepts."""
+        if not concepts1 or not concepts2:
+            return 0
+        
+        # Convert to lowercase for comparison
+        concepts1_lower = [c.lower() for c in concepts1]
+        concepts2_lower = [c.lower() for c in concepts2]
+        
+        # Calculate Jaccard similarity
+        intersection = len(set(concepts1_lower) & set(concepts2_lower))
+        union = len(set(concepts1_lower) | set(concepts2_lower))
+        
+        return intersection / union if union > 0 else 0
+    
+    # Extract concepts from the conflict text
+    conflict_concepts = extract_key_concepts(vendor_conflict_text)
+    logger.info(f"TIER1_5_SEMANTIC: Extracted {len(conflict_concepts)} concepts from conflict text")
+    
+    if not conflict_concepts:
+        return None
+    
+    best_match = None
+    best_similarity = 0
+    
+    # Search through all paragraphs
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text.strip()
+        if not para_text or len(para_text) < 20:
+            continue
+        
+        # Extract concepts from paragraph
+        para_concepts = extract_key_concepts(para_text)
+        if not para_concepts:
+            continue
+        
+        # Calculate similarity
+        similarity = calculate_concept_similarity(conflict_concepts, para_concepts)
+        
+        if similarity > best_similarity and similarity > 0.3:  # Threshold for semantic match
+            best_similarity = similarity
+            best_match = {
+                'para_idx': para_idx,
+                'similarity': similarity,
+                'matched_concepts': list(set([c.lower() for c in conflict_concepts]) & set([c.lower() for c in para_concepts]))
+            }
+    
+    if best_match:
+        logger.info(f"TIER1_5_SEMANTIC: Found semantic match in paragraph {best_match['para_idx']} with similarity {best_match['similarity']:.3f}")
+        logger.info(f"TIER1_5_SEMANTIC: Matching concepts: {best_match['matched_concepts']}")
+        _apply_redline_to_paragraph(doc.paragraphs[best_match['para_idx']], para_text, redline_item)
+        return best_match
     
     return None
 
