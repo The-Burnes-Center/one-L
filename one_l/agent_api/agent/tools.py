@@ -415,6 +415,12 @@ def redline_document(
         # Step 2: Download and load the document
         doc = _download_and_load_document(agent_processing_bucket, agent_document_key)
         
+        # Debug logging: Log document structure for troubleshooting
+        logger.info(f"DOCUMENT_DEBUG: Loaded document with {len(doc.paragraphs)} paragraphs")
+        for i, para in enumerate(doc.paragraphs[:5]):  # Log first 5 paragraphs
+            if para.text.strip():
+                logger.info(f"DOCUMENT_DEBUG: Para {i}: '{para.text[:100]}...'")
+        
         # Step 3: Parse conflicts and create redline items from analysis data
         redline_items = parse_conflicts_for_redlining(analysis_data)
         logger.info(f"REDLINE_PARSE: Found {len(redline_items)} conflicts to redline")
@@ -610,11 +616,44 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         # Track unmatched conflicts across tiers
         unmatched_conflicts = redline_items.copy()
         
-        # TIER 1: Standard exact matching
+        # TIER 0: Ultra-aggressive matching for difficult cases
         remaining_conflicts = []
-        logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
+        logger.info(f"APPLY_TIER0: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
         
         for redline_item in unmatched_conflicts:
+            vendor_conflict_text = redline_item.get('text', '').strip()
+            if not vendor_conflict_text:
+                continue
+                
+            # Enhanced logging: Track each conflict attempt
+            conflict_id = redline_item.get('id', 'Unknown')
+            source_doc = redline_item.get('source_doc', 'Unknown')
+            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+                
+            found_match = _tier0_ultra_aggressive_matching(doc, vendor_conflict_text, redline_item)
+            
+            if found_match:
+                matches_found += 1
+                if found_match['para_idx'] not in paragraphs_with_redlines:
+                    paragraphs_with_redlines.append(found_match['para_idx'])
+                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
+            else:
+                remaining_conflicts.append(redline_item)
+                logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+        
+        # Early exit if all conflicts matched
+        if not remaining_conflicts:
+            pass
+        else:
+            pass
+            
+            # TIER 1: Standard exact matching
+            logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
+            
+            unmatched_conflicts = remaining_conflicts
+            remaining_conflicts = []
+            
+            for redline_item in unmatched_conflicts:
             vendor_conflict_text = redline_item.get('text', '').strip()
             if not vendor_conflict_text:
                 continue
@@ -774,24 +813,116 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         }
 
 
+def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
+    """TIER 0: Ultra-aggressive matching for the most difficult cases."""
+    
+    def ultra_normalize_text(text):
+        """Ultra-aggressive text normalization."""
+        if not text:
+            return ""
+        
+        # Remove ALL punctuation and normalize everything
+        normalized = re.sub(r'[^\w\s]', ' ', text)  # Replace all punctuation with spaces
+        normalized = re.sub(r'\s+', ' ', normalized)  # Normalize all whitespace
+        normalized = normalized.lower().strip()
+        return normalized
+    
+    def extract_meaningful_words(text, min_length=3):
+        """Extract meaningful words from text."""
+        words = text.split()
+        meaningful_words = []
+        
+        for word in words:
+            if len(word) >= min_length and not word.lower() in ['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'man', 'oil', 'sit', 'try', 'use', 'she', 'too', 'any', 'may', 'say', 'she', 'use']:
+                meaningful_words.append(word)
+        
+        return meaningful_words
+    
+    def find_word_sequence_match(search_words, para_words, min_match_ratio=0.6):
+        """Find if a significant portion of search words appear in sequence in paragraph."""
+        if len(search_words) < 3:
+            return False
+        
+        # Try to find consecutive word sequences
+        for i in range(len(para_words) - len(search_words) + 1):
+            sequence = para_words[i:i + len(search_words)]
+            matches = sum(1 for j, word in enumerate(search_words) if word.lower() == sequence[j].lower())
+            if matches / len(search_words) >= min_match_ratio:
+                return True
+        
+        return False
+    
+    # Ultra-normalize the search text
+    ultra_normalized_search = ultra_normalize_text(vendor_conflict_text)
+    search_words = extract_meaningful_words(ultra_normalized_search)
+    
+    logger.info(f"TIER0_SEARCH: Ultra-normalized: '{ultra_normalized_search[:100]}...'")
+    logger.info(f"TIER0_WORDS: Extracted {len(search_words)} meaningful words")
+    
+    # Search through all paragraphs
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text.strip()
+        if not para_text or len(para_text) < 10:
+            continue
+        
+        ultra_normalized_para = ultra_normalize_text(para_text)
+        para_words = extract_meaningful_words(ultra_normalized_para)
+        
+        # Check if ultra-normalized search text is in ultra-normalized paragraph
+        if ultra_normalized_search in ultra_normalized_para:
+            logger.info(f"TIER0_MATCH: Found ultra-normalized match in paragraph {para_idx}")
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+            return {'para_idx': para_idx, 'matched_text': 'ultra_normalized_match'}
+        
+        # Try word sequence matching
+        if len(search_words) >= 3 and find_word_sequence_match(search_words, para_words):
+            logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}")
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+            return {'para_idx': para_idx, 'matched_text': 'word_sequence_match'}
+        
+        # Try partial word matching (at least 70% of meaningful words match)
+        if len(search_words) >= 5:
+            word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
+            if word_matches / len(search_words) >= 0.7:
+                logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}")
+                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                return {'para_idx': para_idx, 'matched_text': 'word_partial_match'}
+    
+    return None
+
+
 def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
     """TIER 1: Enhanced exact and case-insensitive matching within paragraphs."""
     
-    # Create comprehensive variations of the text to try matching
-    text_variations = [
-        vendor_conflict_text,  # Original text
-        vendor_conflict_text.strip('"\''),  # Remove quotes
-        vendor_conflict_text.replace('"', '"').replace('"', '"'),  # Smart quotes to regular
-        vendor_conflict_text.replace(''', "'").replace(''', "'"),  # Smart apostrophes
-        # Additional variations for better matching
-        re.sub(r'\s+', ' ', vendor_conflict_text.strip()),  # Normalize whitespace
-        vendor_conflict_text.replace('\n', ' ').replace('\r', ' '),  # Remove line breaks
-        re.sub(r'[^\w\s]', '', vendor_conflict_text),  # Remove punctuation
-        vendor_conflict_text.replace('  ', ' '),  # Remove double spaces
-    ]
+    def create_text_variations(text):
+        """Create comprehensive text variations for matching."""
+        variations = [
+            text,  # Original text
+            text.strip('"\''),  # Remove quotes
+            text.replace('"', '"').replace('"', '"'),  # Smart quotes to regular
+            text.replace(''', "'").replace(''', "'"),  # Smart apostrophes
+            text.replace('"', '"').replace('"', '"'),  # Alternative quote normalization
+            text.replace(''', "'").replace(''', "'"),  # Alternative apostrophe normalization
+            # Additional variations for better matching
+            re.sub(r'\s+', ' ', text.strip()),  # Normalize whitespace
+            text.replace('\n', ' ').replace('\r', ' '),  # Remove line breaks
+            text.replace('\t', ' '),  # Replace tabs with spaces
+            re.sub(r'[^\w\s]', '', text),  # Remove punctuation
+            text.replace('  ', ' '),  # Remove double spaces
+            text.replace('   ', ' '),  # Remove triple spaces
+            # More aggressive normalization
+            re.sub(r'[^\w\s]', ' ', text).strip(),  # Replace punctuation with spaces
+            re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', ' ', text)).strip(),  # Combined normalization
+        ]
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys([v for v in variations if v.strip()]))
     
-    # Remove duplicates while preserving order
-    text_variations = list(dict.fromkeys(text_variations))
+    # Create comprehensive variations of the text to try matching
+    text_variations = create_text_variations(vendor_conflict_text)
+    
+    # Enhanced logging for debugging
+    logger.info(f"TIER1_SEARCH: Looking for '{vendor_conflict_text[:50]}...' with {len(text_variations)} variations")
     
     # Search through all paragraphs for exact vendor conflict text
     for para_idx, paragraph in enumerate(doc.paragraphs):
@@ -800,19 +931,19 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             continue
             
         # Try each text variation for matching
-        for text_variant in text_variations:
+        for i, text_variant in enumerate(text_variations):
             if not text_variant:
                 continue
                 
             # Try exact substring match (most reliable with exact vendor quotes)
             if text_variant in para_text:
-
+                logger.info(f"TIER1_MATCH: Found exact match (variation {i}) in paragraph {para_idx}")
                 _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
                 return {'para_idx': para_idx, 'matched_text': text_variant}
             
             # Try case-insensitive match as fallback
             elif text_variant.lower() in para_text.lower():
-
+                logger.info(f"TIER1_CASE_MATCH: Found case-insensitive match (variation {i}) in paragraph {para_idx}")
                 # Find the actual text with correct case in the document
                 start_idx = para_text.lower().find(text_variant.lower())
                 actual_text = para_text[start_idx:start_idx + len(text_variant)]
@@ -823,49 +954,77 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
 
 
 def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 2: Fuzzy matching with text normalization for slight variations."""
+    """TIER 2: Enhanced fuzzy matching with improved text normalization."""
     
     import difflib
     
-    def normalize_text(text):
-        """Normalize text for fuzzy matching."""
-        # Remove extra whitespace and normalize punctuation
-        normalized = re.sub(r'\s+', ' ', text.strip())
-        normalized = re.sub(r'[""''`]', '"', normalized)  # Normalize quotes
+    def enhanced_normalize_text(text):
+        """Enhanced text normalization for better matching."""
+        if not text:
+            return ""
+        
+        # Remove all punctuation except spaces and normalize quotes/dashes
+        normalized = re.sub(r'[""''`]', '"', text)  # Normalize quotes
         normalized = re.sub(r'[–—]', '-', normalized)  # Normalize dashes
-        return normalized.lower()
+        normalized = re.sub(r'[^\w\s]', ' ', normalized)  # Remove all punctuation except spaces
+        normalized = re.sub(r'\s+', ' ', normalized)  # Normalize all whitespace to single spaces
+        normalized = normalized.lower().strip()
+        return normalized
     
     def similarity_ratio(a, b):
         """Calculate similarity ratio between two strings."""
         return difflib.SequenceMatcher(None, a, b).ratio()
     
+    def extract_key_phrases(text, min_length=10):
+        """Extract meaningful phrases from text for partial matching."""
+        # Split on common separators
+        phrases = re.split(r'[,.;:]|\sand\s|\sor\s|\sbut\s|\swith\s', text)
+        key_phrases = []
+        
+        for phrase in phrases:
+            phrase = phrase.strip()
+            if len(phrase) >= min_length and not phrase.lower().startswith(('the ', 'a ', 'an ', 'to ', 'for ', 'of ', 'in ', 'on ', 'at ')):
+                key_phrases.append(phrase)
+        
+        return key_phrases
+    
     # Normalize the search text
-    normalized_search = normalize_text(vendor_conflict_text)
+    normalized_search = enhanced_normalize_text(vendor_conflict_text)
+    
+    # Enhanced logging for debugging
+    logger.info(f"TIER2_SEARCH: Looking for normalized text: '{normalized_search[:100]}...'")
     
     # Try fuzzy matching with normalized text
     for para_idx, paragraph in enumerate(doc.paragraphs):
         para_text = paragraph.text.strip()
-        if not para_text or len(para_text) < 20:  # Skip very short paragraphs
+        if not para_text or len(para_text) < 10:  # Lowered threshold for short paragraphs
             continue
         
-        normalized_para = normalize_text(para_text)
+        normalized_para = enhanced_normalize_text(para_text)
         
         # Check if normalized search text is in normalized paragraph
         if normalized_search in normalized_para:
-
-            # Find the original text in the document that corresponds to the match
-            start_idx = normalized_para.find(normalized_search)
-            # This is approximate - try to find the closest matching text in original
+            logger.info(f"TIER2_MATCH: Found exact normalized match in paragraph {para_idx}")
             _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
             return {'para_idx': para_idx, 'matched_text': 'normalized_match'}
         
-        # Try similarity matching for very close matches (threshold: 0.85)
-        if len(normalized_search) > 50:  # Only for longer texts
+        # Try similarity matching with lowered threshold
+        if len(normalized_search) > 30:  # Lowered threshold for similarity matching
             similarity = similarity_ratio(normalized_search, normalized_para)
-            if similarity > 0.85:
-
+            if similarity > 0.75:  # Lowered threshold from 0.85 to 0.75
+                logger.info(f"TIER2_SIMILARITY: Found similarity match (ratio: {similarity:.3f}) in paragraph {para_idx}")
                 _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
                 return {'para_idx': para_idx, 'matched_text': 'similarity_match'}
+        
+        # Try partial phrase matching for longer texts
+        if len(normalized_search) > 100:
+            key_phrases = extract_key_phrases(normalized_search)
+            for phrase in key_phrases:
+                normalized_phrase = enhanced_normalize_text(phrase)
+                if normalized_phrase in normalized_para and len(normalized_phrase) > 20:
+                    logger.info(f"TIER2_PHRASE: Found phrase match '{phrase[:50]}...' in paragraph {para_idx}")
+                    _apply_redline_to_paragraph(paragraph, phrase[:100], redline_item)
+                    return {'para_idx': para_idx, 'matched_text': 'phrase_match'}
     
     return None
 
