@@ -17,6 +17,16 @@ from docx import Document
 from docx.shared import RGBColor
 import io
 
+# Import PDF processor
+try:
+    from .pdf_processor import PDFProcessor, is_pdf_file, get_pdf_processor
+    PDF_SUPPORT_ENABLED = True
+except ImportError:
+    PDF_SUPPORT_ENABLED = False
+    PDFProcessor = None
+    def is_pdf_file(x): return False
+    def get_pdf_processor(): return None
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -373,6 +383,96 @@ def get_cache_statistics() -> Dict[str, Any]:
     }
 
 
+def _redline_pdf_document(
+    agent_processing_bucket: str,
+    agent_document_key: str,
+    redline_items: List[Dict[str, str]],
+    document_s3_key: str,
+    session_id: str,
+    user_id: str
+) -> Dict[str, Any]:
+    """Handle PDF redlining using annotation-based approach."""
+    try:
+        # Download PDF from S3
+        response = s3_client.get_object(Bucket=agent_processing_bucket, Key=agent_document_key)
+        pdf_bytes = response['Body'].read()
+        
+        # Get PDF processor
+        pdf_processor = get_pdf_processor()
+        if not pdf_processor:
+            return {
+                "success": False,
+                "error": "PDF processor not available"
+            }
+        
+        logger.info(f"PDF_REDLINE: Processing {len(redline_items)} conflicts")
+        
+        # Find conflicts in PDF
+        position_mapping = {}
+        for conflict in redline_items:
+            conflict_text = conflict.get('text', '').strip()
+            if conflict_text:
+                matches = pdf_processor.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
+                if matches:
+                    position_mapping[conflict_text] = matches
+        
+        # Create redlined PDF
+        redlined_pdf = pdf_processor.redline_pdf(pdf_bytes, redline_items, position_mapping)
+        
+        # Save redlined PDF
+        redlined_s3_key = _create_redlined_filename(agent_document_key, session_id, user_id)
+        
+        # Upload redlined PDF to S3
+        s3_client.put_object(
+            Bucket=agent_processing_bucket,
+            Key=redlined_s3_key,
+            Body=redlined_pdf,
+            ContentType='application/pdf',
+            Metadata={
+                'original_document': document_s3_key,
+                'agent_document': agent_document_key,
+                'redlined_by': 'Legal-AI',
+                'conflicts_count': str(len(redline_items)),
+                'matches_found': str(len(position_mapping))
+            }
+        )
+        
+        logger.info(f"PDF_REDLINE_COMPLETE: Uploaded to {redlined_s3_key}")
+        
+        # Handle cleanup if needed
+        cleanup_result = None
+        if session_id and user_id:
+            try:
+                cleanup_result = _cleanup_session_documents(session_id, user_id)
+            except Exception as cleanup_error:
+                logger.error(f"Session cleanup error: {cleanup_error}")
+        
+        # Collect page numbers for paragraphs_with_redlines
+        pages_with_redlines = list(set([m['page_number'] for matches in position_mapping.values() for m in matches]))
+        
+        return {
+            "success": True,
+            "original_document": document_s3_key,
+            "agent_document": agent_document_key,
+            "redlined_document": redlined_s3_key,
+            "conflicts_processed": len(redline_items),
+            "matches_found": len(position_mapping),
+            "paragraphs_with_redlines": pages_with_redlines,
+            "bucket": agent_processing_bucket,
+            "file_type": "pdf",
+            "cleanup_performed": cleanup_result is not None,
+            "message": f"Successfully created redlined PDF with {len(position_mapping)} conflicts annotated"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in PDF redlining: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "original_document": document_s3_key
+        }
+
+
 def redline_document(
     analysis_data: str,
     document_s3_key: str,
@@ -382,7 +482,7 @@ def redline_document(
 ) -> Dict[str, Any]:
     """
     Complete redlining workflow: download document, extract content, apply redlining, upload result.
-    Handles all document operations internally - no external dependencies.
+    Handles both DOCX and PDF documents with appropriate processing methods.
     
     Args:
         analysis_data: Analysis text containing conflict information
@@ -397,6 +497,11 @@ def redline_document(
     
     try:
         logger.info(f"REDLINE_START: Document={document_s3_key}, Analysis={len(analysis_data)} chars")
+        
+        # Detect file type - route to appropriate processor
+        is_pdf = is_pdf_file(document_s3_key) if PDF_SUPPORT_ENABLED else False
+        logger.info(f"FILE_TYPE_DETECTED: {'PDF' if is_pdf else 'DOCX'}")
+        
         # Get bucket configurations
         source_bucket = _get_bucket_name(bucket_type)
         agent_processing_bucket = os.environ.get('AGENT_PROCESSING_BUCKET')
@@ -412,7 +517,36 @@ def redline_document(
         # Step 1: Copy document to agent processing bucket
         agent_document_key = _copy_document_to_processing(document_s3_key, source_bucket, agent_processing_bucket)
         
-        # Step 2: Download and load the document
+        # Step 3: Parse conflicts and create redline items from analysis data
+        redline_items = parse_conflicts_for_redlining(analysis_data)
+        logger.info(f"REDLINE_PARSE: Found {len(redline_items)} conflicts to redline")
+        if redline_items:
+            logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
+        
+        if not redline_items:
+            return {
+                "success": False,
+                "error": "No conflicts found in analysis data for redlining"
+            }
+        
+        # Route to appropriate processor based on file type
+        if is_pdf and PDF_SUPPORT_ENABLED:
+            logger.info("PROCESSING_PDF: Using PDF annotation-based redlining")
+            return _redline_pdf_document(
+                agent_processing_bucket,
+                agent_document_key,
+                redline_items,
+                document_s3_key,
+                session_id,
+                user_id
+            )
+        else:
+            logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
+            # Continue with DOCX processing below
+            pass
+        
+        # DOCX Processing - Original code path
+        # Step 2: Download and load the DOCX document
         doc = _download_and_load_document(agent_processing_bucket, agent_document_key)
         
         # Debug logging: Log document structure for troubleshooting
