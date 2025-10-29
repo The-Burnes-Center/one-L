@@ -1265,7 +1265,7 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
         
         return meaningful_words
     
-    def find_word_sequence_match(search_words, cell_words, min_match_ratio=0.6):
+    def find_word_sequence_match(search_words, cell_words, min_match_ratio=0.5):  # Lowered from 0.6 to 0.5
         """Find if a significant portion of search words appear in sequence in cell."""
         if len(search_words) < 3:
             return False
@@ -1277,7 +1277,34 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             if matches / len(search_words) >= min_match_ratio:
                 return True
         
+        # Also check for shorter sequences (3-5 words) within the search words
+        if len(search_words) >= 5:
+            for seq_len in range(3, min(6, len(search_words))):
+                for start in range(len(search_words) - seq_len + 1):
+                    short_seq = search_words[start:start + seq_len]
+                    for i in range(len(cell_words) - seq_len + 1):
+                        cell_seq = cell_words[i:i + seq_len]
+                        if all(sw.lower() == cw.lower() for sw, cw in zip(short_seq, cell_seq)):
+                            return True
+        
         return False
+    
+    def extract_key_phrases(text):
+        """Extract key phrases from text that are likely to appear in documents."""
+        # Remove quotes and normalize
+        text_no_quotes = re.sub(r'[""''`]', '', text)
+        # Extract capitalized phrases (like "Enterprise Security Office")
+        capitalized_phrases = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b', text_no_quotes)
+        # Extract noun phrases (2-4 words)
+        words = text_no_quotes.split()
+        noun_phrases = []
+        for i in range(len(words) - 1):
+            for length in [2, 3, 4]:
+                if i + length <= len(words):
+                    phrase = ' '.join(words[i:i+length])
+                    if len(phrase) > 10:  # Meaningful length
+                        noun_phrases.append(phrase)
+        return capitalized_phrases[:3] + noun_phrases[:5]  # Return top phrases
     
     # Ultra-normalize the search text
     ultra_normalized_search = ultra_normalize_text(vendor_conflict_text)
@@ -1309,13 +1336,23 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                     _apply_redline_to_table_cell(cell, cell_text, redline_item)
                     return {'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_sequence_match'}
                 
-                # Try partial word matching (lowered threshold to 50% for more matches)
-                if len(search_words) >= 3:  # Lowered from 5 to 3
+                # Try partial word matching (lowered threshold to 40% for more matches)
+                if len(search_words) >= 3:
                     word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_cell)
-                    if word_matches / len(search_words) >= 0.5:  # Lowered from 0.7 to 0.5
+                    if word_matches / len(search_words) >= 0.4:  # Lowered from 0.5 to 0.4
                         logger.info(f"TIER0_TABLE_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in table {table_idx}, cell ({row_idx},{cell_idx})")
                         _apply_redline_to_table_cell(cell, cell_text, redline_item)
                         return {'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_partial_match'}
+                
+                # NEW: Try key phrase matching for quoted or technical text
+                key_phrases = extract_key_phrases(vendor_conflict_text)
+                for phrase in key_phrases:
+                    if len(phrase) > 15:  # Only use meaningful phrases
+                        normalized_phrase = ultra_normalize_text(phrase)
+                        if normalized_phrase in ultra_normalized_cell:
+                            logger.info(f"TIER0_TABLE_PHRASE_MATCH: Found key phrase '{phrase[:50]}...' in table {table_idx}, cell ({row_idx},{cell_idx})")
+                            _apply_redline_to_table_cell(cell, cell_text, redline_item)
+                            return {'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'key_phrase_match'}
     
     return None
 
