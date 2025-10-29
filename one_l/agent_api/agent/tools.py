@@ -988,19 +988,19 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     if table_idx in already_redlined_tables:
                         if base_conflict_id not in already_redlined_tables[table_idx]:
                             already_redlined_tables[table_idx].append(base_conflict_id)
-                                matches_found += 1
-                                if table_idx not in tables_with_redlines:
-                                    tables_with_redlines.append(table_idx)
-                                logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
-                            else:
-                                logger.info(f"TIER2_TABLE_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
-                        else:
-                            already_redlined_tables[table_idx] = [base_conflict_id]
                             matches_found += 1
                             if table_idx not in tables_with_redlines:
                                 tables_with_redlines.append(table_idx)
                             logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
-                        remaining_conflicts.append(redline_item)  # Continue to next tier for additional matches
+                        else:
+                            logger.info(f"TIER2_TABLE_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                    else:
+                        already_redlined_tables[table_idx] = [base_conflict_id]
+                        matches_found += 1
+                        if table_idx not in tables_with_redlines:
+                            tables_with_redlines.append(table_idx)
+                        logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                    remaining_conflicts.append(redline_item)  # Continue to next tier for additional matches
                 else:
                     remaining_conflicts.append(redline_item)
                     logger.info(f"TIER2_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
