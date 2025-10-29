@@ -290,28 +290,39 @@ class PDFProcessor:
                         
                         # If we have a rectangle from the match, use it to highlight the text
                         if pos and hasattr(pos, 'x0'):
-                            # Use highlight annotation on the actual text
+                            # Use BOTH highlight and text annotation for better visibility
                             try:
-                                # Create a highlight annotation
+                                # Create a highlight annotation on the actual text
                                 highlight = page.add_highlight_annot(pos)
                                 highlight.set_colors(stroke=(1, 0, 0))  # Red color
-                                highlight.set_info(title=f"Legal-AI Conflict {item['clarification_id']}", 
-                                                  content=item['comment'])
                                 highlight.update()
-                                logger.info(f"PDF_ANNOTATION: Added highlight for conflict {item['clarification_id']} at rect {pos.x0},{pos.y0}-{pos.x1},{pos.y1}")
-                            except Exception as highlight_error:
-                                logger.warning(f"Could not add highlight annotation: {highlight_error}, using text annotation instead")
-                                # Fall back to text annotation
+                                
+                                # Also add a text annotation icon next to the highlighted text for the comment
+                                # Position the icon to the right of the highlighted text
+                                comment_x = pos.x1 + 5 if hasattr(pos, 'x1') else x + 50  # 5 points to the right
+                                comment_y = pos.y0
+                                comment_point = fitz.Point(comment_x, comment_y)
+                                
+                                # Create text annotation (shows as an icon/note that displays comment when clicked)
+                                comment_annot = page.add_text_annot(comment_point, item['clarification_id'])
+                                comment_annot.set_info(title=f"Conflict {item['clarification_id']}", content=item['comment'])
+                                comment_annot.set_colors(stroke=(1, 0, 0))  # Red color
+                                comment_annot.update()
+                                
+                                logger.info(f"PDF_ANNOTATION: Added highlight + text annotation for conflict {item['clarification_id']} at rect {pos.x0},{pos.y0}-{pos.x1},{pos.y1}")
+                            except Exception as annot_error:
+                                logger.warning(f"Could not add annotations: {annot_error}")
+                                # Fall back to text annotation only
                                 point = fitz.Point(x, y)
                                 annot = page.add_text_annot(point, f"[{item['clarification_id']}]")
-                                annot.set_info(title=f"Legal-AI Conflict {item['clarification_id']}", content=item['comment'])
+                                annot.set_info(title=f"Conflict {item['clarification_id']}", content=item['comment'])
                                 annot.set_colors(stroke=(1, 0, 0))
                                 annot.update()
                         else:
                             # No position data, use text annotation at coordinates
                             point = fitz.Point(x, y)
                             annot = page.add_text_annot(point, f"[{item['clarification_id']}]")
-                            annot.set_info(title=f"Legal-AI Conflict {item['clarification_id']}", content=item['comment'])
+                            annot.set_info(title=f"Conflict {item['clarification_id']}", content=item['comment'])
                             annot.set_colors(stroke=(1, 0, 0))
                             annot.update()
                             logger.info(f"PDF_ANNOTATION: Added text annotation for conflict {item['clarification_id']} at ({x}, {y})")
