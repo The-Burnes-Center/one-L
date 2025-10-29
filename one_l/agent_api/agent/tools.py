@@ -633,6 +633,21 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         # Track unmatched conflicts across tiers
         unmatched_conflicts = all_conflicts.copy()
         
+        # Track already redlined paragraphs to prevent duplicates
+        # Key: paragraph index, Value: list of conflict IDs that redlined it
+        already_redlined_paragraphs = {}
+        already_redlined_tables = {}
+        
+        # Get base conflict ID for deduplication (use clarification_id or first 100 chars as hash)
+        def get_base_conflict_id(redline_item):
+            """Get a unique identifier for the base conflict."""
+            conflict_id = redline_item.get('clarification_id') or redline_item.get('id')
+            if conflict_id and conflict_id != 'Unknown' and conflict_id != 'N/A':
+                return conflict_id
+            # Fallback: use first 50 chars of original text as hash
+            original_text = redline_item.get('text', '')[:50]
+            return f"hash_{hash(original_text)}"
+        
         # TIER 0: Ultra-aggressive matching for difficult cases
         remaining_conflicts = []
         logger.info(f"APPLY_TIER0: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
@@ -642,29 +657,56 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             if not vendor_conflict_text:
                 continue
                 
+            # Get base conflict ID for deduplication
+            base_conflict_id = get_base_conflict_id(redline_item)
+            
             # Enhanced logging: Track each conflict attempt
             conflict_id = redline_item.get('id', 'Unknown')
             source_doc = redline_item.get('source_doc', 'Unknown')
-            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
                 
             found_match = _tier0_ultra_aggressive_matching(doc, vendor_conflict_text, redline_item)
             
             if found_match:
+                para_idx = found_match['para_idx']
+                # Check if this paragraph was already redlined by the same base conflict
+                if para_idx in already_redlined_paragraphs:
+                    if base_conflict_id in already_redlined_paragraphs[para_idx]:
+                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                        remaining_conflicts.append(redline_item)  # Try next tier
+                        continue
+                    else:
+                        already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                else:
+                    already_redlined_paragraphs[para_idx] = [base_conflict_id]
+                
                 matches_found += 1
-                if found_match['para_idx'] not in paragraphs_with_redlines:
-                    paragraphs_with_redlines.append(found_match['para_idx'])
-                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
+                if para_idx not in paragraphs_with_redlines:
+                    paragraphs_with_redlines.append(para_idx)
+                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
             else:
                 # Try table matching if paragraph matching failed
                 table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
                 if table_match:
+                    table_idx = table_match['table_idx']
+                    # Check if this table was already redlined
+                    if table_idx in already_redlined_tables:
+                        if base_conflict_id in already_redlined_tables[table_idx]:
+                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                            remaining_conflicts.append(redline_item)
+                            continue
+                        else:
+                            already_redlined_tables[table_idx].append(base_conflict_id)
+                    else:
+                        already_redlined_tables[table_idx] = [base_conflict_id]
+                    
                     matches_found += 1
-                    if table_match['table_idx'] not in tables_with_redlines:
-                        tables_with_redlines.append(table_match['table_idx'])
-                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Table={table_match['table_idx']}")
+                    if table_idx not in tables_with_redlines:
+                        tables_with_redlines.append(table_idx)
+                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
                 else:
                     remaining_conflicts.append(redline_item)
-                    logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                    logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
@@ -682,30 +724,57 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 vendor_conflict_text = redline_item.get('text', '').strip()
                 if not vendor_conflict_text:
                     continue
+                
+                # Get base conflict ID for deduplication
+                base_conflict_id = get_base_conflict_id(redline_item)
                     
                 # Enhanced logging: Track each conflict attempt
                 conflict_id = redline_item.get('id', 'Unknown')
                 source_doc = redline_item.get('source_doc', 'Unknown')
-                logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+                logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
                     
                 found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
                 
                 if found_match:
+                    para_idx = found_match['para_idx']
+                    # Check if already redlined
+                    if para_idx in already_redlined_paragraphs:
+                        if base_conflict_id in already_redlined_paragraphs[para_idx]:
+                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                            remaining_conflicts.append(redline_item)
+                            continue
+                        else:
+                            already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                    else:
+                        already_redlined_paragraphs[para_idx] = [base_conflict_id]
+                    
                     matches_found += 1
-                    if found_match['para_idx'] not in paragraphs_with_redlines:
-                        paragraphs_with_redlines.append(found_match['para_idx'])
-                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
+                    if para_idx not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(para_idx)
+                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
                 else:
                     # Try semantic similarity matching before giving up
                     semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
                     if semantic_result:
+                        para_idx = semantic_result['para_idx']
+                        # Check if already redlined
+                        if para_idx in already_redlined_paragraphs:
+                            if base_conflict_id in already_redlined_paragraphs[para_idx]:
+                                logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                                remaining_conflicts.append(redline_item)
+                                continue
+                            else:
+                                already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                        else:
+                            already_redlined_paragraphs[para_idx] = [base_conflict_id]
+                        
                         matches_found += 1
-                        if semantic_result['para_idx'] not in paragraphs_with_redlines:
-                            paragraphs_with_redlines.append(semantic_result['para_idx'])
-                        logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, Paragraph={semantic_result['para_idx']}, Page≈{semantic_result['para_idx'] // 20}")
+                        if para_idx not in paragraphs_with_redlines:
+                            paragraphs_with_redlines.append(para_idx)
+                        logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
                     else:
                         remaining_conflicts.append(redline_item)
-                        logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                        logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
@@ -1036,109 +1105,64 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
 
 
 def _generate_conflict_variations(redline_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Generate additional conflict variations to catch more matches."""
+    """Generate additional conflict variations to catch more matches - LIMITED to prevent duplicates."""
     enhanced_items = []
     
     for item in redline_items:
-        # Add original item
+        # Add original item (always include)
         enhanced_items.append(item)
         
         text = item.get('text', '').strip()
-        if not text:
+        if not text or len(text) < 10:
             continue
-            
-        # Variation 1: Remove quotes and normalize punctuation
+        
+        # LIMIT: Only generate 2-3 most useful variations per conflict to prevent duplicates
+        variations_count = 0
+        max_variations = 3
+        
+        # Variation 1: Remove quotes and normalize punctuation (most useful)
         normalized_text = re.sub(r'["""''`]', '"', text)
         normalized_text = re.sub(r'[–—]', '-', normalized_text)
-        if normalized_text != text:
+        if normalized_text != text and variations_count < max_variations:
             enhanced_items.append({
                 **item,
                 'text': normalized_text,
                 'variation_type': 'punctuation_normalized'
             })
+            variations_count += 1
         
-        # Variation 2: Remove common prefixes/suffixes
-        prefixes_to_remove = ['SMX ', 'The ', 'Our ', 'We ', 'This ', 'These ']
+        # Variation 2: Remove common prefixes (only SMX and The are most common)
+        prefixes_to_remove = ['SMX ', 'The ']
         for prefix in prefixes_to_remove:
-            if text.startswith(prefix):
+            if text.startswith(prefix) and variations_count < max_variations:
                 shortened_text = text[len(prefix):].strip()
-                if len(shortened_text) > 20:  # Only if meaningful length remains
+                if len(shortened_text) > 30:  # Only if meaningful length remains
                     enhanced_items.append({
                         **item,
                         'text': shortened_text,
                         'variation_type': f'prefix_removed_{prefix.strip()}'
                     })
+                    variations_count += 1
+                    break  # Only remove first matching prefix
         
-        # Variation 3: Extract key phrases (sentences)
-        sentences = re.split(r'[.!?]+', text)
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if len(sentence) > 30 and sentence != text:  # Meaningful sentence, not the whole text
-                enhanced_items.append({
-                    **item,
-                    'text': sentence,
-                    'variation_type': 'sentence_extract'
-                })
-        
-        # Variation 4: Remove parenthetical content
+        # Variation 3: Remove parenthetical content (if it's significant)
         no_parentheses = re.sub(r'\([^)]*\)', '', text).strip()
-        if no_parentheses != text and len(no_parentheses) > 20:
+        if no_parentheses != text and len(no_parentheses) > 30 and variations_count < max_variations:
             enhanced_items.append({
                 **item,
                 'text': no_parentheses,
                 'variation_type': 'parentheses_removed'
             })
-        
-        # Variation 5: Extract numbers and key terms
-        numbers_and_terms = re.findall(r'\b\d+(?:\.\d+)?%?\b|\b(?:SLA|API|AWS|Azure|GCP|HIPAA|FedRAMP|SOC2|ISO|NIST)\b', text)
-        if numbers_and_terms and len(' '.join(numbers_and_terms)) > 10:
-            enhanced_items.append({
-                **item,
-                'text': ' '.join(numbers_and_terms),
-                'variation_type': 'key_terms_extract'
-            })
+            variations_count += 1
     
     return enhanced_items
 
 
 def _generate_cross_reference_conflicts(redline_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Generate cross-reference conflicts for related concepts."""
-    cross_reference_items = []
-    
-    # Define concept mappings for related terms
-    concept_mappings = {
-        'security': ['security', 'compliance', 'certification', 'audit', 'vulnerability', 'patch', 'encryption'],
-        'availability': ['uptime', 'availability', 'downtime', 'maintenance', 'SLA', 'service level'],
-        'support': ['support', 'service', 'response', 'resolution', 'escalation', 'tier'],
-        'data': ['data', 'information', 'storage', 'backup', 'retention', 'privacy'],
-        'network': ['network', 'connectivity', 'VPN', 'firewall', 'routing', 'bandwidth'],
-        'cloud': ['cloud', 'AWS', 'Azure', 'GCP', 'infrastructure', 'platform'],
-        'access': ['access', 'authentication', 'authorization', 'RBAC', 'identity', 'user']
-    }
-    
-    for item in redline_items:
-        text = item.get('text', '').lower()
-        if not text:
-            continue
-            
-        # Find related concepts
-        for concept, keywords in concept_mappings.items():
-            if any(keyword in text for keyword in keywords):
-                # Generate variations with related terms
-                for related_concept, related_keywords in concept_mappings.items():
-                    if related_concept != concept:
-                        for keyword in related_keywords:
-                            if keyword not in text:
-                                # Create a variation with the related term
-                                variation_text = text.replace(concept, related_concept)
-                                if variation_text != text:
-                                    cross_reference_items.append({
-                                        **item,
-                                        'text': variation_text,
-                                        'variation_type': f'cross_reference_{concept}_to_{related_concept}'
-                                    })
-    
-    return cross_reference_items
+    """Generate cross-reference conflicts for related concepts - DISABLED to prevent duplicates."""
+    # DISABLED: This function was creating too many false positive variations
+    # that matched the same paragraphs multiple times without adding value
+    return []
 
 
 def _tier1_5_semantic_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
