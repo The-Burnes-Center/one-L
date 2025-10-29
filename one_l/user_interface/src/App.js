@@ -657,10 +657,15 @@ const SessionWorkspace = ({ session }) => {
     }
     
     try {
+      // Extract original file extension to preserve it
+      const originalFilename = redlineResult.originalFile.filename;
+      const filenameWithoutExt = originalFilename.replace(/\.[^/.]+$/, '');
+      const fileExtension = originalFilename.split('.').pop();
+      
       const downloadResult = await agentAPI.downloadFile(
         redlineResult.redlinedDocument, 
         'agent_processing',
-        `${redlineResult.originalFile.filename.replace(/\.[^/.]+$/, '')}_REDLINED.docx`
+        `${filenameWithoutExt}_REDLINED.${fileExtension}`
       );
       
       if (downloadResult.success) {

@@ -100,7 +100,7 @@ const VendorSubmission = ({ onFilesUploaded }) => {
 
 
 
-//DOC, DOCX (Max 10MB per file)
+//DOC, DOCX, PDF (Max 10MB per file)
   return (
     <div className="card">
       <h2>Vendor Submission</h2>
@@ -114,8 +114,8 @@ const VendorSubmission = ({ onFilesUploaded }) => {
           type="file"
           onChange={handleFileSelect}
           className="form-control"
-          accept=".doc,.docx"
-          description="DOC, DOCX (Max 10MB per file)"
+          accept=".doc,.docx,.pdf"
+          description="DOC, DOCX, PDF (Max 10MB per file)"
           disabled={uploading}
         />
       </div>
