@@ -881,35 +881,48 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     remaining_conflicts.append(redline_item)
                     logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
-        # Early exit if all conflicts matched
-        if not remaining_conflicts:
-            pass
-        else:
-            pass
-            
-            # TIER 1: Standard exact matching
+        # TIER 1: Standard exact matching (process remaining conflicts)
         logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-            
-            unmatched_conflicts = remaining_conflicts
-            remaining_conflicts = []
-        
+        unmatched_conflicts = remaining_conflicts
+        remaining_conflicts = []
+
         for redline_item in unmatched_conflicts:
             vendor_conflict_text = redline_item.get('text', '').strip()
             if not vendor_conflict_text:
                 continue
-                
-                # Get base conflict ID for deduplication
-                base_conflict_id = get_base_conflict_id(redline_item)
-                
+
+            # Get base conflict ID for deduplication
+            base_conflict_id = get_base_conflict_id(redline_item)
+
             # Enhanced logging: Track each conflict attempt
             conflict_id = redline_item.get('id', 'Unknown')
             source_doc = redline_item.get('source_doc', 'Unknown')
-                logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
-                
+            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+
             found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
-            
+
             if found_match:
-                    para_idx = found_match['para_idx']
+                para_idx = found_match['para_idx']
+                # Check if already redlined
+                if para_idx in already_redlined_paragraphs:
+                    if base_conflict_id in already_redlined_paragraphs[para_idx]:
+                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                        remaining_conflicts.append(redline_item)
+                        continue
+                    else:
+                        already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                else:
+                    already_redlined_paragraphs[para_idx] = [base_conflict_id]
+
+                matches_found += 1
+                if para_idx not in paragraphs_with_redlines:
+                    paragraphs_with_redlines.append(para_idx)
+                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
+            else:
+                # Try semantic similarity matching before giving up
+                semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
+                if semantic_result:
+                    para_idx = semantic_result['para_idx']
                     # Check if already redlined
                     if para_idx in already_redlined_paragraphs:
                         if base_conflict_id in already_redlined_paragraphs[para_idx]:
@@ -920,87 +933,61 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                             already_redlined_paragraphs[para_idx].append(base_conflict_id)
                     else:
                         already_redlined_paragraphs[para_idx] = [base_conflict_id]
-                    
-                matches_found += 1
+
+                    matches_found += 1
                     if para_idx not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(para_idx)
                     logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
-            else:
-                    # Try semantic similarity matching before giving up
-                    semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
-                    if semantic_result:
-                        para_idx = semantic_result['para_idx']
-                        # Check if already redlined
-                        if para_idx in already_redlined_paragraphs:
-                            if base_conflict_id in already_redlined_paragraphs[para_idx]:
-                                logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
-                remaining_conflicts.append(redline_item)
-                                continue
-                            else:
-                                already_redlined_paragraphs[para_idx].append(base_conflict_id)
-                        else:
-                            already_redlined_paragraphs[para_idx] = [base_conflict_id]
-                        
-                        matches_found += 1
-                        if para_idx not in paragraphs_with_redlines:
-                            paragraphs_with_redlines.append(para_idx)
-                        logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
-                    else:
-                        # Try table matching if paragraph matching failed
-                        table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
-                        if table_match:
-                            table_idx = table_match['table_idx']
-                            # Check if this table was already redlined
-                            if table_idx in already_redlined_tables:
-                                if base_conflict_id in already_redlined_tables[table_idx]:
-                                    logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
-                                    remaining_conflicts.append(redline_item)
-                                    continue
-                                else:
-                                    already_redlined_tables[table_idx].append(base_conflict_id)
-                            else:
-                                already_redlined_tables[table_idx] = [base_conflict_id]
-                            
-                            matches_found += 1
-                            if table_idx not in tables_with_redlines:
-                                tables_with_redlines.append(table_idx)
-                            logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
-                        else:
-                            remaining_conflicts.append(redline_item)
-                            logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
-        
-        # Early exit if all conflicts matched
-        if not remaining_conflicts:
-            pass
-        else:
-            pass
-            
-            # TIER 2: Fuzzy matching (only for unmatched conflicts)
-            logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-
-            unmatched_conflicts = remaining_conflicts
-            remaining_conflicts = []
-            
-            for redline_item in unmatched_conflicts:
-                vendor_conflict_text = redline_item.get('text', '').strip()
-                conflict_id = redline_item.get('id', 'Unknown')
-                base_conflict_id = get_base_conflict_id(redline_item)
-                found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
-                
-                if found_match:
-                    matches_found += 1
-                    if found_match['para_idx'] not in paragraphs_with_redlines:
-                        paragraphs_with_redlines.append(found_match['para_idx'])
-                    logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
                 else:
-                    # Try table matching if paragraph matching failed in Tier 2
+                    # Try table matching if paragraph matching failed
                     table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
                     if table_match:
                         table_idx = table_match['table_idx']
                         # Check if this table was already redlined
                         if table_idx in already_redlined_tables:
-                            if base_conflict_id not in already_redlined_tables[table_idx]:
+                            if base_conflict_id in already_redlined_tables[table_idx]:
+                                logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                                remaining_conflicts.append(redline_item)
+                                continue
+                            else:
                                 already_redlined_tables[table_idx].append(base_conflict_id)
+                        else:
+                            already_redlined_tables[table_idx] = [base_conflict_id]
+
+                        matches_found += 1
+                        if table_idx not in tables_with_redlines:
+                            tables_with_redlines.append(table_idx)
+                        logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                    else:
+                        remaining_conflicts.append(redline_item)
+                        logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+        
+        # TIER 2: Fuzzy matching (only for unmatched conflicts)
+        logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
+
+        unmatched_conflicts = remaining_conflicts
+        remaining_conflicts = []
+
+        for redline_item in unmatched_conflicts:
+            vendor_conflict_text = redline_item.get('text', '').strip()
+            conflict_id = redline_item.get('id', 'Unknown')
+            base_conflict_id = get_base_conflict_id(redline_item)
+            found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
+
+            if found_match:
+                matches_found += 1
+                if found_match['para_idx'] not in paragraphs_with_redlines:
+                    paragraphs_with_redlines.append(found_match['para_idx'])
+                logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
+            else:
+                # Try table matching if paragraph matching failed in Tier 2
+                table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
+                if table_match:
+                    table_idx = table_match['table_idx']
+                    # Check if this table was already redlined
+                    if table_idx in already_redlined_tables:
+                        if base_conflict_id not in already_redlined_tables[table_idx]:
+                            already_redlined_tables[table_idx].append(base_conflict_id)
                                 matches_found += 1
                                 if table_idx not in tables_with_redlines:
                                     tables_with_redlines.append(table_idx)
