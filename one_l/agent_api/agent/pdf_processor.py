@@ -235,13 +235,15 @@ class PDFProcessor:
                 matches = []
                 if position_mapping and conflict_text in position_mapping:
                     matches = position_mapping[conflict_text]
-                    logger.info(f"PDF_ANNOTATION: Using cached matches for conflict: {len(matches)} matches")
+                    logger.info(f"PDF_ANNOTATION: Using cached matches for conflict {clarification_id}: {len(matches)} matches found")
                 else:
-                    logger.warning(f"PDF_ANNOTATION: No cached matches found for conflict, searching again")
+                    logger.warning(f"PDF_ANNOTATION: No cached matches found for conflict {clarification_id}, searching again")
                     matches = self.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
                 
-                # Group annotations by page
-                for match in matches:
+                # Only use the FIRST match to avoid duplicate annotations for same conflict
+                if matches:
+                    # Take only the first match
+                    match = matches[0]
                     page_num = match['page_number']
                     
                     if page_num not in page_annotations:
@@ -255,6 +257,10 @@ class PDFProcessor:
                         'x': match.get('x', 50),  # Default position
                         'y': match.get('y', 750)
                     })
+                    
+                    logger.info(f"PDF_ANNOTATION: Added conflict {clarification_id} to page {page_num}")
+                else:
+                    logger.warning(f"PDF_ANNOTATION: No matches found for conflict {clarification_id}: '{conflict_text[:50]}...'")
             
             # Log summary before adding annotations
             logger.info(f"PDF_ANNOTATION_SUMMARY: {len(conflicts)} conflicts processed, {len(page_annotations)} pages will have annotations")
@@ -276,29 +282,39 @@ class PDFProcessor:
                 try:
                     page = doc[page_num - 1]  # Convert to 0-indexed
                     
-                    # Combine comments for this page
-                    combined_comment = '\n\n'.join([
-                        f"[{item['clarification_id']}] {item['comment']}"
-                        for item in annotations
-                    ])
-                    
-                    # Create annotation using PyMuPDF text annotation
-                    # Use position from first match or default to top-left
-                    x = annotations[0].get('x', 50)
-                    y = annotations[0].get('y', 750)
-                    
-                    logger.info(f"PDF_ANNOTATION: Adding annotation to page {page_num} at position ({x}, {y})")
-                    
-                    # Create point for annotation
-                    point = fitz.Point(x, y)
-                    
-                    # Add text annotation (note-like popup)
-                    annot = page.add_text_annot(point, "Legal-AI Conflict")
-                    
-                    # Set annotation content and appearance
-                    annot.set_info(title="Legal-AI Conflict", content=combined_comment)
-                    annot.set_colors(stroke=(1, 0, 0))  # Red color
-                    annot.update()
+                    # Create individual annotations for each conflict on this page
+                    for item in annotations:
+                        x = item.get('x', 50)
+                        y = item.get('y', 750)
+                        pos = item.get('position')
+                        
+                        # If we have a rectangle from the match, use it to highlight the text
+                        if pos and hasattr(pos, 'x0'):
+                            # Use highlight annotation on the actual text
+                            try:
+                                # Create a highlight annotation
+                                highlight = page.add_highlight_annot(pos)
+                                highlight.set_colors(stroke=(1, 0, 0))  # Red color
+                                highlight.set_info(title=f"Legal-AI Conflict {item['clarification_id']}", 
+                                                  content=item['comment'])
+                                highlight.update()
+                                logger.info(f"PDF_ANNOTATION: Added highlight for conflict {item['clarification_id']} at rect {pos.x0},{pos.y0}-{pos.x1},{pos.y1}")
+                            except Exception as highlight_error:
+                                logger.warning(f"Could not add highlight annotation: {highlight_error}, using text annotation instead")
+                                # Fall back to text annotation
+                                point = fitz.Point(x, y)
+                                annot = page.add_text_annot(point, f"[{item['clarification_id']}]")
+                                annot.set_info(title=f"Legal-AI Conflict {item['clarification_id']}", content=item['comment'])
+                                annot.set_colors(stroke=(1, 0, 0))
+                                annot.update()
+                        else:
+                            # No position data, use text annotation at coordinates
+                            point = fitz.Point(x, y)
+                            annot = page.add_text_annot(point, f"[{item['clarification_id']}]")
+                            annot.set_info(title=f"Legal-AI Conflict {item['clarification_id']}", content=item['comment'])
+                            annot.set_colors(stroke=(1, 0, 0))
+                            annot.update()
+                            logger.info(f"PDF_ANNOTATION: Added text annotation for conflict {item['clarification_id']} at ({x}, {y})")
                     
                     logger.info(f"PDF_ANNOTATION_ADDED: Page {page_num} with {len(annotations)} conflicts")
                     

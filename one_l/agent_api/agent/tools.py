@@ -712,11 +712,24 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             'clause_ref': clause_ref,
                             'summary': summary
                         })
-                        
-        logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from analysis")
-        for i, item in enumerate(redline_items[:2]):
+        
+        # Deduplicate conflicts by clarification_id (keep first occurrence)
+        seen_ids = {}
+        deduplicated_items = []
+        for item in redline_items:
+            clarification_id = item.get('clarification_id')
+            if clarification_id not in seen_ids:
+                seen_ids[clarification_id] = True
+                deduplicated_items.append(item)
+            else:
+                logger.warning(f"PARSE_DEDUP: Duplicate clarification_id found: {clarification_id}, skipping")
+        
+        logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from analysis, {len(deduplicated_items)} unique conflicts after deduplication")
+        for i, item in enumerate(deduplicated_items[:2]):
             logger.info(f"PARSE_CONFLICT_{i+1}: ID={item.get('clarification_id')}, Text='{item.get('text', '')[:60]}...'")
-
+        
+        # Return deduplicated list
+        redline_items = deduplicated_items
         
     except Exception as e:
         logger.error(f"Error parsing conflicts for redlining: {str(e)}")
