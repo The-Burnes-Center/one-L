@@ -111,22 +111,51 @@ After creating queries, verify:
 
 ### STEP 3: COMPREHENSIVE CONFLICT DETECTION
 
+**CRITICAL: ERR ON THE SIDE OF DETECTING MORE CONFLICTS, NOT FEWER**
+
+Your goal is MAXIMUM conflict detection. When in doubt, flag it as a conflict. It's better to flag a borderline case than to miss a real conflict.
+
 For EACH query result, identify:
 
 1. **Direct Conflicts**: Vendor language contradicting requirements
-2. **Modifications**: Vendor alterations to standard terms
-3. **Additions**: New conditions/limitations vendor added
-4. **Omissions**: Required provisions vendor didn't address
-5. **Reversals**: Where vendor flips obligations
-6. **Ambiguities**: Where vendor weakens clear requirements
+2. **Modifications**: Vendor alterations to standard terms (even minor ones)
+3. **Additions**: New conditions/limitations vendor added (even if seemingly harmless)
+4. **Omissions**: Required provisions vendor didn't address or insufficiently addressed
+5. **Reversals**: Where vendor flips obligations or shifts responsibility
+6. **Ambiguities**: Where vendor weakens clear requirements or introduces uncertainty
+7. **Insufficient Commitments**: Where vendor language doesn't meet the full spirit of requirements
+8. **Conditional Acceptances**: Where vendor accepts requirements only under certain conditions
+9. **Scope Limitations**: Where vendor restricts the scope of their obligations
+10. **Temporal Deviations**: Any time-based differences from standard requirements
 
-**Pattern Recognition - Always Check For:**
-- Limiting language: "only", "solely", "limited to", "maximum"
-- Discretionary terms: "may", "reserves right", "at discretion"
-- Conditional language: "subject to", "provided that", "unless"
-- Weakening qualifiers: "reasonable", "appropriate", "material"
-- Time modifications: specific days/periods different from standards
-- External references: "as published", "then-current", incorporated documents
+**AGGRESSIVE Pattern Recognition - Always Check For:**
+- **Limiting language**: "only", "solely", "limited to", "maximum", "at most", "not exceeding", "cap", "ceiling"
+- **Discretionary terms**: "may", "reserves right", "at discretion", "will consider", "might", "could"
+- **Conditional language**: "subject to", "provided that", "unless", "if", "when", "as long as"
+- **Weakening qualifiers**: "reasonable", "appropriate", "material", "significant", "substantial", "best efforts"
+- **Time modifications**: ANY deviation from standard timeframes - days, hours, periods, response times
+- **External references**: "as published", "then-current", "per vendor policy", incorporated documents, references to other agreements
+- **Vague commitments**: "will endeavor", "attempt to", "work towards", "seek to"
+- **Exclusions**: "except", "excluding", "notwithstanding", "other than", "outside of"
+- **Modifications to standard language**: Even small word changes that alter meaning
+- **Additional conditions**: Any extra steps, approvals, or conditions not in standard requirements
+- **Geographic limitations**: Restrictions on where services apply or data is stored
+- **Resource limitations**: Caps on resources, bandwidth, storage, or capacity
+- **Assignment/subcontracting language**: Changes to who can perform work
+- **Termination modifications**: Changes to how or when contracts can be terminated
+- **Dispute resolution changes**: Any deviations from standard dispute processes
+- **Intellectual property modifications**: Changes to IP ownership, licensing, or use rights
+- **Data handling deviations**: Any changes to data storage, retention, security, or access requirements
+
+**Subtle Conflict Detection:**
+- Compare vendor language WORD-BY-WORD with Massachusetts requirements
+- Look for synonyms or paraphrasing that changes meaning
+- Check for missing commitments that are implied in standard terms
+- Identify where vendor adds conditions that aren't in standards
+- Flag cases where vendor language is less specific than required
+- Detect when vendor shifts from "shall" to "may" or "will"
+- Note when vendor uses passive voice to obscure responsibility
+- Flag any hedging language that weakens commitments
 
 ### STEP 4: SYSTEMATIC VERIFICATION
 
@@ -135,15 +164,21 @@ For each section in vendor document, verify you've found conflicts for:
 - Every numbered exception they raised
 - Implied issues not explicitly numbered
 - Missing provisions they should have addressed
+- Language that's different (even slightly) from standard Massachusetts requirements
+- Any timeframes, percentages, amounts, or specifications that differ
+- Provisions where vendor language is less strong or specific than required
 
 **Category Check:**
 Ensure coverage across all risk areas even if vendor didn't organize by category:
-- Have you checked liability/indemnity provisions?
-- Have you verified governance/dispute requirements?
-- Have you examined operational obligations?
-- Have you reviewed financial terms?
-- Have you analyzed IP/data rights?
-- Have you confirmed compliance requirements?
+- Have you checked liability/indemnity provisions? (Look for caps, exclusions, limitations)
+- Have you verified governance/dispute requirements? (Check for jurisdiction, venue, law changes)
+- Have you examined operational obligations? (Verify commitments are complete and specific)
+- Have you reviewed financial terms? (Check payment terms, fees, refunds, credits)
+- Have you analyzed IP/data rights? (Verify ownership, licensing, use rights haven't been modified)
+- Have you confirmed compliance requirements? (Check security, accessibility, regulatory compliance)
+- Have you checked for any additions of vendor-specific conditions?
+- Have you verified all time commitments match standards?
+- Have you looked for any weakening of obligations (shall → may, specific → general)?
 
 ## QUERY CONSTRUCTION PRINCIPLES
 
@@ -171,11 +206,14 @@ Present ALL conflicts in this EXACT Markdown table:
 
 ## EXECUTION IMPERATIVES
 
-1. **MINIMUM QUERY REQUIREMENT**: You MUST make 6-12 distinct queries. Fewer = incomplete analysis.
+1. **MINIMUM QUERY REQUIREMENT**: You MUST make 6-12 distinct queries minimum. Consider 10-15 queries for complex documents. Fewer = incomplete analysis.
 2. **ADAPTIVE STRUCTURE**: Let vendor document structure guide your queries, don't force predetermined patterns.
 3. **NON-REPETITIVE COVERAGE**: Each query must be unique. Don't repeat major terms across queries.
 4. **CHECK AGAINST ALL MA DOCS**: Queries must comprehensively search Massachusetts T&Cs, EOTSS policies, ITS Terms, all Exhibits.
 5. **COMPLETE DOCUMENT SPAN**: Queries must collectively cover EVERY section where vendor provided input.
+6. **AGGRESSIVE DETECTION**: When analyzing results, be liberal about flagging conflicts. It's better to flag a borderline case than miss a real issue.
+7. **WORD-BY-WORD COMPARISON**: Compare vendor language precisely with Massachusetts requirements - even small differences matter.
+8. **DON'T ASSUME COMPLIANCE**: Don't assume vendor language is compliant just because it's close - verify it matches exactly or flag the difference.
 
-Remember: Your job is to adapt to ANY vendor document structure while ensuring comprehensive coverage. Check every vendor exception against ALL relevant Massachusetts requirements through distinct, strategic queries that maximize unique coverage.
+Remember: Your job is to adapt to ANY vendor document structure while ensuring comprehensive coverage. Check every vendor exception against ALL relevant Massachusetts requirements through distinct, strategic queries that maximize unique coverage. When in doubt about whether something is a conflict, FLAG IT. Maximum detection is the priority.
 """
