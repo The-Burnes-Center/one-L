@@ -407,12 +407,35 @@ def _redline_pdf_document(
         
         logger.info(f"PDF_REDLINE: Processing {len(redline_items)} conflicts")
         
-        # Find conflicts in PDF
+        # Find conflicts in PDF with enhanced fuzzy matching
         position_mapping = {}
         for conflict in redline_items:
             conflict_text = conflict.get('text', '').strip()
             if conflict_text:
-                matches = pdf_processor.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
+                # Try exact match first
+                matches = pdf_processor.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=False)
+                
+                # If no exact match, try fuzzy matching
+                if not matches:
+                    matches = pdf_processor.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
+                
+                # If still no match, try searching with shorter variations
+                if not matches and len(conflict_text) > 50:
+                    # Try first 50 chars
+                    short_text = conflict_text[:50]
+                    matches = pdf_processor.find_text_in_pdf(pdf_bytes, short_text, fuzzy=True)
+                    
+                # Try with key phrases (first sentence or important words)
+                if not matches:
+                    # Extract key phrases (sentences or important terms)
+                    sentences = conflict_text.split('.')
+                    for sentence in sentences[:2]:  # Try first 2 sentences
+                        sentence = sentence.strip()
+                        if len(sentence) > 20:
+                            matches = pdf_processor.find_text_in_pdf(pdf_bytes, sentence, fuzzy=True)
+                            if matches:
+                                break
+                
                 logger.info(f"PDF_REDLINE: Conflict text '{conflict_text[:50]}...' -> {len(matches)} matches")
                 if matches:
                     position_mapping[conflict_text] = matches
@@ -923,8 +946,28 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                             paragraphs_with_redlines.append(para_idx)
                         logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
                     else:
-                        remaining_conflicts.append(redline_item)
-                        logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                        # Try table matching if paragraph matching failed
+                        table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
+                        if table_match:
+                            table_idx = table_match['table_idx']
+                            # Check if this table was already redlined
+                            if table_idx in already_redlined_tables:
+                                if base_conflict_id in already_redlined_tables[table_idx]:
+                                    logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                                    remaining_conflicts.append(redline_item)
+                                    continue
+                                else:
+                                    already_redlined_tables[table_idx].append(base_conflict_id)
+                            else:
+                                already_redlined_tables[table_idx] = [base_conflict_id]
+                            
+                            matches_found += 1
+                            if table_idx not in tables_with_redlines:
+                                tables_with_redlines.append(table_idx)
+                            logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                        else:
+                            remaining_conflicts.append(redline_item)
+                            logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
@@ -941,6 +984,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             for redline_item in unmatched_conflicts:
                 vendor_conflict_text = redline_item.get('text', '').strip()
                 conflict_id = redline_item.get('id', 'Unknown')
+                base_conflict_id = get_base_conflict_id(redline_item)
                 found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
                 
                 if found_match:
@@ -949,7 +993,29 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                         paragraphs_with_redlines.append(found_match['para_idx'])
                     logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
                 else:
-                    remaining_conflicts.append(redline_item)
+                    # Try table matching if paragraph matching failed in Tier 2
+                    table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
+                    if table_match:
+                        table_idx = table_match['table_idx']
+                        # Check if this table was already redlined
+                        if table_idx in already_redlined_tables:
+                            if base_conflict_id not in already_redlined_tables[table_idx]:
+                                already_redlined_tables[table_idx].append(base_conflict_id)
+                                matches_found += 1
+                                if table_idx not in tables_with_redlines:
+                                    tables_with_redlines.append(table_idx)
+                                logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                            else:
+                                logger.info(f"TIER2_TABLE_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                        else:
+                            already_redlined_tables[table_idx] = [base_conflict_id]
+                            matches_found += 1
+                            if table_idx not in tables_with_redlines:
+                                tables_with_redlines.append(table_idx)
+                            logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                        remaining_conflicts.append(redline_item)  # Continue to next tier for additional matches
+                    else:
+                        remaining_conflicts.append(redline_item)
                     logger.info(f"TIER2_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
             
             # Early exit if all conflicts matched
@@ -1163,10 +1229,10 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             _apply_redline_to_paragraph(paragraph, para_text, redline_item)
             return {'para_idx': para_idx, 'matched_text': 'word_sequence_match'}
         
-        # Try partial word matching (at least 70% of meaningful words match)
-        if len(search_words) >= 5:
+        # Try partial word matching (lowered threshold to 50% for more matches)
+        if len(search_words) >= 3:  # Lowered from 5 to 3
             word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
-            if word_matches / len(search_words) >= 0.7:
+            if word_matches / len(search_words) >= 0.5:  # Lowered from 0.7 to 0.5
                 logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}")
                 _apply_redline_to_paragraph(paragraph, para_text, redline_item)
                 return {'para_idx': para_idx, 'matched_text': 'word_partial_match'}
@@ -1243,10 +1309,10 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                     _apply_redline_to_table_cell(cell, cell_text, redline_item)
                     return {'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_sequence_match'}
                 
-                # Try partial word matching (at least 70% of meaningful words match)
-                if len(search_words) >= 5:
+                # Try partial word matching (lowered threshold to 50% for more matches)
+                if len(search_words) >= 3:  # Lowered from 5 to 3
                     word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_cell)
-                    if word_matches / len(search_words) >= 0.7:
+                    if word_matches / len(search_words) >= 0.5:  # Lowered from 0.7 to 0.5
                         logger.info(f"TIER0_TABLE_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in table {table_idx}, cell ({row_idx},{cell_idx})")
                         _apply_redline_to_table_cell(cell, cell_text, redline_item)
                         return {'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_partial_match'}
