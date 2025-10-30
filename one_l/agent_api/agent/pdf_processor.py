@@ -393,25 +393,21 @@ class PDFProcessor:
                     logger.warning(f"PDF_ANNOTATION: No cached matches found for conflict {clarification_id}, searching again")
                     matches = self.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
                 
-                # Only use the FIRST match to avoid duplicate annotations for same conflict
+                # Annotate ALL discovered matches to increase redlining density
                 if matches:
-                    # Take only the first match
-                    match = matches[0]
-                    page_num = match['page_number']
-                    
-                    if page_num not in page_annotations:
-                        page_annotations[page_num] = []
-                    
-                    page_annotations[page_num].append({
-                        'clarification_id': clarification_id,
-                        'comment': comment,
-                        'conflict_text': conflict_text[:100],
-                        'position': match.get('position'),  # PyMuPDF rectangle if available
-                        'x': match.get('x', 50),  # Default position
-                        'y': match.get('y', 750)
-                    })
-                    
-                    logger.info(f"PDF_ANNOTATION: Added conflict {clarification_id} to page {page_num}")
+                    for match in matches:
+                        page_num = match['page_number']
+                        if page_num not in page_annotations:
+                            page_annotations[page_num] = []
+                        page_annotations[page_num].append({
+                            'clarification_id': clarification_id,
+                            'comment': comment,
+                            'conflict_text': conflict_text[:100],
+                            'position': match.get('position'),
+                            'x': match.get('x', 50),
+                            'y': match.get('y', 750)
+                        })
+                        logger.info(f"PDF_ANNOTATION: Added conflict {clarification_id} to page {page_num}")
                 else:
                     logger.warning(f"PDF_ANNOTATION: No matches found for conflict {clarification_id}: '{conflict_text[:50]}...'")
             
