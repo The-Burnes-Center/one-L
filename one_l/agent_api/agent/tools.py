@@ -932,7 +932,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     if para_idx in already_redlined_paragraphs:
                         if base_conflict_id in already_redlined_paragraphs[para_idx]:
                             logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
-                remaining_conflicts.append(redline_item)
+                            remaining_conflicts.append(redline_item)
                             continue
                         else:
                             already_redlined_paragraphs[para_idx].append(base_conflict_id)
@@ -943,7 +943,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     if para_idx not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(para_idx)
                     logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
-        else:
+                else:
                     # Try table matching if paragraph matching failed
                     table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
                     if table_match:
@@ -976,7 +976,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             for redline_item in unmatched_conflicts:
                 vendor_conflict_text = redline_item.get('text', '').strip()
                 conflict_id = redline_item.get('id', 'Unknown')
-            base_conflict_id = get_base_conflict_id(redline_item)
+                base_conflict_id = get_base_conflict_id(redline_item)
                 found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
                 
                 if found_match:
