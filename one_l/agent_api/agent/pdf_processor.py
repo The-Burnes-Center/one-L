@@ -121,7 +121,7 @@ class PDFProcessor:
             
             matches = []
             
-            # Normalize search text
+            # Normalize search text (robust normalization)
             normalized_search = self._normalize_text(search_text)
             
             for page_num in range(len(doc)):
@@ -180,6 +180,29 @@ class PDFProcessor:
                                             })
                                             break
                                     else:
+                                        # Chunked/n-gram search: try distinctive clauses or sliding windows
+                                        chunk_rect = None
+                                        for chunk in self._generate_search_chunks(search_text):
+                                            if len(chunk) < 15:
+                                                continue
+                                            try:
+                                                chunk_hits = page.search_for(chunk, flags=fitz.TEXT_DEHYPHENATE)
+                                            except Exception:
+                                                chunk_hits = []
+                                            if chunk_hits:
+                                                chunk_rect = chunk_hits[0]
+                                                matches.append({
+                                                    'page_number': page_num + 1,
+                                                    'position': chunk_rect,
+                                                    'text': search_text,
+                                                    'x': chunk_rect.x0,
+                                                    'y': chunk_rect.y0,
+                                                    'fuzzy_match': True,
+                                                    'chunk_anchor': chunk
+                                                })
+                                                break
+                                        if chunk_rect:
+                                            continue
                                         # Keyword sweep fallback: try scanning with key compliance/security words
                                         keywords = [
                                             'security','firewall','siem','incident','sla','uptime','maintenance',
@@ -479,14 +502,67 @@ class PDFProcessor:
             raise Exception(f"Failed to redline PDF: {str(e)}")
     
     def _normalize_text(self, text: str) -> str:
-        """Normalize text for comparison by removing extra whitespace and punctuation."""
+        """Normalize text for matching across PDFs: unify quotes/dashes, strip soft hyphens, collapse spaces."""
         if not text:
             return ""
-        # Replace multiple spaces with single space
-        normalized = re.sub(r'\s+', ' ', text)
-        # Remove trailing punctuation
-        normalized = re.sub(r'[^\w\s]$', '', normalized)
-        return normalized.lower().strip()
+        # Common unicode normalizations
+        replacements = {
+            '\u00A0': ' ',   # NBSP -> space
+            '\u00AD': '',    # soft hyphen -> remove
+            '\u2010': '-',   # hyphen
+            '\u2011': '-',   # non-breaking hyphen
+            '\u2012': '-',   # figure dash
+            '\u2013': '-',   # en dash
+            '\u2014': '-',   # em dash
+            '\u2015': '-',   # horizontal bar
+            '\u2018': "'",  # left single quote
+            '\u2019': "'",  # right single quote
+            '\u201C': '"',  # left double quote
+            '\u201D': '"',  # right double quote
+            '\u2026': '...', # ellipsis
+            '\ufb01': 'fi',  # ligature fi
+            '\ufb02': 'fl',  # ligature fl
+        }
+        normalized = text
+        for src, tgt in replacements.items():
+            normalized = normalized.replace(src, tgt)
+        # Remove stray control characters
+        normalized = re.sub(r'[\u0000-\u001F\u007F]', ' ', normalized)
+        # Collapse whitespace
+        normalized = re.sub(r'\s+', ' ', normalized)
+        # Trim
+        normalized = normalized.strip().lower()
+        return normalized
+
+    def _generate_search_chunks(self, text: str) -> List[str]:
+        """Generate clause-based and n-gram chunks to anchor approximate matches."""
+        if not text:
+            return []
+        # Normalize only for splitting purposes but search with original unicode where possible
+        cleaned = self._normalize_text(text)
+        # Split into clauses on punctuation
+        clauses = [c.strip() for c in re.split(r'[.;:!?\n]+', cleaned) if c.strip()]
+        chunks: List[str] = []
+        for clause in clauses:
+            words = clause.split()
+            if len(words) >= 4:
+                # Sliding windows from longer to shorter
+                for window in [12, 10, 8, 6, 5, 4]:
+                    if len(words) < window:
+                        continue
+                    for i in range(0, len(words) - window + 1):
+                        chunk = ' '.join(words[i:i+window])
+                        chunks.append(chunk)
+            else:
+                chunks.append(clause)
+        # Deduplicate preserving order
+        seen = set()
+        deduped: List[str] = []
+        for ch in chunks:
+            if ch not in seen:
+                seen.add(ch)
+                deduped.append(ch)
+        return deduped
 
 
 def is_pdf_file(filename: str) -> bool:
