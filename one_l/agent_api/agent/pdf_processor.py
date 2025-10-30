@@ -5,6 +5,7 @@ Uses PyMuPDF for superior text extraction and annotation support.
 
 import logging
 import io
+import os
 from typing import Dict, Any, List, Optional, Tuple
 import re
 
@@ -178,7 +179,7 @@ class PDFProcessor:
                                                 'fuzzy_match': True
                                             })
                                             break
-                                    else:
+                                        else:
                                         # Keyword sweep fallback: try scanning with key compliance/security words
                                         keywords = [
                                             'security','firewall','siem','incident','sla','uptime','maintenance',
@@ -216,6 +217,15 @@ class PDFProcessor:
                     logger.warning(f"Error searching page {page_num + 1}: {page_error}")
                     continue
             
+            # If still no matches and OCR is enabled, try Textract across full PDF
+            if not matches and os.getenv('ENABLE_TEXTRACT_OCR', '0') in ['1', 'true', 'True']:
+                try:
+                    ocr_matches = self._textract_find(pdf_bytes, search_text)
+                    if ocr_matches:
+                        matches.extend(ocr_matches)
+                except Exception as tex_err:
+                    logger.warning(f"TEXTRACT_FALLBACK_FAILED: {tex_err}")
+
             doc.close()
             
             logger.info(f"PDF_SEARCH: Found {len(matches)} matches for text '{search_text[:50]}...'")
@@ -225,10 +235,102 @@ class PDFProcessor:
             logger.error(f"Error searching PDF: {str(e)}")
             return []
 
-    # Optional OCR hook (disabled by default). To enable later, wire here.
-    def _ocr_extract_text(self, pdf_bytes: bytes) -> Optional[str]:
-        """Placeholder for OCR extraction (Textract/Tesseract). Not used by default."""
-        return None
+    # Textract OCR fallback: detect text and approximate coordinates
+    def _textract_find(self, pdf_bytes: bytes, search_text: str) -> List[Dict[str, Any]]:
+        try:
+            import boto3  # Available in Lambda runtime
+        except Exception as e:
+            logger.warning(f"Textract not available: {e}")
+            return []
+
+        try:
+            client = boto3.client('textract')
+            resp = client.detect_document_text(Document={'Bytes': pdf_bytes})
+        except Exception as e:
+            logger.warning(f"Textract detect_document_text failed: {e}")
+            return []
+
+        # Build page-wise lines with geometry
+        blocks = resp.get('Blocks', [])
+        pages: Dict[int, Dict[str, Any]] = {}
+        for b in blocks:
+            if b.get('BlockType') == 'LINE':
+                page_num = b.get('Page', 1)
+                if page_num not in pages:
+                    pages[page_num] = {'lines': []}
+                pages[page_num]['lines'].append({
+                    'text': b.get('Text', ''),
+                    'bbox': b.get('Geometry', {}).get('BoundingBox')
+                })
+
+        normalized_search = self._normalize_text(search_text)
+        matches: List[Dict[str, Any]] = []
+
+        # Open PDF to convert relative Textract bounding boxes to absolute coordinates
+        try:
+            pdf_file = io.BytesIO(pdf_bytes)
+            doc = fitz.open(stream=pdf_file, filetype='pdf')
+        except Exception:
+            doc = None
+
+        for page_num, data in pages.items():
+            lines = data.get('lines', [])
+            # Concatenate page text for quick inclusion check
+            page_text_concat = ' '.join(l['text'] for l in lines if l.get('text'))
+            if normalized_search and normalized_search not in self._normalize_text(page_text_concat):
+                # Not found at page level, skip to next page
+                continue
+
+            # Try to find a matching line and use its bbox
+            chosen_bbox = None
+            for ln in lines:
+                ln_text_norm = self._normalize_text(ln.get('text', ''))
+                if not ln_text_norm:
+                    continue
+                # Exact-in-normalized or partial overlap heuristic
+                if (normalized_search in ln_text_norm) or (
+                    len(normalized_search) > 30 and ln_text_norm and ln_text_norm in normalized_search
+                ):
+                    chosen_bbox = ln.get('bbox')
+                    break
+
+            # Convert bbox to absolute coordinates on the page using PyMuPDF page size
+            rect = None
+            x = 50
+            y = 50
+            if chosen_bbox and doc is not None and page_num - 1 < len(doc):
+                try:
+                    page = doc[page_num - 1]
+                    width = page.rect.width
+                    height = page.rect.height
+                    left = chosen_bbox.get('Left', 0) * width
+                    top = chosen_bbox.get('Top', 0) * height
+                    w = chosen_bbox.get('Width', 0.2) * width
+                    h = chosen_bbox.get('Height', 0.02) * height
+                    rect = fitz.Rect(left, top, left + w, top + h)
+                    x = left
+                    y = top
+                except Exception as map_err:
+                    logger.warning(f"Textract bbox mapping failed: {map_err}")
+
+            matches.append({
+                'page_number': page_num,
+                'position': rect,
+                'text': search_text,
+                'x': x,
+                'y': y,
+                'fuzzy_match': True,
+                'ocr': True
+            })
+
+        try:
+            if doc is not None:
+                doc.close()
+        except Exception:
+            pass
+
+        logger.info(f"TEXTRACT_MATCHES: {len(matches)} for text '{search_text[:50]}...'")
+        return matches
     
     def redline_pdf(self, pdf_bytes: bytes, conflicts: List[Dict[str, str]], 
                    position_mapping: Optional[Dict[str, List[Dict]]] = None) -> bytes:
