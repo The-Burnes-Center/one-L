@@ -179,7 +179,7 @@ class PDFProcessor:
                                                 'fuzzy_match': True
                                             })
                                             break
-                                        else:
+                                    else:
                                         # Keyword sweep fallback: try scanning with key compliance/security words
                                         keywords = [
                                             'security','firewall','siem','incident','sla','uptime','maintenance',
