@@ -411,6 +411,30 @@ class PDFProcessor:
                 else:
                     logger.warning(f"PDF_ANNOTATION: No matches found for conflict {clarification_id}: '{conflict_text[:50]}...'")
             
+            # If sparse annotations, apply per-page keyword sweep to increase coverage
+            if len(page_annotations) == 0 or sum(len(v) for v in page_annotations.values()) < 6:
+                try:
+                    extra = self._keyword_sweep_annotations(doc)
+                    for page_num, ann_list in extra.items():
+                        if page_num not in page_annotations:
+                            page_annotations[page_num] = []
+                        page_annotations[page_num].extend(ann_list)
+                    logger.info(f"PDF_KEYWORD_SWEEP: Added {sum(len(v) for v in extra.values())} fallback annotations across {len(extra)} pages")
+                except Exception as sweep_err:
+                    logger.warning(f"PDF_KEYWORD_SWEEP_FAILED: {sweep_err}")
+
+            # If sparse annotations, apply per-page keyword sweep to increase coverage
+            if len(page_annotations) == 0 or sum(len(v) for v in page_annotations.values()) < 6:
+                try:
+                    extra = self._keyword_sweep_annotations(doc)
+                    for page_num, ann_list in extra.items():
+                        if page_num not in page_annotations:
+                            page_annotations[page_num] = []
+                        page_annotations[page_num].extend(ann_list)
+                    logger.info(f"PDF_KEYWORD_SWEEP: Added {sum(len(v) for v in extra.values())} fallback annotations across {len(extra)} pages")
+                except Exception as sweep_err:
+                    logger.warning(f"PDF_KEYWORD_SWEEP_FAILED: {sweep_err}")
+
             # Log summary before adding annotations
             logger.info(f"PDF_ANNOTATION_SUMMARY: {len(conflicts)} conflicts processed, {len(page_annotations)} pages will have annotations")
             
@@ -569,3 +593,8 @@ def is_pdf_file(filename: str) -> bool:
 def get_pdf_processor() -> PDFProcessor:
     """Get a PDF processor instance."""
     return PDFProcessor()
+
+    
+    
+    
+    
