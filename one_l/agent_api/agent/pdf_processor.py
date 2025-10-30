@@ -179,15 +179,38 @@ class PDFProcessor:
                                             })
                                             break
                                     else:
-                                        # Last resort: add annotation at top-left of page
-                                        matches.append({
-                                            'page_number': page_num + 1,
-                                            'position': None,
-                                            'text': search_text,
-                                            'x': 50,
-                                            'y': 50,
-                                            'fuzzy_match': True
-                                        })
+                                        # Keyword sweep fallback: try scanning with key compliance/security words
+                                        keywords = [
+                                            'security','firewall','siem','incident','sla','uptime','maintenance',
+                                            'availability','response','resolution','backup','recovery','encryption',
+                                            'compliance','policy','terms','conditions','vendor','customer','support'
+                                        ]
+                                        found_kw = None
+                                        for kw in keywords:
+                                            kw_instances = page.search_for(kw, flags=fitz.TEXT_DEHYPHENATE)
+                                            if kw_instances:
+                                                found_kw = kw_instances[0]
+                                                break
+                                        if found_kw:
+                                            matches.append({
+                                                'page_number': page_num + 1,
+                                                'position': found_kw,
+                                                'text': search_text,
+                                                'x': found_kw.x0,
+                                                'y': found_kw.y0,
+                                                'fuzzy_match': True,
+                                                'keyword_fallback': True
+                                            })
+                                        else:
+                                            # Last resort: add annotation at top-left of page
+                                            matches.append({
+                                                'page_number': page_num + 1,
+                                                'position': None,
+                                                'text': search_text,
+                                                'x': 50,
+                                                'y': 50,
+                                                'fuzzy_match': True
+                                            })
                         
                 except Exception as page_error:
                     logger.warning(f"Error searching page {page_num + 1}: {page_error}")
@@ -201,6 +224,11 @@ class PDFProcessor:
         except Exception as e:
             logger.error(f"Error searching PDF: {str(e)}")
             return []
+
+    # Optional OCR hook (disabled by default). To enable later, wire here.
+    def _ocr_extract_text(self, pdf_bytes: bytes) -> Optional[str]:
+        """Placeholder for OCR extraction (Textract/Tesseract). Not used by default."""
+        return None
     
     def redline_pdf(self, pdf_bytes: bytes, conflicts: List[Dict[str, str]], 
                    position_mapping: Optional[Dict[str, List[Dict]]] = None) -> bytes:

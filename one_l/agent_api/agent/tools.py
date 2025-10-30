@@ -741,6 +741,11 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
         deduplicated_items = []
         for item in redline_items:
             clarification_id = item.get('clarification_id')
+            text_val = (item.get('text') or '').strip()
+            # Filter placeholders/empty like 'N/A' or too short strings
+            if not text_val or text_val.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available'] or len(text_val) < 5:
+                logger.warning(f"PARSE_FILTER: Skipping placeholder/empty conflict for ID={clarification_id} text='{text_val}'")
+                continue
             if clarification_id not in seen_ids:
                 seen_ids[clarification_id] = True
                 deduplicated_items.append(item)
@@ -885,12 +890,12 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
         unmatched_conflicts = remaining_conflicts
         remaining_conflicts = []
-
+        
         for redline_item in unmatched_conflicts:
             vendor_conflict_text = redline_item.get('text', '').strip()
             if not vendor_conflict_text:
                 continue
-
+                
             # Get base conflict ID for deduplication
             base_conflict_id = get_base_conflict_id(redline_item)
 
@@ -898,9 +903,9 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             conflict_id = redline_item.get('id', 'Unknown')
             source_doc = redline_item.get('source_doc', 'Unknown')
             logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
-
+                
             found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
-
+            
             if found_match:
                 para_idx = found_match['para_idx']
                 # Check if already redlined
@@ -927,7 +932,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     if para_idx in already_redlined_paragraphs:
                         if base_conflict_id in already_redlined_paragraphs[para_idx]:
                             logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
-                            remaining_conflicts.append(redline_item)
+                remaining_conflicts.append(redline_item)
                             continue
                         else:
                             already_redlined_paragraphs[para_idx].append(base_conflict_id)
@@ -938,7 +943,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     if para_idx not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(para_idx)
                     logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
-                else:
+        else:
                     # Try table matching if paragraph matching failed
                     table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
                     if table_match:
@@ -961,24 +966,24 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     else:
                         remaining_conflicts.append(redline_item)
                         logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
-        
-        # TIER 2: Fuzzy matching (only for unmatched conflicts)
-        logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
+            
+            # TIER 2: Fuzzy matching (only for unmatched conflicts)
+            logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
 
-        unmatched_conflicts = remaining_conflicts
-        remaining_conflicts = []
-
-        for redline_item in unmatched_conflicts:
-            vendor_conflict_text = redline_item.get('text', '').strip()
-            conflict_id = redline_item.get('id', 'Unknown')
+            unmatched_conflicts = remaining_conflicts
+            remaining_conflicts = []
+            
+            for redline_item in unmatched_conflicts:
+                vendor_conflict_text = redline_item.get('text', '').strip()
+                conflict_id = redline_item.get('id', 'Unknown')
             base_conflict_id = get_base_conflict_id(redline_item)
-            found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
-
-            if found_match:
-                matches_found += 1
-                if found_match['para_idx'] not in paragraphs_with_redlines:
-                    paragraphs_with_redlines.append(found_match['para_idx'])
-                logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
+                found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
+                
+                if found_match:
+                    matches_found += 1
+                    if found_match['para_idx'] not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(found_match['para_idx'])
+                    logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
             else:
                 # Try table matching if paragraph matching failed in Tier 2
                 table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
@@ -1567,7 +1572,7 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             continue
             
         matched = False
-        
+            
         # Try each text variation for matching
         for i, text_variant in enumerate(text_variations):
             if not text_variant or matched:
