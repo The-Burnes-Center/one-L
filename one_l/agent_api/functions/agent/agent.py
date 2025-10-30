@@ -91,7 +91,9 @@ class AgentConstruct(Construct):
                 "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
                 "OPENSEARCH_COLLECTION_ENDPOINT": f"{self.opensearch_collection.attr_id}.{Stack.of(self).region}.aoss.amazonaws.com",
                 "REGION": Stack.of(self).region,
-                "LOG_LEVEL": "INFO"
+                "LOG_LEVEL": "INFO",
+                # Enable OCR fallback for PDFs in dev to handle scanned/flattened documents
+                "ENABLE_TEXTRACT_OCR": "1"
             }
         )
     
