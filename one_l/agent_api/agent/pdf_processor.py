@@ -528,17 +528,19 @@ class PDFProcessor:
                 if len(page_annotations[page_num]) >= min_per_page:
                     pages_needing_annotations.discard(page_num)
             
+            # Keyword sweep disabled - only annotate actual conflicts, not keyword matches
             # Apply keyword sweep to fill gaps - guarantee coverage on EVERY page
-            if pages_needing_annotations or sum(len(v) for v in page_annotations.values()) < target_total:
-                try:
-                    extra = self._keyword_sweep_annotations(doc, min_per_page, pages_needing_annotations)
-                    for page_num, ann_list in extra.items():
-                        if page_num not in page_annotations:
-                            page_annotations[page_num] = []
-                        page_annotations[page_num].extend(ann_list)
-                    logger.info(f"PDF_KEYWORD_SWEEP: Added {sum(len(v) for v in extra.values())} fallback annotations across {len(extra)} pages")
-                except Exception as sweep_err:
-                    logger.warning(f"PDF_KEYWORD_SWEEP_FAILED: {sweep_err}")
+            # DISABLED: User requested no keyword-based annotations, only actual conflicts
+            # if pages_needing_annotations or sum(len(v) for v in page_annotations.values()) < target_total:
+            #     try:
+            #         extra = self._keyword_sweep_annotations(doc, min_per_page, pages_needing_annotations)
+            #         for page_num, ann_list in extra.items():
+            #             if page_num not in page_annotations:
+            #                 page_annotations[page_num] = []
+            #             page_annotations[page_num].extend(ann_list)
+            #         logger.info(f"PDF_KEYWORD_SWEEP: Added {sum(len(v) for v in extra.values())} fallback annotations across {len(extra)} pages")
+            #     except Exception as sweep_err:
+            #         logger.warning(f"PDF_KEYWORD_SWEEP_FAILED: {sweep_err}")
             
             # Always add cover note on first page if 0 conflicts were parsed
             if len(conflicts) == 0 and total_pages > 0:
@@ -561,32 +563,34 @@ class PDFProcessor:
             # Log summary before adding annotations
             logger.info(f"PDF_ANNOTATION_SUMMARY: {len(conflicts)} conflicts processed, {len(page_annotations)} pages will have annotations")
             
+            # DISABLED: Final fallback annotations removed - only annotate actual conflicts
             # Ensure every page has at least one annotation (final fallback)
-            for page_num in range(1, total_pages + 1):
-                if page_num not in page_annotations or len(page_annotations[page_num]) == 0:
-                    logger.warning(f"PDF_PAGE_EMPTY: Page {page_num} has no annotations, adding fallback")
-                    try:
-                        page = doc[page_num - 1]
-                        point = fitz.Point(50, 50 + (page_num - 1) * 20)  # Stagger vertically
-                        annot = page.add_text_annot(point, "Legal-AI: Reviewed")
-                        annot.set_info(
-                            title="Legal-AI Review",
-                            content="This page was reviewed for compliance and security conflicts."
-                        )
-                        annot.set_colors(stroke=(0.5, 0.5, 0.5))  # Gray for generic review
-                        annot.update()
-                        if page_num not in page_annotations:
-                            page_annotations[page_num] = []
-                        page_annotations[page_num].append({
-                            'clarification_id': 'Review',
-                            'comment': 'Page reviewed',
-                            'conflict_text': '',
-                            'position': None,
-                            'x': 50,
-                            'y': 50 + (page_num - 1) * 20
-                        })
-                    except Exception as fallback_err:
-                        logger.warning(f"PDF_FALLBACK_ANNOTATION_FAILED for page {page_num}: {fallback_err}")
+            # User requested no generic/fallback annotations, only actual conflict redlines
+            # for page_num in range(1, total_pages + 1):
+            #     if page_num not in page_annotations or len(page_annotations[page_num]) == 0:
+            #         logger.warning(f"PDF_PAGE_EMPTY: Page {page_num} has no annotations, adding fallback")
+            #         try:
+            #             page = doc[page_num - 1]
+            #             point = fitz.Point(50, 50 + (page_num - 1) * 20)  # Stagger vertically
+            #             annot = page.add_text_annot(point, "Legal-AI: Reviewed")
+            #             annot.set_info(
+            #                 title="Legal-AI Review",
+            #                 content="This page was reviewed for compliance and security conflicts."
+            #             )
+            #             annot.set_colors(stroke=(0.5, 0.5, 0.5))  # Gray for generic review
+            #             annot.update()
+            #             if page_num not in page_annotations:
+            #                 page_annotations[page_num] = []
+            #             page_annotations[page_num].append({
+            #                 'clarification_id': 'Review',
+            #                 'comment': 'Page reviewed',
+            #                 'conflict_text': '',
+            #                 'position': None,
+            #                 'x': 50,
+            #                 'y': 50 + (page_num - 1) * 20
+            #             })
+            #         except Exception as fallback_err:
+            #             logger.warning(f"PDF_FALLBACK_ANNOTATION_FAILED for page {page_num}: {fallback_err}")
             
             # Add annotations to pages
             for page_num, annotations in page_annotations.items():
