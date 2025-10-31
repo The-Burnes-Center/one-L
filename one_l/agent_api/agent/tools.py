@@ -549,13 +549,8 @@ def redline_document(
         if redline_items:
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
-        if not redline_items:
-            return {
-                "success": False,
-                "error": "No conflicts found in analysis data for redlining"
-            }
-        
         # Route to appropriate processor based on file type
+        # For PDFs, ALWAYS generate output even with 0 conflicts (will use fallback annotations)
         if is_pdf and PDF_SUPPORT_ENABLED:
             logger.info("PROCESSING_PDF: Using PDF annotation-based redlining")
             return _redline_pdf_document(
@@ -584,22 +579,43 @@ def redline_document(
         # Step 3: Parse conflicts and create redline items from analysis data
         redline_items = parse_conflicts_for_redlining(analysis_data)
         logger.info(f"REDLINE_PARSE: Found {len(redline_items)} conflicts to redline")
-        logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
+        # ALWAYS generate output even if no conflicts found (will add review note)
         if not redline_items:
-
-            return {
-                "success": False,
-                "error": "No conflicts found in analysis data for redlining"
-            }
+            logger.info("REDLINE_EMPTY: No conflicts found, but will still generate output document with review note")
+            # Add a placeholder to ensure document is still processed
+            # The document will be saved with metadata indicating review was completed
         
         # Step 4: Apply redlining with exact sentence matching
+        # If no conflicts, this will still process the document structure
         logger.info(f"REDLINE_APPLY: Starting redlining - {len(redline_items)} conflicts, {len(doc.paragraphs)} paragraphs")
         
-        results = apply_exact_sentence_redlining(doc, redline_items)
+        if redline_items:
+            results = apply_exact_sentence_redlining(doc, redline_items)
+        else:
+            # Create empty results structure when no conflicts
+            results = {
+                'matches_found': 0,
+                'paragraphs_with_redlines': [],
+                'failed_matches': [],
+                'total_conflicts': 0
+            }
+            # Add a review note to the first paragraph to indicate document was reviewed
+            try:
+                if doc.paragraphs:
+                    para = doc.paragraphs[0]
+                    run = para.add_run("\n[Legal-AI Review Complete - No conflicts identified]")
+                    run.font.color.rgb = RGBColor(0, 128, 0)  # Green color
+                    run.font.italic = True
+                    logger.info("DOCX_REVIEW_NOTE: Added review note to first paragraph")
+            except Exception as note_err:
+                logger.warning(f"DOCX_REVIEW_NOTE_FAILED: {note_err}")
         logger.info(f"REDLINE_RESULTS: Matches found: {results['matches_found']}")
         logger.info(f"REDLINE_RESULTS: Failed matches: {len(results.get('failed_matches', []))}")
-        logger.info(f"REDLINE_RESULTS: Success rate: {(results['matches_found']/len(redline_items)*100):.1f}%")
+        if redline_items:
+            logger.info(f"REDLINE_RESULTS: Success rate: {(results['matches_found']/len(redline_items)*100):.1f}%")
+        else:
+            logger.info("REDLINE_RESULTS: No conflicts to match - document reviewed")
 
         # Step 5: Save and upload redlined document
         redlined_s3_key = _create_redlined_filename(agent_document_key, session_id, user_id)
