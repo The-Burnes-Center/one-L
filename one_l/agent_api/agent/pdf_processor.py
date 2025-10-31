@@ -373,7 +373,7 @@ class PDFProcessor:
             pdf_file = io.BytesIO(pdf_bytes)
             doc = fitz.open(stream=pdf_file, filetype="pdf")
             
-            # Track annotations per page
+            # Track annotations per page, grouped by conflict to avoid duplicate tags
             page_annotations = {}
             
             for conflict in conflicts:
@@ -393,21 +393,71 @@ class PDFProcessor:
                     logger.warning(f"PDF_ANNOTATION: No cached matches found for conflict {clarification_id}, searching again")
                     matches = self.find_text_in_pdf(pdf_bytes, conflict_text, fuzzy=True)
                 
-                # Annotate ALL discovered matches to increase redlining density
+                # Group matches by page to handle multi-line conflicts correctly
                 if matches:
+                    # Group matches by page
+                    matches_by_page = {}
                     for match in matches:
                         page_num = match['page_number']
+                        if page_num not in matches_by_page:
+                            matches_by_page[page_num] = []
+                        matches_by_page[page_num].append(match)
+                    
+                    # For each page with matches, group closely-spaced matches together
+                    # This prevents duplicate conflict tags for multi-line conflicts
+                    # while still handling separate instances correctly
+                    for page_num, page_matches in matches_by_page.items():
                         if page_num not in page_annotations:
                             page_annotations[page_num] = []
-                        page_annotations[page_num].append({
-                            'clarification_id': clarification_id,
-                            'comment': comment,
-                            'conflict_text': conflict_text[:100],
-                            'position': match.get('position'),
-                            'x': match.get('x', 50),
-                            'y': match.get('y', 750)
-                        })
-                        logger.info(f"PDF_ANNOTATION: Added conflict {clarification_id} to page {page_num}")
+                        
+                        # Sort matches by y position (top to bottom) to get the first line
+                        sorted_matches = sorted(page_matches, key=lambda m: (
+                            m.get('y', 0),
+                            m.get('x', 0)
+                        ))
+                        
+                        # Group matches that are close together vertically (within ~50 points)
+                        # This handles multi-line conflicts while avoiding grouping unrelated instances
+                        grouped_clusters = []
+                        current_cluster = [sorted_matches[0]]
+                        
+                        for i in range(1, len(sorted_matches)):
+                            prev_y = sorted_matches[i-1].get('y', 0)
+                            curr_y = sorted_matches[i].get('y', 0)
+                            # If matches are close vertically (within 50 points), they're part of same multi-line conflict
+                            if curr_y - prev_y < 50:
+                                current_cluster.append(sorted_matches[i])
+                            else:
+                                # Start a new cluster for separate instances
+                                grouped_clusters.append(current_cluster)
+                                current_cluster = [sorted_matches[i]]
+                        
+                        # Add the last cluster
+                        if current_cluster:
+                            grouped_clusters.append(current_cluster)
+                        
+                        # Create one annotation entry per cluster
+                        for cluster in grouped_clusters:
+                            # Use the first (topmost) match for positioning the conflict tag
+                            first_match = cluster[0]
+                            
+                            # Collect all positions in this cluster for creating a combined highlight
+                            all_positions = [m.get('position') for m in cluster if m.get('position')]
+                            
+                            page_annotations[page_num].append({
+                                'clarification_id': clarification_id,
+                                'comment': comment,
+                                'conflict_text': conflict_text[:100],
+                                'position': first_match.get('position'),  # Primary position for tag placement
+                                'all_positions': all_positions,  # All positions for combined highlight
+                                'x': first_match.get('x', 50),
+                                'y': first_match.get('y', 750)
+                            })
+                            
+                            if len(cluster) > 1:
+                                logger.info(f"PDF_ANNOTATION: Added conflict {clarification_id} to page {page_num} with {len(cluster)} matches grouped (multi-line conflict)")
+                            else:
+                                logger.info(f"PDF_ANNOTATION: Added conflict {clarification_id} to page {page_num} with 1 match")
                 else:
                     logger.warning(f"PDF_ANNOTATION: No matches found for conflict {clarification_id}: '{conflict_text[:50]}...'")
             
@@ -460,10 +510,49 @@ class PDFProcessor:
                         x = item.get('x', 50)
                         y = item.get('y', 750)
                         pos = item.get('position')
+                        all_positions = item.get('all_positions', [])
                         
-                        # If we have a rectangle from the match, use it to highlight the text
-                        if pos and hasattr(pos, 'x0'):
-                            # Use BOTH highlight and text annotation for better visibility
+                        # If we have rectangles from matches, use them to highlight the text
+                        if all_positions:
+                            # Create highlight annotations for ALL lines of the conflict
+                            # This ensures the entire multi-line conflict is highlighted
+                            try:
+                                for highlight_pos in all_positions:
+                                    if highlight_pos and hasattr(highlight_pos, 'x0'):
+                                        highlight = page.add_highlight_annot(highlight_pos)
+                                        highlight.set_colors(stroke=(1, 0, 0))  # Red color
+                                        highlight.update()
+                                
+                                # Only create ONE text annotation (conflict tag) per conflict
+                                # Position it at the start of the first line (topmost position)
+                                if pos and hasattr(pos, 'x1'):
+                                    # Position the icon to the right of the highlighted text on the first line
+                                    comment_x = pos.x1 + 5  # 5 points to the right
+                                    comment_y = pos.y0
+                                else:
+                                    comment_x = x + 50
+                                    comment_y = y
+                                
+                                comment_point = fitz.Point(comment_x, comment_y)
+                                
+                                # Create text annotation (shows as an icon/note that displays comment when clicked)
+                                # This is the ONLY conflict tag for this conflict, even if it spans multiple lines
+                                comment_annot = page.add_text_annot(comment_point, item['clarification_id'])
+                                comment_annot.set_info(title=f"Conflict {item['clarification_id']}", content=item['comment'])
+                                comment_annot.set_colors(stroke=(1, 0, 0))  # Red color
+                                comment_annot.update()
+                                
+                                logger.info(f"PDF_ANNOTATION: Added {len(all_positions)} highlights + 1 text annotation for conflict {item['clarification_id']} (multi-line conflict)")
+                            except Exception as annot_error:
+                                logger.warning(f"Could not add annotations: {annot_error}")
+                                # Fall back to text annotation only
+                                point = fitz.Point(x, y)
+                                annot = page.add_text_annot(point, f"[{item['clarification_id']}]")
+                                annot.set_info(title=f"Conflict {item['clarification_id']}", content=item['comment'])
+                                annot.set_colors(stroke=(1, 0, 0))
+                                annot.update()
+                        elif pos and hasattr(pos, 'x0'):
+                            # Single-line conflict with position data
                             try:
                                 # Create a highlight annotation on the actual text
                                 highlight = page.add_highlight_annot(pos)
