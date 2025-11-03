@@ -12,6 +12,7 @@ const SessionSidebar = ({
   const { sessionId } = useParams();
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [adminExpanded, setAdminExpanded] = useState(false);
@@ -22,6 +23,13 @@ const SessionSidebar = ({
       loadSessions();
     }
   }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh sessions when sessionId changes (user navigates to different session)
+  useEffect(() => {
+    if (currentUserId && isVisible && sessionId) {
+      loadSessions();
+    }
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh sessions periodically to catch newly completed sessions
   useEffect(() => {
@@ -44,14 +52,14 @@ const SessionSidebar = ({
   const loadSessions = async () => {
     try {
       setLoading(true);
-      // Only load sessions that have processed documents (results)
-      const response = await sessionAPI.getUserSessions(currentUserId, true);
+      // Load ALL sessions (including new ones without results) so they appear in sidebar
+      const response = await sessionAPI.getUserSessions(currentUserId, false);
       if (response.success) {
         setSessions(response.sessions || []);
 
       }
     } catch (error) {
-
+      console.error('Error loading sessions:', error);
     } finally {
       setLoading(false);
     }
@@ -59,18 +67,20 @@ const SessionSidebar = ({
 
   const handleNewSession = async () => {
     try {
-      setLoading(true);
+      setCreatingSession(true);
       const response = await sessionAPI.createSession(currentUserId);
       if (response.success) {
+        // Refresh sessions list to include the newly created session
+        await loadSessions();
         // Navigate to the new session with new URL structure
         navigate(`/${response.session.session_id}`, { 
           state: { session: response.session } 
         });
       }
     } catch (error) {
-
+      console.error('Error creating new session:', error);
     } finally {
-      setLoading(false);
+      setCreatingSession(false);
     }
   };
 
@@ -91,7 +101,7 @@ const SessionSidebar = ({
       await loadSessions(); // Reload sessions
       setEditingSession(null);
     } catch (error) {
-
+      console.error('Error updating session title:', error);
     }
   };
 
@@ -106,7 +116,7 @@ const SessionSidebar = ({
           navigate('/');
         }
       } catch (error) {
-
+        console.error('Error deleting session:', error);
       }
     }
   };
@@ -148,7 +158,7 @@ const SessionSidebar = ({
       }}>
         <button
           onClick={handleNewSession}
-          disabled={loading}
+          disabled={creatingSession}
           style={{
             width: '100%',
             padding: '12px',
@@ -156,7 +166,7 @@ const SessionSidebar = ({
             color: '#ffffff',
             border: '1px solid #333',
             borderRadius: '6px',
-            cursor: loading ? 'not-allowed' : 'pointer',
+            cursor: creatingSession ? 'not-allowed' : 'pointer',
             fontSize: '14px',
             fontWeight: '500',
             display: 'flex',
@@ -166,14 +176,14 @@ const SessionSidebar = ({
             transition: 'background-color 0.2s'
           }}
           onMouseEnter={(e) => {
-            if (!loading) e.target.style.backgroundColor = '#333';
+            if (!creatingSession) e.target.style.backgroundColor = '#333';
           }}
           onMouseLeave={(e) => {
-            if (!loading) e.target.style.backgroundColor = '#1f1f1f';
+            if (!creatingSession) e.target.style.backgroundColor = '#1f1f1f';
           }}
         >
           <span style={{ fontSize: '16px' }}>+</span>
-          {loading ? 'Creating...' : 'New Session'}
+          {creatingSession ? 'Creating...' : 'New Session'}
         </button>
       </div>
 
