@@ -100,21 +100,53 @@ def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, An
 def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str, Any]:
     """Get all sessions for a user, optionally filtered by whether they have results"""
     try:
+        # Validate environment variables
+        if not SESSIONS_TABLE:
+            logger.error("SESSIONS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Sessions table not configured',
+                'sessions': []
+            }
+        
         # Try to get from DynamoDB
         try:
             table = dynamodb.Table(SESSIONS_TABLE)
-            response = table.scan(
-                FilterExpression='user_id = :user_id',
-                ExpressionAttributeValues={':user_id': user_id}
-            )
-            sessions = response.get('Items', [])
+            sessions = []
+            last_evaluated_key = None
+            
+            # Handle pagination for scan operation (DynamoDB has 1MB limit per page)
+            while True:
+                scan_kwargs = {
+                    'FilterExpression': 'user_id = :user_id',
+                    'ExpressionAttributeValues': {':user_id': user_id}
+                }
+                
+                if last_evaluated_key:
+                    scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = table.scan(**scan_kwargs)
+                sessions.extend(response.get('Items', []))
+                
+                # Check if there are more pages
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
             
             # Filter sessions with results if requested
             if filter_by_results:
                 sessions = [s for s in sessions if s.get('has_results', False)]
             
-            # Sort by created_at descending
-            sessions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            # Sort by created_at descending (handle missing or invalid dates)
+            try:
+                sessions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            except (TypeError, AttributeError) as sort_error:
+                logger.warning(f"Error sorting sessions by created_at: {sort_error}")
+                # Fallback: sort by updated_at if available, otherwise keep original order
+                try:
+                    sessions.sort(key=lambda x: x.get('updated_at', ''), reverse=True)
+                except (TypeError, AttributeError):
+                    pass  # Keep original order if sorting fails
             
             logger.info(f"Retrieved {len(sessions)} sessions for user {user_id} (filter_by_results: {filter_by_results})")
             
@@ -124,24 +156,55 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str
             }
             
         except Exception as e:
-            logger.warning(f"Could not retrieve sessions from DynamoDB: {e}")
-            # Return empty list if DynamoDB fails
+            error_type = type(e).__name__
+            error_msg = str(e)
+            
+            # Log the full error for debugging
+            logger.error(f"Could not retrieve sessions from DynamoDB: {error_type}: {error_msg}")
+            logger.error(f"Full error details: {repr(e)}")
+            
+            # Check if it's a specific DynamoDB error
+            if 'ResourceNotFoundException' in error_type or 'does not exist' in error_msg:
+                logger.error(f"SESSIONS_TABLE '{SESSIONS_TABLE}' does not exist")
+                return {
+                    'success': False,
+                    'error': f'Sessions table not found: {SESSIONS_TABLE}',
+                    'sessions': []
+                }
+            elif 'AccessDeniedException' in error_type or 'Access denied' in error_msg:
+                logger.error(f"Access denied to SESSIONS_TABLE '{SESSIONS_TABLE}'")
+                return {
+                    'success': False,
+                    'error': 'Access denied to sessions table',
+                    'sessions': []
+                }
+            
+            # For other errors, return empty list gracefully (don't fail completely)
+            logger.warning(f"Returning empty sessions list due to error: {error_msg}")
             return {
                 'success': True,
                 'sessions': []
             }
             
     except Exception as e:
-        logger.error(f"Error getting user sessions: {e}")
+        logger.error(f"Unexpected error getting user sessions: {e}", exc_info=True)
         return {
             'success': False,
-            'error': str(e),
+            'error': f'Unexpected error: {str(e)}',
             'sessions': []
         }
 
 def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str, Any]:
     """Update session title"""
     try:
+        # Validate environment variables
+        if not SESSIONS_TABLE:
+            logger.error("SESSIONS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Sessions table not configured'
+            }
+        
         table = dynamodb.Table(SESSIONS_TABLE)
         
         # Update the session
@@ -166,10 +229,26 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         }
         
     except Exception as e:
-        logger.error(f"Error updating session title: {e}")
+        error_type = type(e).__name__
+        error_msg = str(e)
+        logger.error(f"Error updating session title ({error_type}): {error_msg}")
+        logger.error(f"Full error details: {repr(e)}")
+        
+        # Provide more specific error messages
+        if 'ConditionalCheckFailedException' in error_type:
+            return {
+                'success': False,
+                'error': 'Session not found or access denied'
+            }
+        elif 'ResourceNotFoundException' in error_type:
+            return {
+                'success': False,
+                'error': f'Sessions table not found: {SESSIONS_TABLE}'
+            }
+        
         return {
             'success': False,
-            'error': str(e)
+            'error': f'Failed to update session title: {error_msg}'
         }
 
 def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
