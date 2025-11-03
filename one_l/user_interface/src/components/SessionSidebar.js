@@ -25,9 +25,26 @@ const SessionSidebar = ({
   }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh sessions when sessionId changes (user navigates to different session)
+  // This ensures the first session created by AutoSessionRedirect appears in the sidebar
   useEffect(() => {
     if (currentUserId && isVisible && sessionId) {
+      // Load sessions immediately
       loadSessions();
+      
+      // Retry a few times to handle DynamoDB eventual consistency
+      // This is especially important for the first session created on app load
+      let retryCount = 0;
+      const maxRetries = 3;
+      const retryInterval = setInterval(() => {
+        retryCount++;
+        if (retryCount <= maxRetries) {
+          loadSessions();
+        } else {
+          clearInterval(retryInterval);
+        }
+      }, 1000); // Retry every 1 second, up to 3 times
+      
+      return () => clearInterval(retryInterval);
     }
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -146,10 +163,10 @@ const SessionSidebar = ({
           try {
             await loadSessions();
           } catch (error) {
-            // Silently fail - we already have the session in the list
+            // Silently fail - we already have the session in the list via optimistic update
             console.warn('Failed to refresh sessions list after creation:', error);
           }
-        }, 500);
+        }, 1000);
         
         // Navigate to the new session with new URL structure
         navigate(`/${newSession.session_id}`, { 
@@ -190,23 +207,6 @@ const SessionSidebar = ({
       setEditingSession(null);
     } catch (error) {
       console.error('Error updating session title:', error);
-      // Handle 500 errors and other errors gracefully
-      if (error.message && error.message.includes('500')) {
-        // For 500 errors, show a user-friendly message but don't fail silently
-        const shouldRetry = window.confirm(
-          'Failed to update session title due to a server error. The title change may not have been saved.\n\n' +
-          'Would you like to try again?'
-        );
-        if (shouldRetry) {
-          // Keep the editing state active so user can try again
-          return;
-        }
-      } else {
-        // For other errors, show a message
-        alert(`Failed to update session title: ${error.message || 'Unknown error'}`);
-      }
-      // Exit edit mode on error (unless user chose to retry)
-      setEditingSession(null);
     }
   };
 

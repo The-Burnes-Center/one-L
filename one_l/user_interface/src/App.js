@@ -160,10 +160,11 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   const isNewSession = location.state?.session?.session_id === session?.session_id;
 
-  // Reset state when session changes and load session results
+  // Reset state and load session results when session changes
   useEffect(() => {
     if (session?.session_id) {
-      // Reset all processing/workflow state when switching sessions
+      // Reset workflow state when switching to a different session
+      // This ensures each session shows its own state, not stale data from previous session
       setUploadedFiles([]);
       setGenerating(false);
       setWorkflowMessage('');
@@ -1284,14 +1285,24 @@ const AutoSessionRedirect = () => {
 
       const response = await sessionAPI.createSession(userId);
       
-      if (response.success && response.session?.session_id) {
-
-        navigate(`/${response.session.session_id}`, { 
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body in AutoSessionRedirect:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.session?.session_id) {
+        navigate(`/${responseData.session.session_id}`, { 
           replace: true, 
-          state: { session: response.session } 
+          state: { session: responseData.session } 
         });
       } else {
-        throw new Error(response.message || 'Failed to create session');
+        throw new Error(responseData.message || responseData.error || 'Failed to create session');
       }
     } catch (err) {
 

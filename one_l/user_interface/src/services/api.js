@@ -606,16 +606,7 @@ const sessionAPI = {
         })
       });
       
-      // Handle Lambda response structure (may be wrapped in body)
-      if (response.body) {
-        try {
-          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-        } catch (e) {
-          console.error('Error parsing updateSessionTitle response body:', e);
-          return response;
-        }
-      }
-      
+
       return response;
     } catch (error) {
       console.error('Error updating session title:', error);
