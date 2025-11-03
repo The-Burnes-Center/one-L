@@ -1228,52 +1228,10 @@ def _ensure_docx_page_coverage(doc, pages_needing_coverage: List[int], existing_
             search_range = range(max(0, para_start - 5), min(para_end + 10, len(doc.paragraphs)))
             redlines_added_this_page = 0
             
-            # First pass: find paragraphs with keywords and redline them
-            for para_idx in search_range:
-                if redlines_added_this_page >= min_redlines_per_page:
-                    break
-                if para_idx in existing_redlined_paras:
-                    continue
-                if para_idx >= len(doc.paragraphs):
-                    break
-                para = doc.paragraphs[para_idx]
-                para_text = para.text.strip()
-                if not para_text or len(para_text) < 10:
-                    continue
-                
-                para_text_lower = para_text.lower()
-                # Check for keywords
-                for keyword in keywords:
-                    if keyword.lower() in para_text_lower:
-                        keyword_pos = para_text_lower.find(keyword.lower())
-                        if keyword_pos >= 0:
-                            # Redline the keyword
-                            try:
-                                before_text = para_text[:keyword_pos]
-                                keyword_text = para_text[keyword_pos:keyword_pos + len(keyword)]
-                                after_text = para_text[keyword_pos + len(keyword):]
-                                
-                                para.clear()
-                                if before_text:
-                                    para.add_run(before_text)
-                                
-                                keyword_run = para.add_run(keyword_text)
-                                keyword_run.font.color.rgb = RGBColor(255, 0, 0)
-                                keyword_run.font.strike = True
-                                keyword_run.bold = True
-                                
-                                if after_text:
-                                    para.add_run(after_text)
-                                
-                                existing_redlined_paras.append(para_idx)
-                                redlines_added_this_page += 1
-                                logger.info(f"DOCX_PAGE_COVERAGE: Redlined '{keyword}' in para {para_idx} (page {page_num + 1})")
-                                break
-                            except Exception as err:
-                                logger.warning(f"DOCX_PAGE_COVERAGE: Error redlining keyword: {err}")
-                                continue
+            # Skip keyword redlining - only add review notes if page has no conflict redlines
+            # (User requested: no single-word redlining, only full conflict paragraphs)
             
-            # Second pass: if not enough redlines, add review notes to suitable paragraphs
+            # Add review notes to suitable paragraphs if page has no conflict redlines
             if redlines_added_this_page < min_redlines_per_page:
                 for para_idx in search_range:
                     if redlines_added_this_page >= min_redlines_per_page:
