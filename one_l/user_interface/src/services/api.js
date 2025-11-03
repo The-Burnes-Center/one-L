@@ -309,10 +309,52 @@ const agentAPI = {
    */
   downloadFile: async (s3Key, bucketType = 'agent_processing', originalFilename = null) => {
     try {
-
-
-
-
+      // Helper function to get file extension from content type
+      const getExtensionFromContentType = (contentType) => {
+        const mimeToExt = {
+          'application/pdf': '.pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+          'application/msword': '.doc',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+          'application/vnd.ms-excel': '.xls',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+          'application/vnd.ms-powerpoint': '.ppt',
+          'text/plain': '.txt',
+          'text/html': '.html',
+          'text/csv': '.csv',
+          'application/json': '.json',
+          'image/png': '.png',
+          'image/jpeg': '.jpg',
+          'image/gif': '.gif'
+        };
+        return mimeToExt[contentType] || '';
+      };
+      
+      // Helper function to ensure filename has proper extension
+      const ensureExtension = (filename, contentType) => {
+        if (!filename) return filename;
+        
+        // Check if filename already has an extension
+        const hasExtension = /\.\w+$/.test(filename);
+        
+        if (hasExtension) {
+          return filename;
+        }
+        
+        // Add extension based on content type
+        const ext = getExtensionFromContentType(contentType);
+        if (ext) {
+          return filename + ext;
+        }
+        
+        // Fallback: try to extract extension from s3Key if available
+        const s3KeyExt = s3Key.match(/\.(\w+)$/);
+        if (s3KeyExt) {
+          return filename + '.' + s3KeyExt[1];
+        }
+        
+        return filename;
+      };
       
       // First get file metadata and content
       const retrieveResponse = await knowledgeManagementAPI.retrieveFile(s3Key, bucketType, true);
@@ -340,14 +382,21 @@ const agentAPI = {
         bytes[i] = binaryContent.charCodeAt(i);
       }
       
-      // Create blob and download
-      const blob = new Blob([bytes], { type: responseData.content_type || 'application/octet-stream' });
+      // Get content type and ensure proper MIME type is used
+      const contentType = responseData.content_type || 'application/octet-stream';
+      
+      // Determine filename with proper extension
+      let downloadFilename = originalFilename || s3Key.split('/').pop();
+      downloadFilename = ensureExtension(downloadFilename, contentType);
+      
+      // Create blob with proper MIME type
+      const blob = new Blob([bytes], { type: contentType });
       const url = window.URL.createObjectURL(blob);
       
       // Create download link
       const link = document.createElement('a');
       link.href = url;
-      link.download = originalFilename || s3Key.split('/').pop();
+      link.download = downloadFilename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -358,12 +407,10 @@ const agentAPI = {
       return {
         success: true,
         message: 'File downloaded successfully',
-        filename: link.download
+        filename: downloadFilename
       };
       
     } catch (error) {
-
-      
       // Handle specific error cases
       let errorMessage = error.message;
       if (error.message.includes('not found') || error.message.includes('NoSuchKey')) {

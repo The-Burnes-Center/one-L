@@ -12,6 +12,14 @@ from typing import Dict, Any, List
 from .system_prompt import SYSTEM_PROMPT
 from .tools import retrieve_from_knowledge_base, redline_document, get_tool_definitions, save_analysis_to_dynamodb, parse_conflicts_for_redlining
 
+# Import PDF utilities if available
+try:
+    from .pdf_processor import is_pdf_file
+    PDF_SUPPORT_ENABLED = True
+except ImportError:
+    PDF_SUPPORT_ENABLED = False
+    def is_pdf_file(filename): return False
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -146,22 +154,27 @@ class Model:
             filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
             
             # Check document size and decide whether to chunk
-            try:
-                from docx import Document
-                import io
-                doc = Document(io.BytesIO(document_data))
-                total_paragraphs = len(doc.paragraphs)
-                logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
-                
-                # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
-                if total_paragraphs > 100:
-                    logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
-                    return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
-                else:
-                    instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
-            except Exception as e:
-                logger.warning(f"Could not pre-analyze document structure: {e}")
-                instruction_text = "Please analyze this vendor submission document completely."
+            # Only try to parse DOCX files for chunking (PDFs are handled differently)
+            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+            
+            if not is_pdf_file(document_s3_key):
+                try:
+                    from docx import Document
+                    import io
+                    doc = Document(io.BytesIO(document_data))
+                    total_paragraphs = len(doc.paragraphs)
+                    logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
+                    
+                    # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
+                    if total_paragraphs > 100:
+                        logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
+                        return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
+                    else:
+                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+                except Exception as e:
+                    logger.warning(f"Could not pre-analyze document structure: {e}")
+            else:
+                logger.info(f"PDF document detected: {document_s3_key} - skipping DOCX pre-analysis")
             
             messages = [
                 {
@@ -262,8 +275,8 @@ class Model:
                 logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (paragraphs {start_para}-{end_para})")
                 
                 # Create instruction for this specific chunk
-                approx_pages = f"(approximately pages {start_para//20}-{end_para//20})"
-                instruction_text = f"Analyze this vendor submission section {approx_pages}. Focus on this specific portion of the document. Find ALL conflicts in this section."
+                approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
+                instruction_text = f"CRITICAL: Analyze this vendor submission section {approx_pages} thoroughly. You MUST search through EVERY paragraph, table, and clause in this section for ANY conflicts with Massachusetts Commonwealth requirements. Be aggressive - look for deviations, limitations, missing requirements, non-compliant language, or any terms that don't align with the standards. Find ALL conflicts in this section, no matter how minor. If you find conflicts, list them in the markdown table format. DO NOT respond with 'N/A' or 'no conflicts' unless you have verified EVERY line in this section."
                 
                 messages = [
                     {
