@@ -1286,8 +1286,8 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         
         return meaningful_words
     
-    def find_word_sequence_match(search_words, para_words, min_match_ratio=0.6):
-        """Find if a significant portion of search words appear in sequence in paragraph."""
+    def find_word_sequence_match(search_words, para_words, min_match_ratio=0.5):
+        """Find if a significant portion of search words appear in sequence in paragraph. Lowered to 0.5 for better recall on later chunks."""
         if len(search_words) < 3:
             return False
         
@@ -1363,10 +1363,10 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             all_matches.append({'para_idx': para_idx, 'matched_text': 'word_sequence_match'})
             matched = True
         
-        # Try partial word matching (lowered threshold to 50% for more matches)
+        # Try partial word matching (lowered threshold to 40% for more matches, especially for later chunks)
         if not matched and len(search_words) >= 3:
             word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
-            if word_matches / len(search_words) >= 0.5:
+            if word_matches / len(search_words) >= 0.4:
                 logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}, page≈{para_idx // 15}")
                 _apply_redline_to_paragraph(paragraph, para_text, redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'word_partial_match'})

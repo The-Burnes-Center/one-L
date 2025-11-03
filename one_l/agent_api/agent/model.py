@@ -275,8 +275,8 @@ class Model:
                 logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (paragraphs {start_para}-{end_para})")
                 
                 # Create instruction for this specific chunk
-                approx_pages = f"(approximately pages {start_para//20}-{end_para//20})"
-                instruction_text = f"Analyze this vendor submission section {approx_pages}. Focus on this specific portion of the document. Find ALL conflicts in this section."
+                approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
+                instruction_text = f"CRITICAL: Analyze this vendor submission section {approx_pages} thoroughly. You MUST search through EVERY paragraph, table, and clause in this section for ANY conflicts with Massachusetts Commonwealth requirements. Be aggressive - look for deviations, limitations, missing requirements, non-compliant language, or any terms that don't align with the standards. Find ALL conflicts in this section, no matter how minor. If you find conflicts, list them in the markdown table format. DO NOT respond with 'N/A' or 'no conflicts' unless you have verified EVERY line in this section."
                 
                 messages = [
                     {
