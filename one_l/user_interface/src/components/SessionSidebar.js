@@ -54,12 +54,32 @@ const SessionSidebar = ({
       setLoading(true);
       // Load ALL sessions (including new ones without results) so they appear in sidebar
       const response = await sessionAPI.getUserSessions(currentUserId, false);
-      if (response.success) {
-        setSessions(response.sessions || []);
-
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success) {
+        setSessions(responseData.sessions || []);
+      } else {
+        console.error('Failed to load sessions:', responseData.error || 'Unknown error');
+        // Don't clear existing sessions on error - keep what we have
       }
     } catch (error) {
       console.error('Error loading sessions:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      // Don't clear existing sessions on error - keep what we have
     } finally {
       setLoading(false);
     }
@@ -69,16 +89,52 @@ const SessionSidebar = ({
     try {
       setCreatingSession(true);
       const response = await sessionAPI.createSession(currentUserId);
-      if (response.success) {
-        // Refresh sessions list to include the newly created session
-        await loadSessions();
-        // Navigate to the new session with new URL structure
-        navigate(`/${response.session.session_id}`, { 
-          state: { session: response.session } 
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.session) {
+        // Add the new session to the list immediately (optimistic update)
+        const newSession = responseData.session;
+        setSessions(prevSessions => {
+          // Check if session already exists to avoid duplicates
+          const exists = prevSessions.some(s => s.session_id === newSession.session_id);
+          if (exists) {
+            return prevSessions;
+          }
+          // Add new session at the beginning
+          return [newSession, ...prevSessions];
         });
+        
+        // Refresh sessions list from server after a short delay to handle eventual consistency
+        setTimeout(async () => {
+          await loadSessions();
+        }, 500);
+        
+        // Navigate to the new session with new URL structure
+        navigate(`/${newSession.session_id}`, { 
+          state: { session: newSession } 
+        });
+      } else {
+        console.error('Failed to create session:', responseData.error || 'Unknown error');
+        alert('Failed to create new session. Please try again.');
       }
     } catch (error) {
       console.error('Error creating new session:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      alert(`Error creating new session: ${error.message || 'Unknown error'}`);
     } finally {
       setCreatingSession(false);
     }

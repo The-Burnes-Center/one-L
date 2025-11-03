@@ -51,16 +51,25 @@ const SessionView = () => {
       }
 
       // Fallback: Load ALL user sessions (including new ones without results) and find the current one
-
       const response = await sessionAPI.getUserSessions(userId, false); // Don't filter by results for session lookup
-      if (response.success && response.sessions) {
-        const foundSession = response.sessions.find(s => s.session_id === sessionId);
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body in SessionView:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.sessions) {
+        const foundSession = responseData.sessions.find(s => s.session_id === sessionId);
         if (foundSession) {
-
           setSession(foundSession);
         } else {
           // Session not found - might be a new session that hasn't been persisted yet
-
           setSession({
             session_id: sessionId,
             title: 'Loading Session...',
@@ -70,7 +79,7 @@ const SessionView = () => {
           });
         }
       } else {
-        setError('Failed to load sessions');
+        setError(responseData.error || 'Failed to load sessions');
       }
     } catch (err) {
 

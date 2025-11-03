@@ -535,10 +535,19 @@ const sessionAPI = {
         })
       });
       
-
+      // Handle Lambda response structure (may be wrapped in body)
+      if (response.body) {
+        try {
+          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing createSession response body:', e);
+          return response;
+        }
+      }
+      
       return response;
     } catch (error) {
-
+      console.error('Error in createSession API call:', error);
       throw error;
     }
   },
@@ -548,8 +557,6 @@ const sessionAPI = {
    */
   getUserSessions: async (userId, filterByResults = false) => {
     try {
-
-      
       const queryParams = new URLSearchParams({
         action: 'list',
         user_id: userId
@@ -561,10 +568,19 @@ const sessionAPI = {
       
       const response = await apiCall(`/knowledge_management/sessions?${queryParams.toString()}`);
       
-
+      // Handle Lambda response structure (may be wrapped in body)
+      if (response.body) {
+        try {
+          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing getUserSessions response body:', e);
+          return response;
+        }
+      }
+      
       return response;
     } catch (error) {
-
+      console.error('Error in getUserSessions API call:', error);
       throw error;
     }
   },
