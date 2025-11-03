@@ -550,17 +550,30 @@ def redline_document(
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         # Route to appropriate processor based on file type
-        # For PDFs, ALWAYS generate output even with 0 conflicts (will use fallback annotations)
-        if is_pdf and PDF_SUPPORT_ENABLED:
-            logger.info("PROCESSING_PDF: Using PDF annotation-based redlining")
-            return _redline_pdf_document(
-                agent_processing_bucket,
-                agent_document_key,
-                redline_items,
-                document_s3_key,
-                session_id,
-                user_id
-            )
+        # PDF path temporarily disabled in favor of converting PDF -> DOCX for redlining.
+        if is_pdf:
+            logger.info("PROCESSING_PDF: Converting PDF to DOCX for redlining (PDF path commented out)")
+            # Keep existing PDF redlining code commented, do not remove
+            # return _redline_pdf_document(
+            #     agent_processing_bucket,
+            #     agent_document_key,
+            #     redline_items,
+            #     document_s3_key,
+            #     session_id,
+            #     user_id
+            # )
+
+            # Convert PDF in processing bucket to DOCX and continue with DOCX flow
+            try:
+                converted_key = _convert_pdf_to_docx_in_processing_bucket(agent_processing_bucket, agent_document_key)
+                if converted_key:
+                    agent_document_key = converted_key
+                else:
+                    logger.warning("PDF->DOCX conversion returned no key; proceeding with placeholder DOCX")
+                    agent_document_key = _create_placeholder_docx_in_processing_bucket(agent_processing_bucket, agent_document_key)
+            except Exception as conv_err:
+                logger.error(f"PDF->DOCX conversion failed: {conv_err}")
+                agent_document_key = _create_placeholder_docx_in_processing_bucket(agent_processing_bucket, agent_document_key)
         else:
             logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
             # Continue with DOCX processing below
@@ -2246,6 +2259,91 @@ def _download_and_load_document(bucket: str, s3_key: str):
     except Exception as e:
         logger.error(f"Error downloading and loading document: {str(e)}")
         raise Exception(f"Failed to download and load document: {str(e)}")
+
+
+def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str) -> str:
+    """
+    Convert a PDF stored in the processing bucket into a DOCX file and upload it back.
+    Returns the new DOCX S3 key on success.
+    """
+    try:
+        # Download PDF
+        response = s3_client.get_object(Bucket=agent_bucket, Key=pdf_s3_key)
+        pdf_bytes = response['Body'].read()
+
+        # Try PyMuPDF-based extraction
+        try:
+            import fitz  # type: ignore
+            docx_doc = Document()
+            pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
+                try:
+                    docx_doc.add_paragraph(f"--- Page {page_index + 1} ---")
+                except Exception:
+                    pass
+                # Use block-level text to preserve rough structure
+                blocks = page.get_text("blocks") or []
+                if not blocks:
+                    text = page.get_text("text")
+                    if text:
+                        for line in text.splitlines():
+                            if line.strip():
+                                docx_doc.add_paragraph(line.strip())
+                    continue
+                for (_x0, _y0, _x1, _y1, text, _block_no, _block_type) in blocks:
+                    if isinstance(text, str) and text.strip():
+                        for line in text.splitlines():
+                            if line.strip():
+                                docx_doc.add_paragraph(line.strip())
+            try:
+                pdf.close()
+            except Exception:
+                pass
+        except Exception as fitz_err:
+            logger.warning(f"PDF->DOCX: PyMuPDF not available or failed ({fitz_err}); creating placeholder DOCX")
+            # Fallback: placeholder DOCX with minimal content
+            docx_doc = Document()
+            docx_doc.add_paragraph("PDF content could not be fully converted. Proceeding with DOCX review.")
+
+        # Build DOCX key alongside original, changing extension
+        base_parts = pdf_s3_key.rsplit('.', 1)
+        if len(base_parts) == 2:
+            docx_key = f"{base_parts[0]}.docx"
+        else:
+            docx_key = f"{pdf_s3_key}.docx"
+
+        metadata = {
+            'converted_from_pdf': 'true',
+            'original_pdf_key': pdf_s3_key
+        }
+        ok = _save_and_upload_document(docx_doc, agent_bucket, docx_key, metadata)
+        if not ok:
+            raise Exception("DOCX upload failed")
+        logger.info(f"PDF->DOCX: Uploaded converted DOCX to {docx_key}")
+        return docx_key
+    except Exception as e:
+        logger.error(f"PDF->DOCX conversion error: {e}")
+        raise
+
+
+def _create_placeholder_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str) -> str:
+    """Create a minimal DOCX as a fallback when PDF conversion fails."""
+    docx_doc = Document()
+    docx_doc.add_paragraph("Legal-AI: PDF was converted to DOCX placeholder for redlining.")
+    base_parts = pdf_s3_key.rsplit('.', 1)
+    if len(base_parts) == 2:
+        docx_key = f"{base_parts[0]}_placeholder.docx"
+    else:
+        docx_key = f"{pdf_s3_key}_placeholder.docx"
+    metadata = {
+        'converted_from_pdf': 'true',
+        'original_pdf_key': pdf_s3_key,
+        'placeholder': 'true'
+    }
+    _save_and_upload_document(docx_doc, agent_bucket, docx_key, metadata)
+    logger.info(f"PDF->DOCX: Uploaded placeholder DOCX to {docx_key}")
+    return docx_key
 
 
 def _create_redlined_filename(original_s3_key: str, session_id: str = None, user_id: str = None) -> str:
