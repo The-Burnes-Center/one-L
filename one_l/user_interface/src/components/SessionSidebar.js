@@ -190,6 +190,23 @@ const SessionSidebar = ({
       setEditingSession(null);
     } catch (error) {
       console.error('Error updating session title:', error);
+      // Handle 500 errors and other errors gracefully
+      if (error.message && error.message.includes('500')) {
+        // For 500 errors, show a user-friendly message but don't fail silently
+        const shouldRetry = window.confirm(
+          'Failed to update session title due to a server error. The title change may not have been saved.\n\n' +
+          'Would you like to try again?'
+        );
+        if (shouldRetry) {
+          // Keep the editing state active so user can try again
+          return;
+        }
+      } else {
+        // For other errors, show a message
+        alert(`Failed to update session title: ${error.message || 'Unknown error'}`);
+      }
+      // Exit edit mode on error (unless user chose to retry)
+      setEditingSession(null);
     }
   };
 

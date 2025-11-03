@@ -160,9 +160,25 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   const isNewSession = location.state?.session?.session_id === session?.session_id;
 
-  // Load session results when component mounts and setup WebSocket
+  // Reset state when session changes and load session results
   useEffect(() => {
     if (session?.session_id) {
+      // Reset all processing/workflow state when switching sessions
+      setUploadedFiles([]);
+      setGenerating(false);
+      setWorkflowMessage('');
+      setWorkflowMessageType('');
+      setProcessingStage('');
+      setStageProgress(0);
+      setRedlinedDocuments([]);
+      
+      // Clear any existing progress interval
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+      
+      // Load session results and setup WebSocket for the new session
       loadSessionResults();
       setupWebSocket();
     }
