@@ -31,10 +31,11 @@ const SessionSidebar = ({
       // Load sessions immediately
       loadSessions();
       
-      // Retry a few times to handle DynamoDB eventual consistency
+      // Retry to handle DynamoDB eventual consistency
       // This is especially important for the first session created on app load
+      // Retry multiple times to ensure the session appears
       let retryCount = 0;
-      const maxRetries = 3;
+      const maxRetries = 5; // Increased retries for first session (handles eventual consistency)
       const retryInterval = setInterval(() => {
         retryCount++;
         if (retryCount <= maxRetries) {
@@ -42,11 +43,11 @@ const SessionSidebar = ({
         } else {
           clearInterval(retryInterval);
         }
-      }, 1000); // Retry every 1 second, up to 3 times
+      }, 1500); // Retry every 1.5 seconds
       
       return () => clearInterval(retryInterval);
     }
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh sessions periodically to catch newly completed sessions
   useEffect(() => {

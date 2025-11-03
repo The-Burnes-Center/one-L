@@ -160,18 +160,16 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   const isNewSession = location.state?.session?.session_id === session?.session_id;
 
-  // Reset state and load session results when session changes
+  // Reset processing state and load session results when session changes
   useEffect(() => {
     if (session?.session_id) {
-      // Reset workflow state when switching to a different session
-      // This ensures each session shows its own state, not stale data from previous session
-      setUploadedFiles([]);
+      // Reset only transient processing state when switching sessions
+      // DO NOT reset uploadedFiles or redlinedDocuments - these should persist per session
       setGenerating(false);
       setWorkflowMessage('');
       setWorkflowMessageType('');
       setProcessingStage('');
       setStageProgress(0);
-      setRedlinedDocuments([]);
       
       // Clear any existing progress interval
       if (window.progressInterval) {
@@ -180,6 +178,7 @@ const SessionWorkspace = ({ session }) => {
       }
       
       // Load session results and setup WebSocket for the new session
+      // This will populate sessionResults which shows the redline documents
       loadSessionResults();
       setupWebSocket();
     }
@@ -203,26 +202,78 @@ const SessionWorkspace = ({ session }) => {
       const userId = authService.getUserId();
       
       // Always try to load results - the backend will return empty if none exist
-
-      
       const response = await sessionAPI.getSessionResults(session.session_id, userId);
       
-      if (response.success && response.results) {
-        setSessionResults(response.results);
-
+      // Handle response structure (wrapped in body or direct)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing session results response body:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.results) {
+        setSessionResults(responseData.results);
+        
+        // Convert sessionResults to redlinedDocuments format for display
+        // This allows existing sessions to show their redline documents
+        const redlinedDocsFromResults = responseData.results
+          .filter(result => result.redlined_document_s3_key)
+          .map(result => ({
+            originalFile: {
+              filename: result.document_name,
+              s3_key: result.document_s3_key
+            },
+            redlinedDocument: result.redlined_document_s3_key,
+            analysis: result.analysis_id,
+            success: true,
+            processing: false,
+            status: 'completed',
+            progress: 100
+          }));
+        
+        // Merge with any in-progress documents (don't replace them if they're still processing)
+        setRedlinedDocuments(prev => {
+          // Keep any in-progress documents
+          const inProgress = prev.filter(doc => doc.processing || doc.status === 'processing');
+          
+          // Create a map of existing documents by analysis_id or redlinedDocument key
+          const existingDocsMap = new Map();
+          prev.forEach(doc => {
+            const key = doc.analysis || doc.redlinedDocument;
+            if (key) {
+              existingDocsMap.set(key, doc);
+            }
+          });
+          
+          // Add completed documents from database, but don't overwrite in-progress ones
+          const completedFromDb = redlinedDocsFromResults.filter(doc => {
+            const key = doc.analysis || doc.redlinedDocument;
+            if (!key) return false;
+            
+            const existing = existingDocsMap.get(key);
+            // Only add if it doesn't exist, or if existing is not in-progress
+            return !existing || (!existing.processing && existing.status !== 'processing');
+          });
+          
+          // Combine: in-progress first, then new completed docs from DB
+          return [...inProgress, ...completedFromDb];
+        });
       } else {
         // Session might not have results yet
-
         setSessionResults([]);
+        setRedlinedDocuments([]);
       }
     } catch (error) {
       // Don't log as error for new sessions - they won't have results yet
       if (session?.has_results) {
-
-      } else {
-
+        console.error('Error loading session results:', error);
       }
       setSessionResults([]);
+      setRedlinedDocuments([]);
     } finally {
       setLoadingResults(false);
     }
@@ -316,13 +367,10 @@ const SessionWorkspace = ({ session }) => {
     }
   };
 
-  const handleJobCompleted = (message) => {
-
+  const handleJobCompleted = async (message) => {
     const { job_id, session_id, data } = message;
     
     if (session_id === session?.session_id) {
-
-      
       // Stop progress and update UI
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
@@ -371,6 +419,16 @@ const SessionWorkspace = ({ session }) => {
       });
       
       window.currentProcessingJob = null;
+      
+      // Reload session results to ensure persistence
+      // This ensures the redline document is saved to the database and will persist when switching sessions
+      setTimeout(async () => {
+        try {
+          await loadSessionResults();
+        } catch (error) {
+          console.warn('Failed to reload session results after job completion:', error);
+        }
+      }, 1000); // Small delay to ensure backend has saved the results
       
       // Keep progress bar visible and show completed state
       // Don't reset the progress - keep it at 100% to show completion
