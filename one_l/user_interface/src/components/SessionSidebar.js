@@ -33,15 +33,35 @@ const SessionSidebar = ({
       
       // Retry to handle DynamoDB eventual consistency
       // This is especially important for the first session created on app load
-      // Retry multiple times to ensure the session appears
+      // Retry multiple times to ensure the session appears, but stop on server errors
       let retryCount = 0;
       const maxRetries = 5; // Increased retries for first session (handles eventual consistency)
-      const retryInterval = setInterval(() => {
+      let consecutiveServerErrors = 0;
+      
+      const retryInterval = setInterval(async () => {
         retryCount++;
-        if (retryCount <= maxRetries) {
-          loadSessions();
-        } else {
+        
+        // Stop if we've hit max retries
+        if (retryCount >= maxRetries) {
           clearInterval(retryInterval);
+          return;
+        }
+        
+        // Try loading sessions
+        const result = await loadSessions();
+        
+        // If we get a server error (500), stop retrying - it's a backend issue, not eventual consistency
+        if (result && result.isServerError) {
+          consecutiveServerErrors++;
+          // Stop after 2 consecutive server errors
+          if (consecutiveServerErrors >= 2) {
+            console.warn('Stopping session retry due to persistent server errors');
+            clearInterval(retryInterval);
+            return;
+          }
+        } else if (result && result.success) {
+          // Reset error count on success
+          consecutiveServerErrors = 0;
         }
       }, 1500); // Retry every 1.5 seconds
       
@@ -75,7 +95,7 @@ const SessionSidebar = ({
       
       // Handle different response structures (wrapped in body or direct)
       let responseData = response;
-      if (response.body) {
+      if (response && response.body) {
         try {
           responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
         } catch (e) {
@@ -85,23 +105,28 @@ const SessionSidebar = ({
       }
       
       // Handle HTTP errors (like 500) that might be in the response
-      if (response.statusCode && response.statusCode >= 400) {
+      if (response && response.statusCode && response.statusCode >= 400) {
         console.error('HTTP error loading sessions:', response.statusCode, responseData);
         // Don't clear existing sessions on error - keep what we have
-        return;
+        // Return error indicator so retry logic can stop
+        return { error: true, statusCode: response.statusCode };
       }
       
-      if (responseData.success) {
+      if (responseData && responseData.success) {
         setSessions(responseData.sessions || []);
+        return { success: true };
       } else {
-        console.error('Failed to load sessions:', responseData.error || 'Unknown error');
+        console.error('Failed to load sessions:', responseData?.error || 'Unknown error');
         // Don't clear existing sessions on error - keep what we have
+        return { error: true };
       }
     } catch (error) {
       // Handle 500 errors and other network errors gracefully
       if (error.message && error.message.includes('500')) {
         console.warn('Server error loading sessions (500). Sessions may be temporarily unavailable.');
         // Don't clear existing sessions - keep what we have displayed
+        // Return error indicator so retry logic can handle it
+        return { error: true, isServerError: true, statusCode: 500 };
       } else {
         console.error('Error loading sessions:', error);
         console.error('Error details:', {
@@ -109,6 +134,7 @@ const SessionSidebar = ({
           stack: error.stack,
           name: error.name
         });
+        return { error: true };
       }
       // Don't clear existing sessions on error - keep what we have
     } finally {
@@ -162,7 +188,11 @@ const SessionSidebar = ({
         // Use silent refresh to avoid errors interrupting the flow
         setTimeout(async () => {
           try {
-            await loadSessions();
+            const result = await loadSessions();
+            // If we get a server error, don't keep retrying - the optimistic update is already in place
+            if (result && result.isServerError) {
+              console.warn('Server error refreshing sessions after creation. Session is already in sidebar via optimistic update.');
+            }
           } catch (error) {
             // Silently fail - we already have the session in the list via optimistic update
             console.warn('Failed to refresh sessions list after creation:', error);
