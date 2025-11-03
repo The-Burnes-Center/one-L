@@ -66,6 +66,13 @@ const SessionSidebar = ({
         }
       }
       
+      // Handle HTTP errors (like 500) that might be in the response
+      if (response.statusCode && response.statusCode >= 400) {
+        console.error('HTTP error loading sessions:', response.statusCode, responseData);
+        // Don't clear existing sessions on error - keep what we have
+        return;
+      }
+      
       if (responseData.success) {
         setSessions(responseData.sessions || []);
       } else {
@@ -73,12 +80,18 @@ const SessionSidebar = ({
         // Don't clear existing sessions on error - keep what we have
       }
     } catch (error) {
-      console.error('Error loading sessions:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
-      });
+      // Handle 500 errors and other network errors gracefully
+      if (error.message && error.message.includes('500')) {
+        console.warn('Server error loading sessions (500). Sessions may be temporarily unavailable.');
+        // Don't clear existing sessions - keep what we have displayed
+      } else {
+        console.error('Error loading sessions:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+      }
       // Don't clear existing sessions on error - keep what we have
     } finally {
       setLoading(false);
@@ -87,6 +100,19 @@ const SessionSidebar = ({
 
   const handleNewSession = async () => {
     try {
+      // Check if there's active processing in the current session
+      const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
+      
+      if (hasActiveProcessing) {
+        const confirmed = window.confirm(
+          'You have an active document processing job. Creating a new session will navigate away and pause the progress indicator (processing will continue in background).\n\n' +
+          'Do you want to continue?'
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+      
       setCreatingSession(true);
       const response = await sessionAPI.createSession(currentUserId);
       
@@ -115,8 +141,14 @@ const SessionSidebar = ({
         });
         
         // Refresh sessions list from server after a short delay to handle eventual consistency
+        // Use silent refresh to avoid errors interrupting the flow
         setTimeout(async () => {
-          await loadSessions();
+          try {
+            await loadSessions();
+          } catch (error) {
+            // Silently fail - we already have the session in the list
+            console.warn('Failed to refresh sessions list after creation:', error);
+          }
         }, 500);
         
         // Navigate to the new session with new URL structure

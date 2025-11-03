@@ -170,7 +170,9 @@ const SessionWorkspace = ({ session }) => {
     // Cleanup WebSocket and progress on unmount
     return () => {
       cleanupWebSocket();
-      // Clean up progress interval
+      // Clean up progress interval when component unmounts
+      // Note: This will clear the progress indicator, but processing continues in background
+      // The WebSocket will still receive completion notifications if the user returns to this session
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
         window.progressInterval = null;

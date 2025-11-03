@@ -45,6 +45,10 @@ const apiCall = async (endpoint, options = {}) => {
         throw new Error('API Gateway timeout - processing may continue in background');
       } else if (response.status === 502) {
         throw new Error('Bad gateway - service may be processing in background');
+      } else if (response.status === 500) {
+        // For 500 errors, include more context
+        const errorMsg = errorData.error || errorData.message || 'Internal server error';
+        throw new Error(`Server error (500): ${errorMsg}`);
       }
       throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
