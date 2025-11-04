@@ -32,52 +32,29 @@ COPY one_l/agent_api/functions/agent/document_review/lambda_function.py ./python
 COPY one_l/agent_api/agent ./python/agent_api/agent/
 
 # Clean up unnecessary files to reduce package size
-# IMPORTANT: Don't remove .dist-info (needed for imports) or docs directories that are Python modules (like botocore.docs)
+# CONSERVATIVE CLEANUP: Only remove obvious documentation files, keep all Python modules and package structure
+# DO NOT remove: .dist-info, docs directories (may be Python modules like botocore.docs), or any package structure
 RUN find ./python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
     find ./python -type f -name "*.pyc" -delete && \
     find ./python -type f -name "*.pyo" -delete && \
-    # Remove test directories (safe to remove)
-    find ./python -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find ./python -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    # Remove docs directories BUT exclude botocore/docs and boto3/docs (these are Python modules, not documentation)
-    find ./python -type d -name "docs" ! -path "*/botocore/docs" ! -path "*/boto3/docs" -exec rm -rf {} + 2>/dev/null || true && \
-    find ./python -type d -name "doc" ! -path "*/botocore/doc" ! -path "*/boto3/doc" -exec rm -rf {} + 2>/dev/null || true && \
-    # Remove example directories
-    find ./python -type d -name "examples" -exec rm -rf {} + 2>/dev/null || true && \
-    find ./python -type d -name "example" -exec rm -rf {} + 2>/dev/null || true && \
-    # Remove documentation files (but keep LICENSE files)
-    find ./python -type f -name "*.md" -delete && \
-    find ./python -type f -name "*.txt" ! -name "LICENSE*" ! -path "*/METADATA" ! -path "*/RECORD" -delete && \
-    find ./python -type f -name "*.rst" -delete && \
-    find ./python -type f -name "*.html" -delete && \
-    find ./python -type f -name "*.css" -delete && \
-    find ./python -type f -name "*.js" -delete && \
-    find ./python -type f -name "*.map" -delete
+    # Remove only standalone documentation files (not directories that might be Python modules)
+    find ./python -type f -name "README.md" -delete && \
+    find ./python -type f -name "CHANGELOG.md" -delete && \
+    find ./python -type f -name "LICENSE.txt" -delete && \
+    find ./python -type f -name "LICENSE" -delete
 
 # Ensure proper permissions
 RUN find ./python -type f -exec chmod 644 {} \; && \
     find ./python -type d -exec chmod 755 {} \;
 
-# Create the deployment package with extensive exclusions
+# Create the deployment package with minimal exclusions
+# Only exclude compiled Python files and cache - keep everything else (docs, .dist-info, etc.)
 RUN cd python && \
     zip -r ../lambda-deployment.zip . \
         -x "*.pyc" \
         -x "*.pyo" \
         -x "*/__pycache__/*" \
-        -x "*/.DS_Store" \
-        -x "*/test*" \
-        -x "*/tests/*" \
-        -x "*/docs/*" \
-        -x "*/doc/*" \
-        -x "*/examples/*" \
-        -x "*/example/*" \
-        -x "*.md" \
-        -x "*.txt" \
-        -x "*.rst" \
-        -x "*.html" \
-        -x "*.css" \
-        -x "*.js" \
-        -x "*.map"
+        -x "*/.DS_Store"
 
 # Output the package - use entrypoint override
 ENTRYPOINT []
