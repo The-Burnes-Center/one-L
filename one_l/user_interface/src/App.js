@@ -252,10 +252,11 @@ const SessionWorkspace = ({ session }) => {
           // Keep any in-progress documents
           const inProgress = prev.filter(doc => doc.processing || doc.status === 'processing');
           
-          // Create a map of existing documents by analysis_id or redlinedDocument key
+          // Create a map of existing documents by analysis_id, redlinedDocument key, or jobId
           const existingDocsMap = new Map();
           prev.forEach(doc => {
-            const key = doc.analysis || doc.redlinedDocument;
+            // Use jobId as primary key if available, otherwise use analysis_id or redlinedDocument
+            const key = doc.jobId || doc.analysis || doc.redlinedDocument;
             if (key) {
               existingDocsMap.set(key, doc);
             }
@@ -264,21 +265,26 @@ const SessionWorkspace = ({ session }) => {
           // Merge completed documents from database with existing ones
           // Preserve existing document structure if it has all required fields
           const mergedCompleted = redlinedDocsFromResults.map(doc => {
+            // Try to match by analysis_id or redlinedDocument
             const key = doc.analysis || doc.redlinedDocument;
             if (!key) return doc;
             
             const existing = existingDocsMap.get(key);
             
             // If existing document has all required fields and is complete, merge to preserve structure
+            // IMPORTANT: Preserve jobId if it exists (from WebSocket updates)
             if (existing && existing.redlinedDocument && existing.success && !existing.processing) {
               // Merge: keep existing structure but update with any new data from DB
               return {
                 ...existing,
                 ...doc,
-                // Ensure these critical fields are preserved
-                redlinedDocument: doc.redlinedDocument || existing.redlinedDocument,
-                success: doc.success !== undefined ? doc.success : existing.success,
-                originalFile: doc.originalFile || existing.originalFile
+                // Ensure these critical fields are preserved from existing (WebSocket) state
+                redlinedDocument: existing.redlinedDocument || doc.redlined_document_s3_key,
+                success: existing.success !== undefined ? existing.success : (doc.success !== undefined ? doc.success : true),
+                originalFile: existing.originalFile || doc.originalFile,
+                jobId: existing.jobId || doc.jobId, // Preserve jobId from WebSocket
+                status: existing.status || doc.status || 'completed',
+                progress: existing.progress !== undefined ? existing.progress : (doc.progress !== undefined ? doc.progress : 100)
               };
             }
             
@@ -289,7 +295,7 @@ const SessionWorkspace = ({ session }) => {
           // Filter out duplicates and combine: in-progress first, then merged completed docs
           const seen = new Set();
           const uniqueCompleted = mergedCompleted.filter(doc => {
-            const key = doc.analysis || doc.redlinedDocument;
+            const key = doc.jobId || doc.analysis || doc.redlinedDocument;
             if (!key || seen.has(key)) return false;
             seen.add(key);
             return true;
