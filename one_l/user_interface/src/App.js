@@ -406,18 +406,25 @@ const SessionWorkspace = ({ session }) => {
       setWorkflowMessageType('success');
       
       // Use functional update to properly handle existing entries
+      console.log('handleJobCompleted: Received message', { job_id, session_id, data });
       setRedlinedDocuments(prev => {
+        console.log('handleJobCompleted: Current redlinedDocuments', prev);
         const existingIndex = prev.findIndex(doc => doc.jobId === job_id);
+        console.log('handleJobCompleted: Existing index', existingIndex, 'job_id', job_id);
         
         if (existingIndex !== -1) {
           // UPDATE existing entry instead of adding new one
           const updated = [...prev];
+          const redlinedSuccess = data.redlined_document && data.redlined_document.success;
+          const redlinedDoc = data.redlined_document?.redlined_document;
+          console.log('handleJobCompleted: Updating existing entry', { redlinedSuccess, redlinedDoc, hasOriginalFile: !!updated[existingIndex].originalFile });
+          
           updated[existingIndex] = {
             ...updated[existingIndex],
             status: 'completed',
             progress: 100,
-            success: data.redlined_document && data.redlined_document.success,
-            redlinedDocument: data.redlined_document?.redlined_document,
+            success: redlinedSuccess,
+            redlinedDocument: redlinedDoc,
             analysis: data.analysis_id,
             processing: false,
             message: 'Document processing completed',
@@ -426,21 +433,27 @@ const SessionWorkspace = ({ session }) => {
               filename: `Document for job ${job_id}` 
             }
           };
+          console.log('handleJobCompleted: Updated entry', updated[existingIndex]);
           return updated;
         } else {
           // Only add new entry if somehow none exists (fallback)
           if (data.redlined_document && data.redlined_document.success) {
-            return [...prev, {
-              originalFile: { 
-                filename: window.currentProcessingJob?.filename || `Document for job ${job_id}` 
+            const newEntry = {
+              originalFile: window.currentProcessingJob || { 
+                filename: `Document for job ${job_id}` 
               },
               redlinedDocument: data.redlined_document.redlined_document,
               analysis: data.analysis_id,
               success: true,
               processing: false,
-              jobId: job_id
-            }];
+              jobId: job_id,
+              status: 'completed',
+              progress: 100
+            };
+            console.log('handleJobCompleted: Adding new entry', newEntry);
+            return [...prev, newEntry];
           }
+          console.log('handleJobCompleted: No redlined_document.success, returning prev');
           return prev;
         }
       });
@@ -1240,11 +1253,17 @@ const SessionWorkspace = ({ session }) => {
         )}
         
         {/* Redlined Documents Results - Only show completed documents */}
-        {redlinedDocuments.filter(doc => doc.success && !doc.processing).length > 0 && (
-          <div style={{ marginTop: '20px' }}>
-            <h3>Generated Redlined Documents</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {redlinedDocuments.filter(doc => doc.success && !doc.processing).map((result, index) => (
+        {(() => {
+          const completedDocs = redlinedDocuments.filter(doc => doc.success && !doc.processing);
+          console.log('Rendering: redlinedDocuments', redlinedDocuments);
+          console.log('Rendering: completedDocs', completedDocs);
+          return completedDocs.length > 0 && (
+            <div style={{ marginTop: '20px' }}>
+              <h3>Generated Redlined Documents</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {completedDocs.map((result, index) => {
+                  console.log('Rendering result', index, result);
+                  return (
                 <div key={index} style={{ 
                   padding: '12px', 
                   border: '1px solid #ddd', 
