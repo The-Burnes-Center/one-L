@@ -51,16 +51,25 @@ const SessionView = () => {
       }
 
       // Fallback: Load ALL user sessions (including new ones without results) and find the current one
-
       const response = await sessionAPI.getUserSessions(userId, false); // Don't filter by results for session lookup
-      if (response.success && response.sessions) {
-        const foundSession = response.sessions.find(s => s.session_id === sessionId);
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body in SessionView:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.sessions) {
+        const foundSession = responseData.sessions.find(s => s.session_id === sessionId);
         if (foundSession) {
-
           setSession(foundSession);
         } else {
           // Session not found - might be a new session that hasn't been persisted yet
-
           setSession({
             session_id: sessionId,
             title: 'Loading Session...',
@@ -70,7 +79,7 @@ const SessionView = () => {
           });
         }
       } else {
-        setError('Failed to load sessions');
+        setError(responseData.error || 'Failed to load sessions');
       }
     } catch (err) {
 
@@ -151,9 +160,25 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   const isNewSession = location.state?.session?.session_id === session?.session_id;
 
-  // Load session results when component mounts and setup WebSocket
+  // Reset processing state and load session results when session changes
   useEffect(() => {
     if (session?.session_id) {
+      // Reset only transient processing state when switching sessions
+      // DO NOT reset uploadedFiles or redlinedDocuments - these should persist per session
+      setGenerating(false);
+      setWorkflowMessage('');
+      setWorkflowMessageType('');
+      setProcessingStage('');
+      setStageProgress(0);
+      
+      // Clear any existing progress interval
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+      
+      // Load session results and setup WebSocket for the new session
+      // This will populate sessionResults which shows the redline documents
       loadSessionResults();
       setupWebSocket();
     }
@@ -161,7 +186,9 @@ const SessionWorkspace = ({ session }) => {
     // Cleanup WebSocket and progress on unmount
     return () => {
       cleanupWebSocket();
-      // Clean up progress interval
+      // Clean up progress interval when component unmounts
+      // Note: This will clear the progress indicator, but processing continues in background
+      // The WebSocket will still receive completion notifications if the user returns to this session
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
@@ -175,26 +202,101 @@ const SessionWorkspace = ({ session }) => {
       const userId = authService.getUserId();
       
       // Always try to load results - the backend will return empty if none exist
-
-      
       const response = await sessionAPI.getSessionResults(session.session_id, userId);
       
-      if (response.success && response.results) {
-        setSessionResults(response.results);
-
+      // Handle response structure (wrapped in body or direct)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing session results response body:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.results) {
+        setSessionResults(responseData.results);
+        
+        // Convert sessionResults to redlinedDocuments format for display
+        // This allows existing sessions to show their redline documents
+        const redlinedDocsFromResults = responseData.results
+          .filter(result => result.redlined_document_s3_key)
+          .map(result => ({
+            originalFile: {
+              filename: result.document_name,
+              s3_key: result.document_s3_key
+            },
+            redlinedDocument: result.redlined_document_s3_key,
+            analysis: result.analysis_id,
+            success: true,
+            processing: false,
+            status: 'completed',
+            progress: 100
+          }));
+        
+        // Merge with any in-progress documents (don't replace them if they're still processing)
+        setRedlinedDocuments(prev => {
+          // Keep any in-progress documents
+          const inProgress = prev.filter(doc => doc.processing || doc.status === 'processing');
+          
+          // Create a map of existing documents by analysis_id or redlinedDocument key
+          const existingDocsMap = new Map();
+          prev.forEach(doc => {
+            const key = doc.analysis || doc.redlinedDocument;
+            if (key) {
+              existingDocsMap.set(key, doc);
+            }
+          });
+          
+          // Merge completed documents from database with existing ones
+          // Preserve existing document structure if it has all required fields
+          const mergedCompleted = redlinedDocsFromResults.map(doc => {
+            const key = doc.analysis || doc.redlinedDocument;
+            if (!key) return doc;
+            
+            const existing = existingDocsMap.get(key);
+            
+            // If existing document has all required fields and is complete, merge to preserve structure
+            if (existing && existing.redlinedDocument && existing.success && !existing.processing) {
+              // Merge: keep existing structure but update with any new data from DB
+              return {
+                ...existing,
+                ...doc,
+                // Ensure these critical fields are preserved
+                redlinedDocument: doc.redlinedDocument || existing.redlinedDocument,
+                success: doc.success !== undefined ? doc.success : existing.success,
+                originalFile: doc.originalFile || existing.originalFile
+              };
+            }
+            
+            // New document from DB
+            return doc;
+          });
+          
+          // Filter out duplicates and combine: in-progress first, then merged completed docs
+          const seen = new Set();
+          const uniqueCompleted = mergedCompleted.filter(doc => {
+            const key = doc.analysis || doc.redlinedDocument;
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          
+          return [...inProgress, ...uniqueCompleted];
+        });
       } else {
         // Session might not have results yet
-
         setSessionResults([]);
+        setRedlinedDocuments([]);
       }
     } catch (error) {
       // Don't log as error for new sessions - they won't have results yet
       if (session?.has_results) {
-
-      } else {
-
+        console.error('Error loading session results:', error);
       }
       setSessionResults([]);
+      setRedlinedDocuments([]);
     } finally {
       setLoadingResults(false);
     }
@@ -288,13 +390,10 @@ const SessionWorkspace = ({ session }) => {
     }
   };
 
-  const handleJobCompleted = (message) => {
-
+  const handleJobCompleted = async (message) => {
     const { job_id, session_id, data } = message;
     
     if (session_id === session?.session_id) {
-
-      
       // Stop progress and update UI
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
@@ -343,6 +442,18 @@ const SessionWorkspace = ({ session }) => {
       });
       
       window.currentProcessingJob = null;
+      
+      // Reload session results to ensure persistence
+      // This ensures the redline document is saved to the database and will persist when switching sessions
+      // Use a longer delay to ensure backend has saved the results and to avoid race conditions
+      setTimeout(async () => {
+        try {
+          await loadSessionResults();
+        } catch (error) {
+          console.warn('Failed to reload session results after job completion:', error);
+          // Don't clear the redlinedDocuments on error - keep what we have
+        }
+      }, 2000); // Increased delay to ensure backend has saved the results
       
       // Keep progress bar visible and show completed state
       // Don't reset the progress - keep it at 100% to show completion
@@ -1257,14 +1368,24 @@ const AutoSessionRedirect = () => {
 
       const response = await sessionAPI.createSession(userId);
       
-      if (response.success && response.session?.session_id) {
-
-        navigate(`/${response.session.session_id}`, { 
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body in AutoSessionRedirect:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.session?.session_id) {
+        navigate(`/${responseData.session.session_id}`, { 
           replace: true, 
-          state: { session: response.session } 
+          state: { session: responseData.session } 
         });
       } else {
-        throw new Error(response.message || 'Failed to create session');
+        throw new Error(responseData.message || responseData.error || 'Failed to create session');
       }
     } catch (err) {
 

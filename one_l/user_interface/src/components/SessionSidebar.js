@@ -12,6 +12,7 @@ const SessionSidebar = ({
   const { sessionId } = useParams();
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [adminExpanded, setAdminExpanded] = useState(false);
@@ -22,6 +23,51 @@ const SessionSidebar = ({
       loadSessions();
     }
   }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh sessions when sessionId changes (user navigates to different session)
+  // This ensures the first session created by AutoSessionRedirect appears in the sidebar
+  useEffect(() => {
+    if (currentUserId && isVisible && sessionId) {
+      // Load sessions immediately
+      loadSessions();
+      
+      // Retry to handle DynamoDB eventual consistency
+      // This is especially important for the first session created on app load
+      // Retry multiple times to ensure the session appears, but stop on server errors
+      let retryCount = 0;
+      const maxRetries = 5; // Increased retries for first session (handles eventual consistency)
+      let consecutiveServerErrors = 0;
+      
+      const retryInterval = setInterval(async () => {
+        retryCount++;
+        
+        // Stop if we've hit max retries
+        if (retryCount >= maxRetries) {
+          clearInterval(retryInterval);
+          return;
+        }
+        
+        // Try loading sessions
+        const result = await loadSessions();
+        
+        // If we get a server error (500), stop retrying - it's a backend issue, not eventual consistency
+        if (result && result.isServerError) {
+          consecutiveServerErrors++;
+          // Stop after 2 consecutive server errors
+          if (consecutiveServerErrors >= 2) {
+            console.warn('Stopping session retry due to persistent server errors');
+            clearInterval(retryInterval);
+            return;
+          }
+        } else if (result && result.success) {
+          // Reset error count on success
+          consecutiveServerErrors = 0;
+        }
+      }, 1500); // Retry every 1.5 seconds
+      
+      return () => clearInterval(retryInterval);
+    }
+  }, [sessionId, currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh sessions periodically to catch newly completed sessions
   useEffect(() => {
@@ -44,14 +90,53 @@ const SessionSidebar = ({
   const loadSessions = async () => {
     try {
       setLoading(true);
-      // Only load sessions that have processed documents (results)
-      const response = await sessionAPI.getUserSessions(currentUserId, true);
-      if (response.success) {
-        setSessions(response.sessions || []);
-
+      // Load ALL sessions (including new ones without results) so they appear in sidebar
+      const response = await sessionAPI.getUserSessions(currentUserId, false);
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      // Handle HTTP errors (like 500) that might be in the response
+      if (response && response.statusCode && response.statusCode >= 400) {
+        console.error('HTTP error loading sessions:', response.statusCode, responseData);
+        // Don't clear existing sessions on error - keep what we have
+        // Return error indicator so retry logic can stop
+        return { error: true, statusCode: response.statusCode };
+      }
+      
+      if (responseData && responseData.success) {
+        setSessions(responseData.sessions || []);
+        return { success: true };
+      } else {
+        console.error('Failed to load sessions:', responseData?.error || 'Unknown error');
+        // Don't clear existing sessions on error - keep what we have
+        return { error: true };
       }
     } catch (error) {
-
+      // Handle 500 errors and other network errors gracefully
+      if (error.message && error.message.includes('500')) {
+        console.warn('Server error loading sessions (500). Sessions may be temporarily unavailable.');
+        // Don't clear existing sessions - keep what we have displayed
+        // Return error indicator so retry logic can handle it
+        return { error: true, isServerError: true, statusCode: 500 };
+      } else {
+        console.error('Error loading sessions:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+        return { error: true };
+      }
+      // Don't clear existing sessions on error - keep what we have
     } finally {
       setLoading(false);
     }
@@ -59,18 +144,79 @@ const SessionSidebar = ({
 
   const handleNewSession = async () => {
     try {
-      setLoading(true);
+      // Check if there's active processing in the current session
+      const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
+      
+      if (hasActiveProcessing) {
+        const confirmed = window.confirm(
+          'You have an active document processing job. Creating a new session will navigate away and pause the progress indicator (processing will continue in background).\n\n' +
+          'Do you want to continue?'
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+      
+      setCreatingSession(true);
       const response = await sessionAPI.createSession(currentUserId);
-      if (response.success) {
-        // Navigate to the new session with new URL structure
-        navigate(`/${response.session.session_id}`, { 
-          state: { session: response.session } 
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.session) {
+        // Add the new session to the list immediately (optimistic update)
+        const newSession = responseData.session;
+        setSessions(prevSessions => {
+          // Check if session already exists to avoid duplicates
+          const exists = prevSessions.some(s => s.session_id === newSession.session_id);
+          if (exists) {
+            return prevSessions;
+          }
+          // Add new session at the beginning
+          return [newSession, ...prevSessions];
         });
+        
+        // Refresh sessions list from server after a short delay to handle eventual consistency
+        // Use silent refresh to avoid errors interrupting the flow
+        setTimeout(async () => {
+          try {
+            const result = await loadSessions();
+            // If we get a server error, don't keep retrying - the optimistic update is already in place
+            if (result && result.isServerError) {
+              console.warn('Server error refreshing sessions after creation. Session is already in sidebar via optimistic update.');
+            }
+          } catch (error) {
+            // Silently fail - we already have the session in the list via optimistic update
+            console.warn('Failed to refresh sessions list after creation:', error);
+          }
+        }, 1000);
+        
+        // Navigate to the new session with new URL structure
+        navigate(`/${newSession.session_id}`, { 
+          state: { session: newSession } 
+        });
+      } else {
+        console.error('Failed to create session:', responseData.error || 'Unknown error');
+        alert('Failed to create new session. Please try again.');
       }
     } catch (error) {
-
+      console.error('Error creating new session:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      alert(`Error creating new session: ${error.message || 'Unknown error'}`);
     } finally {
-      setLoading(false);
+      setCreatingSession(false);
     }
   };
 
@@ -91,7 +237,7 @@ const SessionSidebar = ({
       await loadSessions(); // Reload sessions
       setEditingSession(null);
     } catch (error) {
-
+      console.error('Error updating session title:', error);
     }
   };
 
@@ -106,7 +252,7 @@ const SessionSidebar = ({
           navigate('/');
         }
       } catch (error) {
-
+        console.error('Error deleting session:', error);
       }
     }
   };
@@ -148,7 +294,7 @@ const SessionSidebar = ({
       }}>
         <button
           onClick={handleNewSession}
-          disabled={loading}
+          disabled={creatingSession}
           style={{
             width: '100%',
             padding: '12px',
@@ -156,7 +302,7 @@ const SessionSidebar = ({
             color: '#ffffff',
             border: '1px solid #333',
             borderRadius: '6px',
-            cursor: loading ? 'not-allowed' : 'pointer',
+            cursor: creatingSession ? 'not-allowed' : 'pointer',
             fontSize: '14px',
             fontWeight: '500',
             display: 'flex',
@@ -166,14 +312,14 @@ const SessionSidebar = ({
             transition: 'background-color 0.2s'
           }}
           onMouseEnter={(e) => {
-            if (!loading) e.target.style.backgroundColor = '#333';
+            if (!creatingSession) e.target.style.backgroundColor = '#333';
           }}
           onMouseLeave={(e) => {
-            if (!loading) e.target.style.backgroundColor = '#1f1f1f';
+            if (!creatingSession) e.target.style.backgroundColor = '#1f1f1f';
           }}
         >
           <span style={{ fontSize: '16px' }}>+</span>
-          {loading ? 'Creating...' : 'New Session'}
+          {creatingSession ? 'Creating...' : 'New Session'}
         </button>
       </div>
 

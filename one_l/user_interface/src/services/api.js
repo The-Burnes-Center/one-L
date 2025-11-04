@@ -45,6 +45,10 @@ const apiCall = async (endpoint, options = {}) => {
         throw new Error('API Gateway timeout - processing may continue in background');
       } else if (response.status === 502) {
         throw new Error('Bad gateway - service may be processing in background');
+      } else if (response.status === 500) {
+        // For 500 errors, include more context
+        const errorMsg = errorData.error || errorData.message || 'Internal server error';
+        throw new Error(`Server error (500): ${errorMsg}`);
       }
       throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
@@ -535,10 +539,19 @@ const sessionAPI = {
         })
       });
       
-
+      // Handle Lambda response structure (may be wrapped in body)
+      if (response.body) {
+        try {
+          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing createSession response body:', e);
+          return response;
+        }
+      }
+      
       return response;
     } catch (error) {
-
+      console.error('Error in createSession API call:', error);
       throw error;
     }
   },
@@ -548,8 +561,6 @@ const sessionAPI = {
    */
   getUserSessions: async (userId, filterByResults = false) => {
     try {
-
-      
       const queryParams = new URLSearchParams({
         action: 'list',
         user_id: userId
@@ -561,10 +572,19 @@ const sessionAPI = {
       
       const response = await apiCall(`/knowledge_management/sessions?${queryParams.toString()}`);
       
-
+      // Handle Lambda response structure (may be wrapped in body)
+      if (response.body) {
+        try {
+          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing getUserSessions response body:', e);
+          return response;
+        }
+      }
+      
       return response;
     } catch (error) {
-
+      console.error('Error in getUserSessions API call:', error);
       throw error;
     }
   },
