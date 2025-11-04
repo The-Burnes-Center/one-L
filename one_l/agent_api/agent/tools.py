@@ -550,21 +550,31 @@ def redline_document(
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         # Route to appropriate processor based on file type
-        # For PDFs, ALWAYS generate output even with 0 conflicts (will use fallback annotations)
+        # For PDFs, convert to DOCX first (preserves formatting), then process as DOCX
         if is_pdf and PDF_SUPPORT_ENABLED:
-            logger.info("PROCESSING_PDF: Using PDF annotation-based redlining")
-            return _redline_pdf_document(
-                agent_processing_bucket,
-                agent_document_key,
-                redline_items,
-                document_s3_key,
-                session_id,
-                user_id
-            )
-        else:
-            logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
-            # Continue with DOCX processing below
-            pass
+            logger.info("PROCESSING_PDF: Converting PDF to DOCX for redlining (preserves formatting)")
+            try:
+                # Convert PDF to DOCX with formatting preservation
+                converted_key = _convert_pdf_to_docx_in_processing_bucket(agent_processing_bucket, agent_document_key)
+                logger.info(f"PROCESSING_PDF: Successfully converted to DOCX: {converted_key}")
+                # Update agent_document_key to point to converted DOCX
+                agent_document_key = converted_key
+                # Continue with DOCX processing below
+            except Exception as convert_error:
+                logger.error(f"PROCESSING_PDF: Conversion failed: {str(convert_error)}")
+                # Fallback to original PDF annotation method if conversion fails
+                logger.warning("PROCESSING_PDF: Falling back to PDF annotation-based redlining")
+                return _redline_pdf_document(
+                    agent_processing_bucket,
+                    agent_document_key,
+                    redline_items,
+                    document_s3_key,
+                    session_id,
+                    user_id
+                )
+        
+        # DOCX Processing (either original DOCX or converted from PDF)
+        logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
         
         # DOCX Processing - Original code path
         # Step 2: Download and load the DOCX document
@@ -2206,7 +2216,159 @@ def _download_and_load_document(bucket: str, s3_key: str):
         raise Exception(f"Failed to download and load document: {str(e)}")
 
 
-# (Reverted) PDF->DOCX conversion helpers removed to restore original PDF flow
+def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str) -> str:
+    """
+    Convert a PDF stored in the processing bucket into a DOCX file with formatting preservation.
+    Uses pdf2docx library to maintain tables, formatting, images, and layout.
+    Returns the new DOCX S3 key on success.
+    
+    Args:
+        agent_bucket: S3 bucket name where PDF is stored
+        pdf_s3_key: S3 key of the PDF file
+        
+    Returns:
+        S3 key of the converted DOCX file
+    """
+    import tempfile
+    import uuid
+    
+    try:
+        logger.info(f"PDF_TO_DOCX_START: Converting {pdf_s3_key} to DOCX with formatting preservation")
+        
+        # Download PDF from S3
+        response = s3_client.get_object(Bucket=agent_bucket, Key=pdf_s3_key)
+        pdf_bytes = response['Body'].read()
+        logger.info(f"PDF_TO_DOCX: Downloaded PDF, size: {len(pdf_bytes)} bytes")
+        
+        # Try pdf2docx conversion (preserves formatting, tables, images)
+        try:
+            from pdf2docx import Converter
+            
+            # Create temporary files in /tmp (Lambda standard)
+            temp_dir = '/tmp'
+            unique_id = str(uuid.uuid4())
+            temp_pdf_path = os.path.join(temp_dir, f'temp_{unique_id}.pdf')
+            temp_docx_path = os.path.join(temp_dir, f'temp_{unique_id}.docx')
+            
+            try:
+                # Write PDF to temp file
+                with open(temp_pdf_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                
+                logger.info(f"PDF_TO_DOCX: Starting pdf2docx conversion (preserves formatting)")
+                
+                # Convert PDF to DOCX using pdf2docx (preserves tables, formatting, layout)
+                cv = Converter(temp_pdf_path)
+                cv.convert(temp_docx_path, start=0, end=None)  # Convert all pages
+                cv.close()
+                
+                # Read converted DOCX
+                with open(temp_docx_path, 'rb') as f:
+                    docx_bytes = f.read()
+                
+                logger.info(f"PDF_TO_DOCX: Conversion successful, DOCX size: {len(docx_bytes)} bytes")
+                
+                # Clean up temp files
+                try:
+                    os.remove(temp_pdf_path)
+                    os.remove(temp_docx_path)
+                except Exception:
+                    pass
+                
+                # Upload DOCX to S3
+                new_key = pdf_s3_key.rsplit('.', 1)[0] + '.docx'
+                s3_client.put_object(
+                    Bucket=agent_bucket,
+                    Key=new_key,
+                    Body=docx_bytes,
+                    ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                )
+                
+                logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key}")
+                return new_key
+                
+            except Exception as pdf2docx_error:
+                logger.warning(f"PDF_TO_DOCX_pdf2docx_failed: {str(pdf2docx_error)}, trying fallback")
+                # Clean up temp files on error
+                try:
+                    if os.path.exists(temp_pdf_path):
+                        os.remove(temp_pdf_path)
+                    if os.path.exists(temp_docx_path):
+                        os.remove(temp_docx_path)
+                except Exception:
+                    pass
+                # Fall through to fallback method
+                
+        except ImportError:
+            logger.warning("PDF_TO_DOCX: pdf2docx not available, using fallback method")
+            # Fall through to fallback method
+        
+        # Fallback: PyMuPDF + python-docx (basic text extraction, minimal formatting)
+        # This is less ideal but works if pdf2docx fails or isn't available
+        logger.info("PDF_TO_DOCX: Using fallback method (PyMuPDF + python-docx)")
+        try:
+            import fitz  # PyMuPDF
+            
+            docx_doc = Document()
+            pdf_file = io.BytesIO(pdf_bytes)
+            pdf = fitz.open(stream=pdf_file, filetype="pdf")
+            
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
+                try:
+                    # Add page marker
+                    page_para = docx_doc.add_paragraph(f"--- Page {page_index + 1} ---")
+                    page_para.runs[0].font.bold = True
+                    
+                    # Extract text blocks with some formatting hints
+                    text_dict = page.get_text("dict")
+                    for block in text_dict.get("blocks", []):
+                        if "lines" in block:
+                            for line in block["lines"]:
+                                line_text_parts = []
+                                for span in line.get("spans", []):
+                                    text = span.get("text", "").strip()
+                                    if text:
+                                        line_text_parts.append(text)
+                                
+                                if line_text_parts:
+                                    para = docx_doc.add_paragraph(" ".join(line_text_parts))
+                                    # Try to preserve bold formatting if detected
+                                    for span in line.get("spans", []):
+                                        if span.get("flags", 0) & 16:  # Bold flag
+                                            if para.runs:
+                                                para.runs[-1].font.bold = True
+                except Exception as page_error:
+                    logger.warning(f"PDF_TO_DOCX_FALLBACK: Error processing page {page_index + 1}: {page_error}")
+                    continue
+            
+            pdf.close()
+            
+            # Save DOCX to memory
+            docx_bytes_io = io.BytesIO()
+            docx_doc.save(docx_bytes_io)
+            docx_bytes_io.seek(0)
+            docx_bytes = docx_bytes_io.read()
+            
+            # Upload DOCX to S3
+            new_key = pdf_s3_key.rsplit('.', 1)[0] + '.docx'
+            s3_client.put_object(
+                Bucket=agent_bucket,
+                Key=new_key,
+                Body=docx_bytes,
+                ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            )
+            
+            logger.info(f"PDF_TO_DOCX_FALLBACK_SUCCESS: Converted to {new_key} (basic formatting)")
+            return new_key
+            
+        except Exception as fallback_error:
+            logger.error(f"PDF_TO_DOCX_FALLBACK_FAILED: {str(fallback_error)}")
+            raise Exception(f"PDF to DOCX conversion failed: {str(fallback_error)}")
+            
+    except Exception as e:
+        logger.error(f"PDF_TO_DOCX_ERROR: Failed to convert PDF to DOCX: {str(e)}")
+        raise Exception(f"Failed to convert PDF to DOCX: {str(e)}")
 
 
 def _create_redlined_filename(original_s3_key: str, session_id: str = None, user_id: str = None) -> str:
