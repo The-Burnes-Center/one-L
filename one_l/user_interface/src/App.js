@@ -420,7 +420,11 @@ const SessionWorkspace = ({ session }) => {
             redlinedDocument: data.redlined_document?.redlined_document,
             analysis: data.analysis_id,
             processing: false,
-            message: 'Document processing completed'
+            message: 'Document processing completed',
+            // Preserve originalFile if it exists, otherwise use window.currentProcessingJob or fallback
+            originalFile: updated[existingIndex].originalFile || window.currentProcessingJob || { 
+              filename: `Document for job ${job_id}` 
+            }
           };
           return updated;
         } else {
