@@ -2,7 +2,7 @@
  * Main App Component for One-L Application
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
@@ -157,8 +157,20 @@ const SessionWorkspace = ({ session }) => {
   // eslint-disable-next-line no-unused-vars
   const [kbSyncMessage, setKbSyncMessage] = useState('');
   
+  // Track initial session state to avoid issues with location.state being cleared
+  const initialIsNewSessionRef = useRef(null);
+  const currentSessionIdRef = useRef(null);
+  
+  // Initialize ref on first render and when session changes
+  if (session?.session_id !== currentSessionIdRef.current) {
+    currentSessionIdRef.current = session?.session_id;
+    // Initialize with current location.state value
+    initialIsNewSessionRef.current = location.state?.session?.session_id === session?.session_id;
+  }
+  
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
-  const isNewSession = location.state?.session?.session_id === session?.session_id;
+  // Use ref to persist the initial state, as location.state can be cleared
+  const isNewSession = initialIsNewSessionRef.current ?? false;
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
@@ -814,8 +826,9 @@ const SessionWorkspace = ({ session }) => {
   const referenceFiles = uploadedFiles.filter(f => f.type === 'reference_document');
   const canGenerateRedline = vendorFiles.length > 0 && referenceFiles.length > 0;
 
-  // If this is an existing session (not new), show only the results table
-  if (!isNewSession && sessionResults.length > 0) {
+  // If this is an existing session (not new) AND user hasn't uploaded files, show only the results table
+  // Always show the workspace if user has uploaded files, even if there are existing results
+  if (!isNewSession && sessionResults.length > 0 && uploadedFiles.length === 0) {
     return (
       <div className="main-content">
         <div className="card">
