@@ -2303,9 +2303,9 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
             logger.warning("PDF_TO_DOCX: pdf2docx not available, using fallback method")
             # Fall through to fallback method
         
-        # Fallback: PyMuPDF + python-docx (basic text extraction, minimal formatting)
-        # This is less ideal but works if pdf2docx fails or isn't available
-        logger.info("PDF_TO_DOCX: Using fallback method (PyMuPDF + python-docx)")
+        # Fallback: PyMuPDF + python-docx (enhanced with table extraction and formatting)
+        # This preserves tables and basic formatting without pdf2docx dependency
+        logger.info("PDF_TO_DOCX: Using enhanced fallback method (PyMuPDF + python-docx with table extraction)")
         try:
             import fitz  # PyMuPDF
             
@@ -2320,24 +2320,73 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                     page_para = docx_doc.add_paragraph(f"--- Page {page_index + 1} ---")
                     page_para.runs[0].font.bold = True
                     
-                    # Extract text blocks with some formatting hints
+                    # Try to extract tables first (PyMuPDF 1.23+ supports find_tables)
+                    try:
+                        tables = page.find_tables()
+                        if tables:
+                            logger.info(f"PDF_TO_DOCX_FALLBACK: Found {len(tables)} tables on page {page_index + 1}")
+                            for table_idx, table in enumerate(tables):
+                                try:
+                                    # Extract table data
+                                    table_data = table.extract()
+                                    if table_data and len(table_data) > 0:
+                                        # Create DOCX table
+                                        docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
+                                        docx_table.style = 'Light Grid Accent 1'
+                                        
+                                        # Fill table cells
+                                        for row_idx, row_data in enumerate(table_data):
+                                            if row_idx < len(docx_table.rows):
+                                                for col_idx, cell_data in enumerate(row_data):
+                                                    if col_idx < len(docx_table.rows[row_idx].cells):
+                                                        cell = docx_table.rows[row_idx].cells[col_idx]
+                                                        cell.text = str(cell_data) if cell_data else ""
+                                        logger.info(f"PDF_TO_DOCX_FALLBACK: Added table {table_idx + 1} with {len(table_data)} rows")
+                                except Exception as table_error:
+                                    logger.warning(f"PDF_TO_DOCX_FALLBACK: Error extracting table {table_idx + 1}: {table_error}")
+                                    continue
+                    except (AttributeError, Exception) as table_extract_error:
+                        # find_tables() may not be available in older PyMuPDF versions
+                        logger.debug(f"PDF_TO_DOCX_FALLBACK: Table extraction not available: {table_extract_error}")
+                    
+                    # Extract text blocks with formatting hints
                     text_dict = page.get_text("dict")
                     for block in text_dict.get("blocks", []):
                         if "lines" in block:
                             for line in block["lines"]:
                                 line_text_parts = []
+                                bold_ranges = []
                                 for span in line.get("spans", []):
                                     text = span.get("text", "").strip()
                                     if text:
+                                        start_pos = sum(len(t) for t in line_text_parts) + len(line_text_parts)  # +1 for space
                                         line_text_parts.append(text)
+                                        # Check for bold formatting
+                                        if span.get("flags", 0) & 16:  # Bold flag
+                                            bold_ranges.append((start_pos, start_pos + len(text)))
                                 
                                 if line_text_parts:
-                                    para = docx_doc.add_paragraph(" ".join(line_text_parts))
-                                    # Try to preserve bold formatting if detected
-                                    for span in line.get("spans", []):
-                                        if span.get("flags", 0) & 16:  # Bold flag
-                                            if para.runs:
-                                                para.runs[-1].font.bold = True
+                                    para = docx_doc.add_paragraph()
+                                    full_text = " ".join(line_text_parts)
+                                    
+                                    # Add text with formatting preserved
+                                    if bold_ranges:
+                                        # Has bold text - add with formatting
+                                        current_pos = 0
+                                        for bold_start, bold_end in bold_ranges:
+                                            if current_pos < bold_start:
+                                                # Add normal text before bold
+                                                para.add_run(full_text[current_pos:bold_start])
+                                            # Add bold text
+                                            bold_run = para.add_run(full_text[bold_start:bold_end])
+                                            bold_run.font.bold = True
+                                            current_pos = bold_end
+                                        # Add remaining text
+                                        if current_pos < len(full_text):
+                                            para.add_run(full_text[current_pos:])
+                                    else:
+                                        # No bold formatting - add as normal text
+                                        para.add_run(full_text)
                 except Exception as page_error:
                     logger.warning(f"PDF_TO_DOCX_FALLBACK: Error processing page {page_index + 1}: {page_error}")
                     continue
