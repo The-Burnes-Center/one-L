@@ -1277,12 +1277,12 @@ const SessionWorkspace = ({ session }) => {
                 {completedDocs.map((result, index) => {
                   console.log('Rendering result', index, result);
                   return (
-                <div key={index} style={{ 
-                  padding: '12px', 
-                  border: '1px solid #ddd', 
-                  borderRadius: '4px',
-                  background: result.success ? '#f8f9fa' : (result.processing ? '#fff3cd' : '#f8d7da')
-                }}>
+                    <div key={index} style={{ 
+                      padding: '12px', 
+                      border: '1px solid #ddd', 
+                      borderRadius: '4px',
+                      background: result.success ? '#f8f9fa' : (result.processing ? '#fff3cd' : '#f8d7da')
+                    }}>
                   <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
                     {result.originalFile.filename}
                   </div>
@@ -1372,10 +1372,12 @@ const SessionWorkspace = ({ session }) => {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
