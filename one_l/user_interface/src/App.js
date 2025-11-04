@@ -249,18 +249,41 @@ const SessionWorkspace = ({ session }) => {
             }
           });
           
-          // Add completed documents from database, but don't overwrite in-progress ones
-          const completedFromDb = redlinedDocsFromResults.filter(doc => {
+          // Merge completed documents from database with existing ones
+          // Preserve existing document structure if it has all required fields
+          const mergedCompleted = redlinedDocsFromResults.map(doc => {
             const key = doc.analysis || doc.redlinedDocument;
-            if (!key) return false;
+            if (!key) return doc;
             
             const existing = existingDocsMap.get(key);
-            // Only add if it doesn't exist, or if existing is not in-progress
-            return !existing || (!existing.processing && existing.status !== 'processing');
+            
+            // If existing document has all required fields and is complete, merge to preserve structure
+            if (existing && existing.redlinedDocument && existing.success && !existing.processing) {
+              // Merge: keep existing structure but update with any new data from DB
+              return {
+                ...existing,
+                ...doc,
+                // Ensure these critical fields are preserved
+                redlinedDocument: doc.redlinedDocument || existing.redlinedDocument,
+                success: doc.success !== undefined ? doc.success : existing.success,
+                originalFile: doc.originalFile || existing.originalFile
+              };
+            }
+            
+            // New document from DB
+            return doc;
           });
           
-          // Combine: in-progress first, then new completed docs from DB
-          return [...inProgress, ...completedFromDb];
+          // Filter out duplicates and combine: in-progress first, then merged completed docs
+          const seen = new Set();
+          const uniqueCompleted = mergedCompleted.filter(doc => {
+            const key = doc.analysis || doc.redlinedDocument;
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          
+          return [...inProgress, ...uniqueCompleted];
         });
       } else {
         // Session might not have results yet
@@ -422,13 +445,15 @@ const SessionWorkspace = ({ session }) => {
       
       // Reload session results to ensure persistence
       // This ensures the redline document is saved to the database and will persist when switching sessions
+      // Use a longer delay to ensure backend has saved the results and to avoid race conditions
       setTimeout(async () => {
         try {
           await loadSessionResults();
         } catch (error) {
           console.warn('Failed to reload session results after job completion:', error);
+          // Don't clear the redlinedDocuments on error - keep what we have
         }
-      }, 1000); // Small delay to ensure backend has saved the results
+      }, 2000); // Increased delay to ensure backend has saved the results
       
       // Keep progress bar visible and show completed state
       // Don't reset the progress - keep it at 100% to show completion
