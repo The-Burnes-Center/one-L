@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any
+from decimal import Decimal
 
 # Set up logging
 logger = logging.getLogger()
@@ -21,8 +22,23 @@ AGENT_PROCESSING_BUCKET = os.environ.get('AGENT_PROCESSING_BUCKET')
 SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE', 'one-l-sessions')
 ANALYSIS_RESULTS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
 
+def convert_decimals(obj):
+    """Recursively convert Decimal types to int or float for JSON serialization"""
+    if isinstance(obj, Decimal):
+        # Convert Decimal to int if it's a whole number, otherwise float
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_decimals(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals(item) for item in obj]
+    return obj
+
 def create_cors_response(status_code: int, body: dict) -> dict:
     """Create a response with CORS headers"""
+    # Convert any Decimal types to native Python types for JSON serialization
+    body = convert_decimals(body)
     return {
         'statusCode': status_code,
         'headers': {
