@@ -179,9 +179,31 @@ const SessionWorkspace = ({ session }) => {
   // Keep session data ref in sync with current state (for current session)
   useEffect(() => {
     if (session?.session_id) {
+      // Deep copy to avoid reference issues and ensure proper persistence
       sessionDataRef.current[session.session_id] = {
-        uploadedFiles: uploadedFiles,
-        redlinedDocuments: redlinedDocuments
+        uploadedFiles: uploadedFiles && uploadedFiles.length > 0 
+          ? uploadedFiles.map(file => ({
+              ...file,
+              s3_key: file.s3_key,
+              filename: file.filename,
+              unique_filename: file.unique_filename,
+              bucket_name: file.bucket_name,
+              type: file.type
+            }))
+          : [],
+        redlinedDocuments: redlinedDocuments && redlinedDocuments.length > 0
+          ? redlinedDocuments.map(doc => ({
+              ...doc,
+              originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
+              redlinedDocument: doc.redlinedDocument,
+              analysis: doc.analysis,
+              success: doc.success,
+              processing: doc.processing,
+              jobId: doc.jobId,
+              status: doc.status,
+              progress: doc.progress
+            }))
+          : []
       };
     }
   }, [session?.session_id, uploadedFiles, redlinedDocuments]);
@@ -197,11 +219,42 @@ const SessionWorkspace = ({ session }) => {
         redlinedDocuments: []
       };
       
-      // Restore session-specific data
-      setUploadedFiles(sessionData.uploadedFiles);
-      setRedlinedDocuments(sessionData.redlinedDocuments);
+      // Restore session-specific data IMMEDIATELY
+      // Use functional updates to ensure we don't lose data during async operations
+      // Deep copy to avoid reference issues and ensure proper restoration
+      setUploadedFiles(() => {
+        if (!sessionData.uploadedFiles || sessionData.uploadedFiles.length === 0) {
+          return [];
+        }
+        // Deep copy each file object to ensure proper restoration
+        return sessionData.uploadedFiles.map(file => ({
+          ...file,
+          s3_key: file.s3_key,
+          filename: file.filename,
+          unique_filename: file.unique_filename,
+          bucket_name: file.bucket_name,
+          type: file.type
+        }));
+      });
+      setRedlinedDocuments(() => {
+        if (!sessionData.redlinedDocuments || sessionData.redlinedDocuments.length === 0) {
+          return [];
+        }
+        // Deep copy each document to ensure proper restoration
+        return sessionData.redlinedDocuments.map(doc => ({
+          ...doc,
+          originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
+          redlinedDocument: doc.redlinedDocument,
+          analysis: doc.analysis,
+          success: doc.success,
+          processing: doc.processing,
+          jobId: doc.jobId,
+          status: doc.status,
+          progress: doc.progress
+        }));
+      });
       
-      // Update ref to track current session
+      // Update ref to track current session BEFORE any async operations
       previousSessionIdRef.current = currentSessionId;
       
       // Reset only transient processing state when switching sessions
@@ -218,8 +271,8 @@ const SessionWorkspace = ({ session }) => {
       }
       
       // Load session results and setup WebSocket for the new session
-      // This will populate sessionResults which shows the redline documents
-      loadSessionResults();
+      // Pass the restored session data so loadSessionResults can merge properly
+      loadSessionResults(sessionData.redlinedDocuments);
       setupWebSocket();
     }
     
@@ -236,7 +289,7 @@ const SessionWorkspace = ({ session }) => {
     };
   }, [session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadSessionResults = async () => {
+  const loadSessionResults = async (restoredRedlinedDocs = []) => {
     try {
       setLoadingResults(true);
       const userId = authService.getUserId();
@@ -275,14 +328,18 @@ const SessionWorkspace = ({ session }) => {
             progress: 100
           }));
         
-        // Merge with any in-progress documents (don't replace them if they're still processing)
+        // Merge with restored session data and any in-progress documents
         setRedlinedDocuments(prev => {
-          // Keep any in-progress documents
-          const inProgress = prev.filter(doc => doc.processing || doc.status === 'processing');
+          // Use restored session data as baseline if prev is empty (just restored)
+          const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
+            ? restoredRedlinedDocs 
+            : prev;
+          // Keep any in-progress documents from baseline
+          const inProgress = baseline.filter(doc => doc.processing || doc.status === 'processing');
           
           // Create a map of existing documents by analysis_id, redlinedDocument key, or jobId
           const existingDocsMap = new Map();
-          prev.forEach(doc => {
+          baseline.forEach(doc => {
             // Use jobId as primary key if available, otherwise use analysis_id or redlinedDocument
             const key = doc.jobId || doc.analysis || doc.redlinedDocument;
             if (key) {
@@ -347,7 +404,7 @@ const SessionWorkspace = ({ session }) => {
           });
           
           // Keep existing completed documents that weren't matched by DB (e.g., WebSocket docs not yet saved)
-          const unmatchedExisting = prev.filter(doc => {
+          const unmatchedExisting = baseline.filter(doc => {
             // Skip in-progress (already handled above)
             if (doc.processing || doc.status === 'processing') return false;
             // Keep documents that weren't matched by DB results
@@ -360,17 +417,14 @@ const SessionWorkspace = ({ session }) => {
       } else {
         // Session might not have results yet
         setSessionResults([]);
-        // Don't clear redlinedDocuments - preserve any documents added via WebSocket
-        // Only clear if we're loading for the first time and there are truly no documents
-        // Check if this is the initial load (no existing documents) before clearing
+        // Preserve restored session data - don't clear if we have restored documents
         setRedlinedDocuments(prev => {
-          // Only clear if there are no existing documents (initial state)
-          // This preserves documents added via WebSocket even if API hasn't saved them yet
-          if (prev.length === 0) {
-            return [];
-          }
-          // Keep existing documents - they might be from WebSocket updates
-          return prev;
+          // If we have restored session data, use it as baseline
+          const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
+            ? restoredRedlinedDocs 
+            : prev;
+          // Always preserve existing documents - they might be from session restore or WebSocket
+          return baseline;
         });
       }
     } catch (error) {
@@ -379,9 +433,14 @@ const SessionWorkspace = ({ session }) => {
         console.error('Error loading session results:', error);
       }
       setSessionResults([]);
-      // Don't clear redlinedDocuments on error - preserve existing documents
-      // They might be from WebSocket updates that haven't been saved to DB yet
-      setRedlinedDocuments(prev => prev);
+      // Preserve restored session data on error
+      setRedlinedDocuments(prev => {
+        // If we have restored session data, use it as baseline
+        const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
+          ? restoredRedlinedDocs 
+          : prev;
+        return baseline;
+      });
     } finally {
       setLoadingResults(false);
     }
@@ -1160,7 +1219,10 @@ const SessionWorkspace = ({ session }) => {
       </div>
       
       <div className="upload-sections">
-        <VendorSubmission onFilesUploaded={handleFilesUploaded} />
+        <VendorSubmission 
+          onFilesUploaded={handleFilesUploaded}
+          previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'vendor_submission')} // Show previously uploaded vendor file
+        />
         
         <FileUpload 
           title="Reference Documents"
@@ -1173,6 +1235,7 @@ const SessionWorkspace = ({ session }) => {
           enableAutoSync={true}
           onSyncStatusChange={handleKbSyncStatusChange}
           sessionContext={session} //  Pass session context for session-based storage
+          previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'reference_document')} // Show previously uploaded reference documents
         />
       </div>
       

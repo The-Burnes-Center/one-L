@@ -17,7 +17,8 @@ const FileUpload = ({
   onSyncStatusChange = null, // ← NEW PROP
   sessionContext = null, // ← NEW: Session context for session-based storage
   acceptedFileTypes = ".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif", // ← NEW: Accepted file types
-  fileTypeDescription = "TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)" // ← NEW: File type description
+  fileTypeDescription = "TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)", // ← NEW: File type description
+  previouslyUploadedFiles = [] // ← NEW: Previously uploaded files for this session
 }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -348,8 +349,57 @@ const FileUpload = ({
         </small>
       </div>
 
+      {/* Previously uploaded files */}
+      {previouslyUploadedFiles && previouslyUploadedFiles.length > 0 && (
+        <div className="form-group">
+          <label className="form-label" style={{ fontSize: '14px', fontWeight: '500', color: '#666', marginBottom: '8px' }}>
+            Previously Uploaded Files
+          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {previouslyUploadedFiles.map((file, index) => (
+              <div key={`prev-${index}`} style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                padding: '12px 16px',
+                backgroundColor: '#d4edda',
+                border: '1px solid #c3e6cb',
+                borderRadius: '12px',
+                color: '#333',
+                gap: '12px',
+                maxWidth: '400px'
+              }}>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: '#28a745',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '20px'
+                }}>
+                  ✓
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: '500', fontSize: '14px' }}>
+                    {file.filename || file.name}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>
+                    Already uploaded
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Files selected for upload */}
       {selectedFiles.length > 0 && (
         <div className="form-group">
+          <label className="form-label" style={{ fontSize: '14px', fontWeight: '500', color: '#666', marginBottom: '8px' }}>
+            Files to Upload
+          </label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {selectedFiles.map((file, index) => (
               <div key={index} style={{ 
