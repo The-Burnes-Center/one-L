@@ -3,10 +3,10 @@
  * Handles vendor document upload to agent_processing bucket
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { knowledgeManagementAPI, fileUtils } from '../services/api';
 
-const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [] }) => {
+const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessionContext = null }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
@@ -17,6 +17,18 @@ const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [] }) => 
   const maxFiles = 1;
   const bucketType = "agent_processing";
   const prefix = "vendor-submissions/";
+
+  // Clear selected files when session changes
+  useEffect(() => {
+    if (sessionContext?.session_id) {
+      setSelectedFiles([]);
+      setMessage('');
+      setMessageType('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [sessionContext?.session_id]);
 
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files);

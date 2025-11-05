@@ -3,7 +3,7 @@
  * Handles multiple file uploads through API Gateway with configurable limits
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { knowledgeManagementAPI, fileUtils } from '../services/api';
 
 const FileUpload = ({ 
@@ -29,6 +29,18 @@ const FileUpload = ({
   const [syncing, setSyncing] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [syncJobIds, setSyncJobIds] = useState([]);
+
+  // Clear selected files when session changes
+  useEffect(() => {
+    if (sessionContext?.session_id) {
+      setSelectedFiles([]);
+      setMessage('');
+      setMessageType('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [sessionContext?.session_id]);
 
   const pollSyncCompletion = async (jobIds, maxAttempts = 60) => {
     let attempts = 0;

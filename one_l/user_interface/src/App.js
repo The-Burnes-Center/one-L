@@ -1279,6 +1279,7 @@ const SessionWorkspace = ({ session }) => {
         <VendorSubmission 
           onFilesUploaded={handleFilesUploaded}
           previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'vendor_submission')} // Show previously uploaded vendor file
+          sessionContext={session} // Pass session context to clear selectedFiles on session change
         />
         
         <FileUpload 
