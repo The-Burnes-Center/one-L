@@ -431,6 +431,8 @@ const SessionWorkspace = ({ session }) => {
         });
       } else {
         // Session might not have results yet
+        // BUT: Don't clear redlinedDocuments if they exist from WebSocket updates
+        // Only clear sessionResults, preserve any WebSocket-updated documents
         setSessionResults([]);
         // Preserve restored session data - don't clear if we have restored documents
         setRedlinedDocuments(prev => {

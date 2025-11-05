@@ -14,7 +14,7 @@ import hashlib
 from typing import Dict, Any, List
 from collections import defaultdict
 from docx import Document
-from docx.shared import RGBColor
+from docx.shared import RGBColor, Pt
 import io
 
 # Import PDF processor
@@ -2349,44 +2349,87 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                         # find_tables() may not be available in older PyMuPDF versions
                         logger.debug(f"PDF_TO_DOCX_FALLBACK: Table extraction not available: {table_extract_error}")
                     
-                    # Extract text blocks with formatting hints
+                    # Extract text blocks with enhanced formatting preservation
+                    # Each block typically represents a paragraph or distinct text element
                     text_dict = page.get_text("dict")
+                    
                     for block in text_dict.get("blocks", []):
                         if "lines" in block:
-                            for line in block["lines"]:
-                                line_text_parts = []
-                                bold_ranges = []
+                            # Create one paragraph per block
+                            para = docx_doc.add_paragraph()
+                            
+                            for line_idx, line in enumerate(block["lines"]):
+                                # Collect all spans with their formatting
+                                spans_data = []
                                 for span in line.get("spans", []):
                                     text = span.get("text", "").strip()
                                     if text:
-                                        start_pos = sum(len(t) for t in line_text_parts) + len(line_text_parts)  # +1 for space
-                                        line_text_parts.append(text)
-                                        # Check for bold formatting
-                                        if span.get("flags", 0) & 16:  # Bold flag
-                                            bold_ranges.append((start_pos, start_pos + len(text)))
+                                        flags = span.get("flags", 0)
+                                        font_size = span.get("size", 11)
+                                        font_color = span.get("color", 0)
+                                        font_name = span.get("font", "")
+                                        
+                                        spans_data.append({
+                                            'text': text,
+                                            'bold': bool(flags & 16),  # Bold flag
+                                            'italic': bool(flags & 2),  # Italic flag
+                                            'size': font_size,
+                                            'color': font_color,
+                                            'font': font_name
+                                        })
                                 
-                                if line_text_parts:
-                                    para = docx_doc.add_paragraph()
-                                    full_text = " ".join(line_text_parts)
+                                # Add each span as a separate run with preserved formatting
+                                for span_idx, span_data in enumerate(spans_data):
+                                    run = para.add_run(span_data['text'])
                                     
-                                    # Add text with formatting preserved
-                                    if bold_ranges:
-                                        # Has bold text - add with formatting
-                                        current_pos = 0
-                                        for bold_start, bold_end in bold_ranges:
-                                            if current_pos < bold_start:
-                                                # Add normal text before bold
-                                                para.add_run(full_text[current_pos:bold_start])
-                                            # Add bold text
-                                            bold_run = para.add_run(full_text[bold_start:bold_end])
-                                            bold_run.font.bold = True
-                                            current_pos = bold_end
-                                        # Add remaining text
-                                        if current_pos < len(full_text):
-                                            para.add_run(full_text[current_pos:])
-                                    else:
-                                        # No bold formatting - add as normal text
-                                        para.add_run(full_text)
+                                    # Apply formatting
+                                    if span_data['bold']:
+                                        run.font.bold = True
+                                    if span_data['italic']:
+                                        run.font.italic = True
+                                    
+                                    # Preserve font size (convert from points to half-points)
+                                    try:
+                                        if span_data['size'] > 0:
+                                            run.font.size = Pt(span_data['size'])
+                                    except:
+                                        pass
+                                    
+                                    # Preserve font color (convert from RGB integer to RGBColor)
+                                    try:
+                                        color_int = span_data['color']
+                                        # PyMuPDF color is 0xRRGGBB format
+                                        r = (color_int >> 16) & 0xFF
+                                        g = (color_int >> 8) & 0xFF
+                                        b = color_int & 0xFF
+                                        # Only apply if not black (default)
+                                        if not (r == 0 and g == 0 and b == 0):
+                                            run.font.color.rgb = RGBColor(r, g, b)
+                                    except:
+                                        pass
+                                    
+                                    # Preserve font name if available and different from default
+                                    try:
+                                        if span_data['font'] and span_data['font'] not in ['Times-Roman', 'TimesNewRomanPSMT']:
+                                            # Map common PDF font names to DOCX font names
+                                            font_map = {
+                                                'Arial': 'Arial',
+                                                'Helvetica': 'Arial',
+                                                'Courier': 'Courier New',
+                                                'CourierNew': 'Courier New',
+                                            }
+                                            font_name = font_map.get(span_data['font'], span_data['font'])
+                                            run.font.name = font_name
+                                    except:
+                                        pass
+                                    
+                                    # Add space after span (except last in line)
+                                    if span_idx < len(spans_data) - 1:
+                                        para.add_run(' ')
+                                
+                                # Add space after line (except last line in block)
+                                if line_idx < len(block["lines"]) - 1:
+                                    para.add_run(' ')
                 except Exception as page_error:
                     logger.warning(f"PDF_TO_DOCX_FALLBACK: Error processing page {page_index + 1}: {page_error}")
                     continue
@@ -2408,7 +2451,7 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                 ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
             )
             
-            logger.info(f"PDF_TO_DOCX_FALLBACK_SUCCESS: Converted to {new_key} (basic formatting)")
+            logger.info(f"PDF_TO_DOCX_FALLBACK_SUCCESS: Converted to {new_key} (enhanced formatting: fonts, sizes, colors, styles preserved)")
             return new_key
             
         except Exception as fallback_error:
