@@ -242,13 +242,16 @@ const SessionWorkspace = ({ session }) => {
               status: doc.status,
               progress: doc.progress
             }))
-          : []
+          : [],
+        generating: generating, // Save generating state to detect active processing
+        processingStage: processingStage, // Save processing stage
+        stageProgress: stageProgress // Save stage progress
       };
       
       // Save to localStorage whenever session data changes
       saveSessionDataToStorage(sessionDataRef.current);
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments, saveSessionDataToStorage]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, stageProgress, saveSessionDataToStorage]);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {

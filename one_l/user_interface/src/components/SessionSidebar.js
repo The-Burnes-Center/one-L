@@ -226,33 +226,48 @@ const SessionSidebar = ({
     
     // Also check localStorage for processing status
     const userId = currentUserId;
+    let hasProcessingInStorage = false;
+    
     if (userId) {
       try {
         const storageKey = `one_l_session_data_${userId}`;
         const stored = localStorage.getItem(storageKey);
         if (stored) {
           const sessionData = JSON.parse(stored);
-          // Check if current session has processing documents
+          // Check if current session has active processing
           const currentSessionId = sessionId;
           if (currentSessionId && sessionData[currentSessionId]) {
             const currentSessionData = sessionData[currentSessionId];
+            
+            // Check if generating is true
+            const isGenerating = currentSessionData.generating === true;
+            
+            // Check if there are processing documents
             const hasProcessingDocs = currentSessionData.redlinedDocuments?.some(
               doc => doc.processing === true || doc.status === 'processing'
             ) || false;
             
-            if (hasActiveProcessing || hasProcessingDocs) {
-              const confirmed = window.confirm(
-                'You have an active document processing job. Switching sessions will pause the progress indicator for this session (processing will continue in background).\n\n' +
-                'Do you want to continue?'
-              );
-              if (!confirmed) {
-                return;
-              }
-            }
+            // Check if processing stage is active
+            const hasProcessingStage = currentSessionData.processingStage && 
+                                      currentSessionData.processingStage !== '' &&
+                                      currentSessionData.stageProgress < 100;
+            
+            hasProcessingInStorage = isGenerating || hasProcessingDocs || hasProcessingStage;
           }
         }
       } catch (error) {
         console.error('Error checking processing status:', error);
+      }
+    }
+    
+    // Show warning if there's active processing
+    if (hasActiveProcessing || hasProcessingInStorage) {
+      const confirmed = window.confirm(
+        'You have an active document processing job. Switching sessions will pause the progress indicator for this session (processing will continue in background).\n\n' +
+        'Do you want to continue?'
+      );
+      if (!confirmed) {
+        return; // Don't navigate if user cancels
       }
     }
     
