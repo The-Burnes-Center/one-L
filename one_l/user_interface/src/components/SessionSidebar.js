@@ -221,6 +221,50 @@ const SessionSidebar = ({
   };
 
   const handleSessionSelect = (session) => {
+    // Check if there's active processing in the current session
+    const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
+    
+    // Also check localStorage for processing status
+    const userId = currentUserId;
+    if (userId) {
+      try {
+        const storageKey = `one_l_session_data_${userId}`;
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          const sessionData = JSON.parse(stored);
+          // Check if current session has processing documents
+          const currentSessionId = sessionId;
+          if (currentSessionId && sessionData[currentSessionId]) {
+            const currentSessionData = sessionData[currentSessionId];
+            const hasProcessingDocs = currentSessionData.redlinedDocuments?.some(
+              doc => doc.processing === true || doc.status === 'processing'
+            ) || false;
+            
+            if (hasActiveProcessing || hasProcessingDocs) {
+              const confirmed = window.confirm(
+                'You have an active document processing job. Switching sessions will pause the progress indicator for this session (processing will continue in background).\n\n' +
+                'Do you want to continue?'
+              );
+              if (!confirmed) {
+                return;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking processing status:', error);
+      }
+    }
+    
+    // If we get here, either no processing or user confirmed
+    if (hasActiveProcessing) {
+      // Clear the progress interval when switching away
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+    }
+    
     navigate(`/${session.session_id}`, { 
       state: { session: session } 
     });
