@@ -2,7 +2,7 @@
  * Main App Component for One-L Application
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
@@ -159,7 +159,7 @@ const SessionWorkspace = ({ session }) => {
     return {};
   };
 
-  const saveSessionDataToStorage = (data) => {
+  const saveSessionDataToStorage = useCallback((data) => {
     const storageKey = getSessionDataStorageKey();
     if (!storageKey) return;
     try {
@@ -167,7 +167,7 @@ const SessionWorkspace = ({ session }) => {
     } catch (error) {
       console.error('Error saving session data to localStorage:', error);
     }
-  };
+  }, []); // Empty deps - getSessionDataStorageKey uses authService which is stable
 
   // Initialize sessionDataRef from localStorage on mount
   const sessionDataRef = useRef(loadSessionDataFromStorage());
@@ -248,7 +248,7 @@ const SessionWorkspace = ({ session }) => {
       // Save to localStorage whenever session data changes
       saveSessionDataToStorage(sessionDataRef.current);
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, saveSessionDataToStorage]);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
