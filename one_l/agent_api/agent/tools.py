@@ -2410,16 +2410,38 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                                     
                                     # Preserve font name if available and different from default
                                     try:
-                                        if span_data['font'] and span_data['font'] not in ['Times-Roman', 'TimesNewRomanPSMT']:
+                                        if span_data['font']:
                                             # Map common PDF font names to DOCX font names
                                             font_map = {
                                                 'Arial': 'Arial',
+                                                'ArialMT': 'Arial',
                                                 'Helvetica': 'Arial',
+                                                'Helvetica-Bold': 'Arial',
+                                                'Helvetica-Oblique': 'Arial',
+                                                'Times-Roman': 'Times New Roman',
+                                                'TimesNewRomanPSMT': 'Times New Roman',
+                                                'TimesNewRomanPS-BoldMT': 'Times New Roman',
+                                                'TimesNewRomanPS-ItalicMT': 'Times New Roman',
                                                 'Courier': 'Courier New',
                                                 'CourierNew': 'Courier New',
+                                                'CourierNewPSMT': 'Courier New',
+                                                'Calibri': 'Calibri',
+                                                'Calibri-Bold': 'Calibri',
+                                                'Calibri-Italic': 'Calibri',
                                             }
-                                            font_name = font_map.get(span_data['font'], span_data['font'])
-                                            run.font.name = font_name
+                                            # Check if font should be applied (skip only default Times variants)
+                                            if span_data['font'] not in ['Times-Roman']:
+                                                font_name = font_map.get(span_data['font'], span_data['font'])
+                                                # Try to set font name, but don't fail if font doesn't exist
+                                                try:
+                                                    run.font.name = font_name
+                                                except:
+                                                    # If font name doesn't work, try without mapping
+                                                    if font_name != span_data['font']:
+                                                        try:
+                                                            run.font.name = span_data['font']
+                                                        except:
+                                                            pass
                                     except:
                                         pass
                                     
