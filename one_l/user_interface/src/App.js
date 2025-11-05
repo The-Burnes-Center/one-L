@@ -265,26 +265,36 @@ const SessionWorkspace = ({ session }) => {
           // Merge completed documents from database with existing ones
           // Preserve existing document structure if it has all required fields
           const mergedCompleted = redlinedDocsFromResults.map(doc => {
-            // Try to match by analysis_id or redlinedDocument
-            const key = doc.analysis || doc.redlinedDocument;
-            if (!key) return doc;
+            // Try to find existing document by multiple keys
+            // First try direct map lookup
+            let existing = existingDocsMap.get(doc.analysis) || 
+                          existingDocsMap.get(doc.redlinedDocument);
             
-            const existing = existingDocsMap.get(key);
+            // If not found, search by analysis_id (WebSocket docs might have jobId as key but analysis_id matches)
+            if (!existing && doc.analysis) {
+              for (const [key, value] of existingDocsMap.entries()) {
+                if (value.analysis === doc.analysis || value.jobId === doc.analysis) {
+                  existing = value;
+                  break;
+                }
+              }
+            }
             
             // If existing document has all required fields and is complete, merge to preserve structure
             // IMPORTANT: Preserve jobId if it exists (from WebSocket updates)
-            if (existing && existing.redlinedDocument && existing.success && !existing.processing) {
+            if (existing && (existing.redlinedDocument || existing.processing)) {
               // Merge: keep existing structure but update with any new data from DB
               return {
                 ...existing,
                 ...doc,
                 // Ensure these critical fields are preserved from existing (WebSocket) state
-                redlinedDocument: existing.redlinedDocument || doc.redlined_document_s3_key,
+                redlinedDocument: existing.redlinedDocument || doc.redlinedDocument,
                 success: existing.success !== undefined ? existing.success : (doc.success !== undefined ? doc.success : true),
                 originalFile: existing.originalFile || doc.originalFile,
                 jobId: existing.jobId || doc.jobId, // Preserve jobId from WebSocket
                 status: existing.status || doc.status || 'completed',
-                progress: existing.progress !== undefined ? existing.progress : (doc.progress !== undefined ? doc.progress : 100)
+                progress: existing.progress !== undefined ? existing.progress : (doc.progress !== undefined ? doc.progress : 100),
+                processing: existing.processing || false // Preserve processing state
               };
             }
             
@@ -292,7 +302,14 @@ const SessionWorkspace = ({ session }) => {
             return doc;
           });
           
-          // Filter out duplicates and combine: in-progress first, then merged completed docs
+          // Track which existing documents were matched by DB results
+          const matchedKeys = new Set();
+          mergedCompleted.forEach(doc => {
+            const key = doc.jobId || doc.analysis || doc.redlinedDocument;
+            if (key) matchedKeys.add(key);
+          });
+          
+          // Filter out duplicates from merged completed docs
           const seen = new Set();
           const uniqueCompleted = mergedCompleted.filter(doc => {
             const key = doc.jobId || doc.analysis || doc.redlinedDocument;
@@ -301,12 +318,32 @@ const SessionWorkspace = ({ session }) => {
             return true;
           });
           
-          return [...inProgress, ...uniqueCompleted];
+          // Keep existing completed documents that weren't matched by DB (e.g., WebSocket docs not yet saved)
+          const unmatchedExisting = prev.filter(doc => {
+            // Skip in-progress (already handled above)
+            if (doc.processing || doc.status === 'processing') return false;
+            // Keep documents that weren't matched by DB results
+            const key = doc.jobId || doc.analysis || doc.redlinedDocument;
+            return key && !matchedKeys.has(key);
+          });
+          
+          return [...inProgress, ...uniqueCompleted, ...unmatchedExisting];
         });
       } else {
         // Session might not have results yet
         setSessionResults([]);
-        setRedlinedDocuments([]);
+        // Don't clear redlinedDocuments - preserve any documents added via WebSocket
+        // Only clear if we're loading for the first time and there are truly no documents
+        // Check if this is the initial load (no existing documents) before clearing
+        setRedlinedDocuments(prev => {
+          // Only clear if there are no existing documents (initial state)
+          // This preserves documents added via WebSocket even if API hasn't saved them yet
+          if (prev.length === 0) {
+            return [];
+          }
+          // Keep existing documents - they might be from WebSocket updates
+          return prev;
+        });
       }
     } catch (error) {
       // Don't log as error for new sessions - they won't have results yet
@@ -314,7 +351,9 @@ const SessionWorkspace = ({ session }) => {
         console.error('Error loading session results:', error);
       }
       setSessionResults([]);
-      setRedlinedDocuments([]);
+      // Don't clear redlinedDocuments on error - preserve existing documents
+      // They might be from WebSocket updates that haven't been saved to DB yet
+      setRedlinedDocuments(prev => prev);
     } finally {
       setLoadingResults(false);
     }
