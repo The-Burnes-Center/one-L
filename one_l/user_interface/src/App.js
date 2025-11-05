@@ -177,8 +177,16 @@ const SessionWorkspace = ({ session }) => {
   const isNewSession = initialIsNewSessionRef.current ?? false;
 
   // Keep session data ref in sync with current state (for current session)
+  // Only sync if we're not in the middle of switching sessions
   useEffect(() => {
-    if (session?.session_id) {
+    // Only sync if:
+    // 1. We have a session
+    // 2. The ref matches the current session (means we're not switching)
+    // 3. The session exists in sessionDataRef (means it's been initialized)
+    if (session?.session_id && 
+        previousSessionIdRef.current === session.session_id &&
+        sessionDataRef.current[session.session_id]) {
+      // Only sync if this is the current session (not switching)
       // Deep copy to avoid reference issues and ensure proper persistence
       sessionDataRef.current[session.session_id] = {
         uploadedFiles: uploadedFiles && uploadedFiles.length > 0 
@@ -212,6 +220,36 @@ const SessionWorkspace = ({ session }) => {
   useEffect(() => {
     if (session?.session_id) {
       const currentSessionId = session.session_id;
+      const previousSessionId = previousSessionIdRef.current;
+      
+      // Save previous session's data BEFORE switching (if we had a previous session)
+      if (previousSessionId && previousSessionId !== currentSessionId) {
+        sessionDataRef.current[previousSessionId] = {
+          uploadedFiles: uploadedFiles && uploadedFiles.length > 0 
+            ? uploadedFiles.map(file => ({
+                ...file,
+                s3_key: file.s3_key,
+                filename: file.filename,
+                unique_filename: file.unique_filename,
+                bucket_name: file.bucket_name,
+                type: file.type
+              }))
+            : [],
+          redlinedDocuments: redlinedDocuments && redlinedDocuments.length > 0
+            ? redlinedDocuments.map(doc => ({
+                ...doc,
+                originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
+                redlinedDocument: doc.redlinedDocument,
+                analysis: doc.analysis,
+                success: doc.success,
+                processing: doc.processing,
+                jobId: doc.jobId,
+                status: doc.status,
+                progress: doc.progress
+              }))
+            : []
+        };
+      }
       
       // Check if this is a new session (not in sessionDataRef yet)
       // New sessions should start with empty state
@@ -223,15 +261,18 @@ const SessionWorkspace = ({ session }) => {
         redlinedDocuments: []
       };
       
-      // If this is a new session, explicitly initialize it as empty in the ref and set state to empty
+      // If this is a new session, explicitly initialize it as empty in the ref and set state to empty FIRST
+      // This must happen before updating previousSessionIdRef to prevent sync effect from saving old data
       if (isNewSession) {
         sessionDataRef.current[currentSessionId] = {
           uploadedFiles: [],
           redlinedDocuments: []
         };
-        // Force state to empty for new sessions
+        // Force state to empty for new sessions IMMEDIATELY
         setUploadedFiles([]);
         setRedlinedDocuments([]);
+        // Update ref AFTER clearing state to prevent sync from running with old data
+        previousSessionIdRef.current = currentSessionId;
       } else {
         // Restore session-specific data for existing sessions
         // Use functional updates to ensure we don't lose data during async operations
@@ -267,10 +308,9 @@ const SessionWorkspace = ({ session }) => {
             progress: doc.progress
           }));
         });
+        // Update ref AFTER restoring state for existing sessions
+        previousSessionIdRef.current = currentSessionId;
       }
-      
-      // Update ref to track current session BEFORE any async operations
-      previousSessionIdRef.current = currentSessionId;
       
       // Reset only transient processing state when switching sessions
       setGenerating(false);
