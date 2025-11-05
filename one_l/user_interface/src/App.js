@@ -213,46 +213,61 @@ const SessionWorkspace = ({ session }) => {
     if (session?.session_id) {
       const currentSessionId = session.session_id;
       
+      // Check if this is a new session (not in sessionDataRef yet)
+      // New sessions should start with empty state
+      const isNewSession = !sessionDataRef.current[currentSessionId];
+      
       // Load this session's data (or initialize empty if new session)
       const sessionData = sessionDataRef.current[currentSessionId] || {
         uploadedFiles: [],
         redlinedDocuments: []
       };
       
-      // Restore session-specific data IMMEDIATELY
-      // Use functional updates to ensure we don't lose data during async operations
-      // Deep copy to avoid reference issues and ensure proper restoration
-      setUploadedFiles(() => {
-        if (!sessionData.uploadedFiles || sessionData.uploadedFiles.length === 0) {
-          return [];
-        }
-        // Deep copy each file object to ensure proper restoration
-        return sessionData.uploadedFiles.map(file => ({
-          ...file,
-          s3_key: file.s3_key,
-          filename: file.filename,
-          unique_filename: file.unique_filename,
-          bucket_name: file.bucket_name,
-          type: file.type
-        }));
-      });
-      setRedlinedDocuments(() => {
-        if (!sessionData.redlinedDocuments || sessionData.redlinedDocuments.length === 0) {
-          return [];
-        }
-        // Deep copy each document to ensure proper restoration
-        return sessionData.redlinedDocuments.map(doc => ({
-          ...doc,
-          originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
-          redlinedDocument: doc.redlinedDocument,
-          analysis: doc.analysis,
-          success: doc.success,
-          processing: doc.processing,
-          jobId: doc.jobId,
-          status: doc.status,
-          progress: doc.progress
-        }));
-      });
+      // If this is a new session, explicitly initialize it as empty in the ref and set state to empty
+      if (isNewSession) {
+        sessionDataRef.current[currentSessionId] = {
+          uploadedFiles: [],
+          redlinedDocuments: []
+        };
+        // Force state to empty for new sessions
+        setUploadedFiles([]);
+        setRedlinedDocuments([]);
+      } else {
+        // Restore session-specific data for existing sessions
+        // Use functional updates to ensure we don't lose data during async operations
+        // Deep copy to avoid reference issues and ensure proper restoration
+        setUploadedFiles(() => {
+          if (!sessionData.uploadedFiles || sessionData.uploadedFiles.length === 0) {
+            return [];
+          }
+          // Deep copy each file object to ensure proper restoration
+          return sessionData.uploadedFiles.map(file => ({
+            ...file,
+            s3_key: file.s3_key,
+            filename: file.filename,
+            unique_filename: file.unique_filename,
+            bucket_name: file.bucket_name,
+            type: file.type
+          }));
+        });
+        setRedlinedDocuments(() => {
+          if (!sessionData.redlinedDocuments || sessionData.redlinedDocuments.length === 0) {
+            return [];
+          }
+          // Deep copy each document to ensure proper restoration
+          return sessionData.redlinedDocuments.map(doc => ({
+            ...doc,
+            originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
+            redlinedDocument: doc.redlinedDocument,
+            analysis: doc.analysis,
+            success: doc.success,
+            processing: doc.processing,
+            jobId: doc.jobId,
+            status: doc.status,
+            progress: doc.progress
+          }));
+        });
+      }
       
       // Update ref to track current session BEFORE any async operations
       previousSessionIdRef.current = currentSessionId;
