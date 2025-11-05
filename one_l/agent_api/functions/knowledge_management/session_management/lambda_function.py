@@ -272,20 +272,68 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
     try:
         table = dynamodb.Table(SESSIONS_TABLE)
         
+        # First, check if session exists and belongs to user
+        try:
+            existing_session = table.get_item(Key={'session_id': session_id})
+            if 'Item' not in existing_session:
+                logger.warning(f"Session {session_id} does not exist, cannot mark as having results")
+                return {
+                    'success': False,
+                    'error': 'Session not found'
+                }
+            
+            if existing_session['Item'].get('user_id') != user_id:
+                logger.warning(f"Session {session_id} does not belong to user {user_id}")
+                return {
+                    'success': False,
+                    'error': 'Session access denied'
+                }
+        except Exception as check_error:
+            logger.error(f"Error checking session existence: {check_error}")
+            # Continue anyway - let the update_item handle it
+        
         # Update session to mark it has results
-        response = table.update_item(
-            Key={'session_id': session_id},
-            UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity, document_count = document_count + :inc',
-            ExpressionAttributeValues={
-                ':has_results': True,
-                ':updated_at': datetime.now(timezone.utc).isoformat(),
-                ':last_activity': datetime.now(timezone.utc).isoformat(),
-                ':inc': 1,
-                ':user_id': user_id
-            },
-            ConditionExpression='user_id = :user_id',
-            ReturnValues='ALL_NEW'
-        )
+        # Use ADD for document_count (works even if attribute doesn't exist) and SET for other fields
+        try:
+            response = table.update_item(
+                Key={'session_id': session_id},
+                UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity ADD document_count :inc',
+                ExpressionAttributeValues={
+                    ':has_results': True,
+                    ':updated_at': datetime.now(timezone.utc).isoformat(),
+                    ':last_activity': datetime.now(timezone.utc).isoformat(),
+                    ':inc': 1,
+                    ':user_id': user_id
+                },
+                ConditionExpression='user_id = :user_id',
+                ReturnValues='ALL_NEW'
+            )
+        except Exception as update_error:
+            error_type = type(update_error).__name__
+            # If the conditional check fails or document_count causes issues, try without the increment
+            if 'ConditionalCheckFailedException' in error_type or 'document_count' in str(update_error):
+                logger.warning(f"Update failed for session {session_id}, trying without document_count increment: {update_error}")
+                try:
+                    response = table.update_item(
+                        Key={'session_id': session_id},
+                        UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity',
+                        ExpressionAttributeValues={
+                            ':has_results': True,
+                            ':updated_at': datetime.now(timezone.utc).isoformat(),
+                            ':last_activity': datetime.now(timezone.utc).isoformat(),
+                            ':user_id': user_id
+                        },
+                        ConditionExpression='user_id = :user_id',
+                        ReturnValues='ALL_NEW'
+                    )
+                except Exception as retry_error:
+                    logger.error(f"Error marking session with results (retry): {retry_error}")
+                    return {
+                        'success': False,
+                        'error': str(retry_error)
+                    }
+            else:
+                raise
         
         logger.info(f"Marked session {session_id} as having results")
         
@@ -295,7 +343,18 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error marking session with results: {e}")
+        error_type = type(e).__name__
+        logger.error(f"Error marking session with results ({error_type}): {e}")
+        
+        # Handle ConditionalCheckFailedException gracefully
+        if 'ConditionalCheckFailedException' in error_type:
+            logger.warning(f"Session {session_id} conditional check failed - session may not exist or user_id mismatch")
+            return {
+                'success': False,
+                'error': 'Session not found or access denied',
+                'error_type': 'ConditionalCheckFailedException'
+            }
+        
         return {
             'success': False,
             'error': str(e)
