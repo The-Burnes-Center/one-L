@@ -139,7 +139,38 @@ const SessionWorkspace = ({ session }) => {
   const location = useLocation();
   
   // Session-specific storage: store uploadedFiles and redlinedDocuments per session
-  const sessionDataRef = useRef({}); // { session_id: { uploadedFiles: [], redlinedDocuments: [] } }
+  // Load from localStorage on mount to persist across page reloads
+  const getSessionDataStorageKey = () => {
+    const userId = authService.getUserId();
+    return userId ? `one_l_session_data_${userId}` : null;
+  };
+
+  const loadSessionDataFromStorage = () => {
+    const storageKey = getSessionDataStorageKey();
+    if (!storageKey) return {};
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('Error loading session data from localStorage:', error);
+    }
+    return {};
+  };
+
+  const saveSessionDataToStorage = (data) => {
+    const storageKey = getSessionDataStorageKey();
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(data));
+    } catch (error) {
+      console.error('Error saving session data to localStorage:', error);
+    }
+  };
+
+  // Initialize sessionDataRef from localStorage on mount
+  const sessionDataRef = useRef(loadSessionDataFromStorage());
   const previousSessionIdRef = useRef(null);
   
   // Workflow state for this session
@@ -213,6 +244,9 @@ const SessionWorkspace = ({ session }) => {
             }))
           : []
       };
+      
+      // Save to localStorage whenever session data changes
+      saveSessionDataToStorage(sessionDataRef.current);
     }
   }, [session?.session_id, uploadedFiles, redlinedDocuments]);
 
@@ -249,6 +283,8 @@ const SessionWorkspace = ({ session }) => {
               }))
             : []
         };
+        // Save to localStorage after saving previous session data
+        saveSessionDataToStorage(sessionDataRef.current);
       }
       
       // Check if this is a new session (not in sessionDataRef yet)
@@ -268,6 +304,8 @@ const SessionWorkspace = ({ session }) => {
           uploadedFiles: [],
           redlinedDocuments: []
         };
+        // Save to localStorage for new session initialization
+        saveSessionDataToStorage(sessionDataRef.current);
         // Force state to empty for new sessions IMMEDIATELY
         setUploadedFiles([]);
         setRedlinedDocuments([]);
