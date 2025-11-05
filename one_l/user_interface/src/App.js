@@ -138,6 +138,10 @@ const SessionView = () => {
 const SessionWorkspace = ({ session }) => {
   const location = useLocation();
   
+  // Session-specific storage: store uploadedFiles and redlinedDocuments per session
+  const sessionDataRef = useRef({}); // { session_id: { uploadedFiles: [], redlinedDocuments: [] } }
+  const previousSessionIdRef = useRef(null);
+  
   // Workflow state for this session
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [generating, setGenerating] = useState(false);
@@ -172,11 +176,35 @@ const SessionWorkspace = ({ session }) => {
   // Use ref to persist the initial state, as location.state can be cleared
   const isNewSession = initialIsNewSessionRef.current ?? false;
 
+  // Keep session data ref in sync with current state (for current session)
+  useEffect(() => {
+    if (session?.session_id) {
+      sessionDataRef.current[session.session_id] = {
+        uploadedFiles: uploadedFiles,
+        redlinedDocuments: redlinedDocuments
+      };
+    }
+  }, [session?.session_id, uploadedFiles, redlinedDocuments]);
+
   // Reset processing state and load session results when session changes
   useEffect(() => {
     if (session?.session_id) {
+      const currentSessionId = session.session_id;
+      
+      // Load this session's data (or initialize empty if new session)
+      const sessionData = sessionDataRef.current[currentSessionId] || {
+        uploadedFiles: [],
+        redlinedDocuments: []
+      };
+      
+      // Restore session-specific data
+      setUploadedFiles(sessionData.uploadedFiles);
+      setRedlinedDocuments(sessionData.redlinedDocuments);
+      
+      // Update ref to track current session
+      previousSessionIdRef.current = currentSessionId;
+      
       // Reset only transient processing state when switching sessions
-      // DO NOT reset uploadedFiles or redlinedDocuments - these should persist per session
       setGenerating(false);
       setWorkflowMessage('');
       setWorkflowMessageType('');
