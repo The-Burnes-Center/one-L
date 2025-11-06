@@ -1098,6 +1098,37 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         if tables_with_redlines:
             logger.info(f"TABLE_DISTRIBUTION: {len(tables_with_redlines)} tables redlined: {sorted(tables_with_redlines)}")
         
+        # ENSURE EVERY PAGE HAS REDLINING - Similar to PDF coverage guarantee
+        # More conservative estimate: ~15 paragraphs per page (was 20)
+        estimated_pages = max(1, total_paragraphs // 15)
+        pages_with_redlines_set = {}
+        
+        # Track how many redlines each page has
+        for para_idx in paragraphs_with_redlines:
+            page_num = para_idx // 15  # Use same divisor as estimation
+            if page_num not in pages_with_redlines_set:
+                pages_with_redlines_set[page_num] = 0
+            pages_with_redlines_set[page_num] += 1
+        
+        # Only add review notes to pages with ZERO conflict redlines (not pages with 1 redline)
+        # This reduces the number of review notes appearing in the document
+        pages_needing_coverage = []
+        for page_num in range(estimated_pages):
+            redline_count = pages_with_redlines_set.get(page_num, 0)
+            if redline_count == 0:  # Only pages with ZERO redlines get review notes
+                pages_needing_coverage.append(page_num)
+        
+        if pages_needing_coverage:
+            logger.info(f"DOCX_PAGE_COVERAGE: {len(pages_needing_coverage)} pages have zero redlines, adding single review note: {pages_needing_coverage}")
+            _ensure_docx_page_coverage(doc, pages_needing_coverage, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=1)
+            logger.info(f"DOCX_PAGE_COVERAGE: Added review notes to {len(pages_needing_coverage)} pages with zero conflicts")
+        
+        # DISABLED: User requested to remove excessive review notes
+        # Only add review notes to pages with ZERO conflict redlines, not all pages
+        # all_pages = list(range(estimated_pages))
+        # if all_pages:
+        #     logger.info(f"DOCX_PAGE_COVERAGE_FINAL: Ensuring all {len(all_pages)} estimated pages have minimum coverage")
+        #     _ensure_docx_page_coverage(doc, all_pages, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=2)
         # Log final summary
         if failed_matches:
             logger.warning(f"REDLINING_FAILED: {len(failed_matches)} conflicts could not be matched")
@@ -1130,6 +1161,95 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         }
 
 
+def _ensure_docx_page_coverage(doc, pages_needing_coverage: List[int], existing_redlined_paras: List[int], estimated_pages: int, min_redlines_per_page: int = 2):
+    """
+    Ensure every page of a DOCX document has at least some redlining.
+    More aggressive search with better page estimation.
+    
+    Args:
+        doc: python-docx Document object
+        pages_needing_coverage: List of page numbers (0-indexed) that need redlining
+        existing_redlined_paras: List of paragraph indices that already have redlines
+        estimated_pages: Total estimated pages in document
+        min_redlines_per_page: Minimum number of redlines to ensure per page
+    """
+    if not pages_needing_coverage:
+        return
+    
+    keywords = [
+        'security', 'compliance', 'liability', 'indemnification', 'insurance', 'warranty',
+        'confidential', 'data protection', 'privacy', 'access control', 'authentication',
+        'breach', 'notification', 'termination', 'remedy', 'damages', 'sla', 'uptime',
+        'availability', 'maintenance', 'backup', 'recovery', 'encryption', 'audit',
+        'vendor', 'customer', 'support', 'terms', 'conditions', 'policy', 'service',
+        'agreement', 'contract', 'provision', 'clause', 'requirement', 'obligation',
+        'protection', 'rights', 'responsibilities', 'limitation', 'exclusion', 'warranties',
+        'disclaimer', 'indemnity', 'hold harmless', 'defense', 'coverage', 'claim'
+    ]
+    
+    for page_num in pages_needing_coverage:
+        try:
+            # Use more conservative paragraph estimation (~15 per page)
+            para_start = page_num * 15
+            para_end = min((page_num + 1) * 15, len(doc.paragraphs))
+            
+            if para_start >= len(doc.paragraphs):
+                # Try to find any paragraph near the end
+                if len(doc.paragraphs) > 0:
+                    try:
+                        last_para = doc.paragraphs[-1]
+                        if last_para.text.strip():
+                            run = last_para.add_run(" [Legal-AI: Document reviewed]")
+                            run.font.color.rgb = RGBColor(128, 128, 128)
+                            run.font.italic = True
+                            if len(doc.paragraphs) - 1 not in existing_redlined_paras:
+                                existing_redlined_paras.append(len(doc.paragraphs) - 1)
+                            logger.info(f"DOCX_PAGE_COVERAGE: Added note to last paragraph for page {page_num + 1}")
+                    except Exception:
+                        pass
+                continue
+            
+            # More aggressive search: check paragraphs on this page AND nearby
+            search_range = range(max(0, para_start - 5), min(para_end + 10, len(doc.paragraphs)))
+            redlines_added_this_page = 0
+            
+            # Skip keyword redlining - only add review notes if page has no conflict redlines
+            # (User requested: no single-word redlining, only full conflict paragraphs)
+            
+            # Add ONLY ONE review note per page if page has no conflict redlines
+            # This prevents excessive review notes from appearing throughout the document
+            if redlines_added_this_page < min_redlines_per_page:
+                for para_idx in search_range:
+                    if redlines_added_this_page >= min_redlines_per_page:
+                        break
+                    if para_idx in existing_redlined_paras:
+                        continue
+                    if para_idx >= len(doc.paragraphs):
+                        break
+                    para = doc.paragraphs[para_idx]
+                    if para.text.strip() and len(para.text.strip()) > 5:
+                        try:
+                            # Only add ONE review note per page (not multiple)
+                            run = para.add_run(" [Legal-AI: Page reviewed for compliance]")
+                            run.font.color.rgb = RGBColor(128, 128, 128)
+                            run.font.italic = True
+                            existing_redlined_paras.append(para_idx)
+                            redlines_added_this_page += 1
+                            logger.info(f"DOCX_PAGE_COVERAGE: Added single review note to para {para_idx} (page {page_num + 1})")
+                            break  # Only add ONE note per page, then stop
+                        except Exception as note_err:
+                            logger.debug(f"DOCX_PAGE_COVERAGE: Note failed for para {para_idx}: {note_err}")
+                            continue
+            
+            if redlines_added_this_page == 0:
+                logger.warning(f"DOCX_PAGE_COVERAGE: Failed to add any redlines to page {page_num + 1}")
+                            
+        except Exception as page_err:
+            logger.warning(f"DOCX_PAGE_COVERAGE: Error processing page {page_num + 1}: {page_err}")
+            continue
+
+
+>>>>>>> a9788d2 (Reduce excessive Legal-AI review notes - only add one note per page with zero conflicts)
 def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
     """TIER 0: Ultra-aggressive matching with sentence-level search."""
     
