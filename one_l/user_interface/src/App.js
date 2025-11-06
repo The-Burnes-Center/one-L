@@ -138,6 +138,18 @@ const SessionView = () => {
 const SessionWorkspace = ({ session }) => {
   const location = useLocation();
   
+  const stageMessages = {
+    kb_sync: 'Syncing knowledge base...',
+    identifying: 'Identifying conflicts...',
+    generating: 'Generating redlines...'
+  };
+
+  const getStageForProgress = (progress = 0) => {
+    if (progress >= 66) return 'generating';
+    if (progress >= 33) return 'identifying';
+    return 'kb_sync';
+  };
+
   // Session-specific storage: store uploadedFiles and redlinedDocuments per session
   // Load from localStorage on mount to persist across page reloads
   const getSessionDataStorageKey = () => {
@@ -245,19 +257,27 @@ const SessionWorkspace = ({ session }) => {
           : [],
         generating: generating, // Save generating state to detect active processing
         processingStage: processingStage, // Save processing stage
-        stageProgress: stageProgress // Save stage progress
+        stageProgress: stageProgress, // Save stage progress
+        workflowMessage: workflowMessage,
+        workflowMessageType: workflowMessageType
       };
       
       // Save to localStorage whenever session data changes
       saveSessionDataToStorage(sessionDataRef.current);
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, stageProgress, saveSessionDataToStorage]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, stageProgress, workflowMessage, workflowMessageType, saveSessionDataToStorage]);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
     if (session?.session_id) {
       const currentSessionId = session.session_id;
       const previousSessionId = previousSessionIdRef.current;
+      
+      // Clear any existing progress interval when switching sessions
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
       
       // Save previous session's data BEFORE switching (if we had a previous session)
       if (previousSessionId && previousSessionId !== currentSessionId) {
@@ -284,7 +304,12 @@ const SessionWorkspace = ({ session }) => {
                 status: doc.status,
                 progress: doc.progress
               }))
-            : []
+            : [],
+          generating: generating,
+          processingStage: processingStage,
+          stageProgress: stageProgress,
+          workflowMessage: workflowMessage,
+          workflowMessageType: workflowMessageType
         };
         // Save to localStorage after saving previous session data
         saveSessionDataToStorage(sessionDataRef.current);
@@ -297,7 +322,12 @@ const SessionWorkspace = ({ session }) => {
       // Load this session's data (or initialize empty if new session)
       const sessionData = sessionDataRef.current[currentSessionId] || {
         uploadedFiles: [],
-        redlinedDocuments: []
+        redlinedDocuments: [],
+        generating: false,
+        processingStage: '',
+        stageProgress: 0,
+        workflowMessage: '',
+        workflowMessageType: ''
       };
       
       // If this is a new session, explicitly initialize it as empty in the ref and set state to empty FIRST
@@ -305,13 +335,23 @@ const SessionWorkspace = ({ session }) => {
       if (isNewSession) {
         sessionDataRef.current[currentSessionId] = {
           uploadedFiles: [],
-          redlinedDocuments: []
+          redlinedDocuments: [],
+          generating: false,
+          processingStage: '',
+          stageProgress: 0,
+          workflowMessage: '',
+          workflowMessageType: ''
         };
         // Save to localStorage for new session initialization
         saveSessionDataToStorage(sessionDataRef.current);
         // Force state to empty for new sessions IMMEDIATELY
         setUploadedFiles([]);
         setRedlinedDocuments([]);
+        setGenerating(false);
+        setProcessingStage('');
+        setStageProgress(0);
+        setWorkflowMessage('');
+        setWorkflowMessageType('');
         // Update ref AFTER clearing state to prevent sync from running with old data
         previousSessionIdRef.current = currentSessionId;
       } else {
@@ -349,21 +389,30 @@ const SessionWorkspace = ({ session }) => {
             progress: doc.progress
           }));
         });
+        const restoredGenerating = sessionData.generating === true;
+        const restoredProgress = restoredGenerating && typeof sessionData.stageProgress === 'number'
+          ? sessionData.stageProgress
+          : 0;
+        const restoredStage = restoredGenerating
+          ? (sessionData.processingStage || getStageForProgress(restoredProgress))
+          : '';
+        const restoredMessage = sessionData.workflowMessage || (restoredGenerating ? stageMessages[restoredStage] : '');
+        const restoredMessageType = sessionData.workflowMessageType || (restoredMessage ? 'progress' : '');
+
+        setGenerating(restoredGenerating);
+        setProcessingStage(restoredGenerating ? restoredStage : '');
+        setStageProgress(restoredGenerating ? restoredProgress : 0);
+        setWorkflowMessage(restoredMessage || '');
+        setWorkflowMessageType(restoredMessageType);
+
+        if (restoredGenerating && restoredProgress < 99) {
+          startProgressFlow(restoredProgress, {
+            initialStage: restoredStage,
+            initialMessage: restoredMessage
+          });
+        }
         // Update ref AFTER restoring state for existing sessions
         previousSessionIdRef.current = currentSessionId;
-      }
-      
-      // Reset only transient processing state when switching sessions
-      setGenerating(false);
-      setWorkflowMessage('');
-      setWorkflowMessageType('');
-      setProcessingStage('');
-      setStageProgress(0);
-      
-      // Clear any existing progress interval
-      if (window.progressInterval) {
-        clearInterval(window.progressInterval);
-        window.progressInterval = null;
       }
       
       // Load session results and setup WebSocket for the new session
@@ -777,36 +826,41 @@ const SessionWorkspace = ({ session }) => {
   const updateProcessingStage = (stage, progress, message) => {
     setProcessingStage(stage);
     setStageProgress(progress);
-    setWorkflowMessage(message);
-    setWorkflowMessageType('progress');
-    
-
+    const resolvedMessage = message !== undefined ? message : (stage ? stageMessages[stage] : '');
+    setWorkflowMessage(resolvedMessage || '');
+    setWorkflowMessageType(resolvedMessage ? 'progress' : '');
   };
 
   // Smooth progress flow - 1% per 2 seconds for entire progress bar
-  const startProgressFlow = () => {
-    let currentProgress = 0;
+  const startProgressFlow = (initialProgress = 0, options = {}) => {
+    const { initialStage, initialMessage } = options;
+    let currentProgress = Math.max(0, Math.min(initialProgress || 0, 99));
     
-    // Start with KB sync stage
-    updateProcessingStage('kb_sync', 0, 'Syncing knowledge base...');
+    // Clear any existing interval before starting a new one
+    if (window.progressInterval) {
+      clearInterval(window.progressInterval);
+      window.progressInterval = null;
+    }
+    
+    let currentStage = initialStage || getStageForProgress(currentProgress);
+    updateProcessingStage(currentStage, currentProgress, initialMessage);
+    
+    if (currentProgress >= 99) {
+      // Already at completion threshold - no need to start interval
+      return;
+    }
     
     const progressInterval = setInterval(() => {
       currentProgress += 1; // 1% per 2 seconds for entire progress bar
+      currentStage = getStageForProgress(currentProgress);
       
-      if (currentProgress <= 33) {
-        // Stage 1: KB Sync (0-33%)
-        updateProcessingStage('kb_sync', currentProgress, 'Syncing knowledge base...');
-      } else if (currentProgress <= 66) {
-        // Stage 2: Identifying conflicts (34-66%)
-        updateProcessingStage('identifying', currentProgress, 'Identifying conflicts...');
-      } else if (currentProgress < 99) {
-        // Stage 3: Generating redlines (67-98%)
-        updateProcessingStage('generating', currentProgress, 'Generating redlines...');
-        } else {
+      if (currentProgress < 99) {
+        updateProcessingStage(currentStage, currentProgress, stageMessages[currentStage]);
+      } else {
         // Wait at 99% until WebSocket completion
-        updateProcessingStage('generating', 99, 'Generating redlines...');
+        updateProcessingStage('generating', 99, stageMessages.generating);
         clearInterval(progressInterval);
-        setStageProgress(99);
+        window.progressInterval = null;
       }
     }, 2000); // 2000ms interval for 1% per 2 seconds
     
