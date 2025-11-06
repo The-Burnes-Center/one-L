@@ -492,6 +492,11 @@ const SessionWorkspace = ({ session }) => {
             }
           });
           
+          const buildOriginalKey = originalFile => {
+            if (!originalFile) return null;
+            return `${originalFile.s3_key || ''}|${(originalFile.filename || '').toLowerCase()}`;
+          };
+
           // Merge completed documents from database with existing ones
           // Preserve existing document structure if it has all required fields
           const mergedCompleted = redlinedDocsFromResults.map(doc => {
@@ -507,6 +512,14 @@ const SessionWorkspace = ({ session }) => {
                   existing = value;
                   break;
                 }
+              }
+            }
+
+            // If still not found, attempt to match by original file identifiers
+            if (!existing && doc.originalFile) {
+              const docOriginalKey = buildOriginalKey(doc.originalFile);
+              if (docOriginalKey) {
+                existing = baseline.find(item => buildOriginalKey(item.originalFile) === docOriginalKey);
               }
             }
             
@@ -537,14 +550,23 @@ const SessionWorkspace = ({ session }) => {
           mergedCompleted.forEach(doc => {
             const key = doc.jobId || doc.analysis || doc.redlinedDocument;
             if (key) matchedKeys.add(key);
+            const originalKey = buildOriginalKey(doc.originalFile);
+            if (originalKey) matchedKeys.add(originalKey);
           });
           
           // Filter out duplicates from merged completed docs
           const seen = new Set();
           const uniqueCompleted = mergedCompleted.filter(doc => {
             const key = doc.jobId || doc.analysis || doc.redlinedDocument;
-            if (!key || seen.has(key)) return false;
-            seen.add(key);
+            if (key) {
+              if (seen.has(key)) return false;
+              seen.add(key);
+            }
+            const originalKey = buildOriginalKey(doc.originalFile);
+            if (originalKey) {
+              if (seen.has(originalKey)) return false;
+              seen.add(originalKey);
+            }
             return true;
           });
           
@@ -554,7 +576,10 @@ const SessionWorkspace = ({ session }) => {
             if (doc.processing || doc.status === 'processing') return false;
             // Keep documents that weren't matched by DB results
             const key = doc.jobId || doc.analysis || doc.redlinedDocument;
-            return key && !matchedKeys.has(key);
+            const originalKey = buildOriginalKey(doc.originalFile);
+            if (key && matchedKeys.has(key)) return false;
+            if (originalKey && matchedKeys.has(originalKey)) return false;
+            return key || originalKey;
           });
           
           return [...inProgress, ...uniqueCompleted, ...unmatchedExisting];
@@ -683,9 +708,71 @@ const SessionWorkspace = ({ session }) => {
 
   const handleJobCompleted = async (message) => {
     const { job_id, session_id, data } = message;
+    const isCurrentSession = session_id === session?.session_id;
     
-    if (session_id === session?.session_id) {
-      // Stop progress and update UI
+    const reconcileDocuments = (docs = []) => {
+      let matched = false;
+      const updatedDocs = docs.map(doc => {
+        if (!matched && (doc.jobId === job_id || (data.analysis_id && doc.analysis === data.analysis_id))) {
+          matched = true;
+          const redlinedSuccess = data.redlined_document && data.redlined_document.success;
+          const redlinedDoc = data.redlined_document?.redlined_document;
+          return {
+            ...doc,
+            status: 'completed',
+            progress: 100,
+            success: redlinedSuccess,
+            redlinedDocument: redlinedDoc || doc.redlinedDocument,
+            analysis: data.analysis_id || doc.analysis,
+            processing: false,
+            message: 'Document processing completed'
+          };
+        }
+        return doc;
+      });
+      if (!matched && data.redlined_document && data.redlined_document.success) {
+        updatedDocs.push({
+          originalFile: window.currentProcessingJob || { filename: `Document for job ${job_id}` },
+          redlinedDocument: data.redlined_document.redlined_document,
+          analysis: data.analysis_id,
+          success: true,
+          processing: false,
+          jobId: job_id,
+          status: 'completed',
+          progress: 100
+        });
+      }
+      const stillProcessing = updatedDocs.some(doc => doc.processing === true || doc.status === 'processing');
+      return { updatedDocs, stillProcessing };
+    };
+    
+    const persistSessionCompletion = () => {
+      if (!sessionDataRef.current[session_id]) {
+        sessionDataRef.current[session_id] = {
+          uploadedFiles: [],
+          redlinedDocuments: [],
+          generating: false,
+          processingStage: '',
+          stageProgress: 0,
+          workflowMessage: '',
+          workflowMessageType: ''
+        };
+      }
+      const entry = sessionDataRef.current[session_id];
+      const { updatedDocs, stillProcessing } = reconcileDocuments(entry.redlinedDocuments);
+      entry.redlinedDocuments = updatedDocs;
+      entry.generating = stillProcessing;
+      entry.processingStage = stillProcessing ? (entry.processingStage || getStageForProgress(entry.stageProgress || 0)) : 'completed';
+      entry.stageProgress = stillProcessing ? Math.max(entry.stageProgress || 0, 99) : 100;
+      entry.workflowMessage = stillProcessing
+        ? (entry.workflowMessage || stageMessages.generating)
+        : 'Document processing completed successfully!';
+      entry.workflowMessageType = stillProcessing ? (entry.workflowMessageType || 'progress') : 'success';
+      saveSessionDataToStorage(sessionDataRef.current);
+      return { stillProcessing };
+    };
+    
+    if (isCurrentSession) {
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
@@ -696,68 +783,32 @@ const SessionWorkspace = ({ session }) => {
       setWorkflowMessage('Document processing completed successfully!');
       setWorkflowMessageType('success');
       
-      // Use functional update to properly handle existing entries
+      let stillProcessingAfterUpdate = false;
       setRedlinedDocuments(prev => {
-        const existingIndex = prev.findIndex(doc => doc.jobId === job_id);
-        
-        if (existingIndex !== -1) {
-          // UPDATE existing entry instead of adding new one
-          const updated = [...prev];
-          const redlinedSuccess = data.redlined_document && data.redlined_document.success;
-          const redlinedDoc = data.redlined_document?.redlined_document;
-          
-          updated[existingIndex] = {
-            ...updated[existingIndex],
-            status: 'completed',
-            progress: 100,
-            success: redlinedSuccess,
-            redlinedDocument: redlinedDoc,
-            analysis: data.analysis_id,
-            processing: false,
-            message: 'Document processing completed',
-            // Preserve originalFile if it exists, otherwise use window.currentProcessingJob or fallback
-            originalFile: updated[existingIndex].originalFile || window.currentProcessingJob || { 
-              filename: `Document for job ${job_id}` 
-            }
-          };
-          return updated;
-        } else {
-          // Only add new entry if somehow none exists (fallback)
-          if (data.redlined_document && data.redlined_document.success) {
-            const newEntry = {
-              originalFile: window.currentProcessingJob || { 
-                filename: `Document for job ${job_id}` 
-              },
-              redlinedDocument: data.redlined_document.redlined_document,
-              analysis: data.analysis_id,
-              success: true,
-              processing: false,
-              jobId: job_id,
-              status: 'completed',
-              progress: 100
-            };
-            return [...prev, newEntry];
-          }
-          return prev;
-        }
+        const { updatedDocs, stillProcessing } = reconcileDocuments(prev);
+        stillProcessingAfterUpdate = stillProcessing;
+        return updatedDocs;
       });
       
       window.currentProcessingJob = null;
       
-      // Reload session results to ensure persistence
-      // This ensures the redline document is saved to the database and will persist when switching sessions
-      // Use a longer delay to ensure backend has saved the results and to avoid race conditions
+      const { stillProcessing } = persistSessionCompletion();
+      stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
+      if (!stillProcessingAfterUpdate) {
+        setGenerating(false);
+      } else {
+        setStageProgress(prev => (prev < 99 ? 99 : prev));
+      }
+      
       setTimeout(async () => {
         try {
           await loadSessionResults();
         } catch (error) {
           console.warn('Failed to reload session results after job completion:', error);
-          // Don't clear the redlinedDocuments on error - keep what we have
         }
-      }, 2000); // Increased delay to ensure backend has saved the results
-      
-      // Keep progress bar visible and show completed state
-      // Don't reset the progress - keep it at 100% to show completion
+      }, 2000);
+    } else {
+      persistSessionCompletion();
     }
   };
 
