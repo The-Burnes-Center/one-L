@@ -14,7 +14,7 @@ import hashlib
 from typing import Dict, Any, List
 from collections import defaultdict
 from docx import Document
-from docx.shared import RGBColor, Pt
+from docx.shared import RGBColor, Pt, Inches
 import io
 
 # Import PDF processor
@@ -2316,6 +2316,34 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
             for page_index in range(len(pdf)):
                 page = pdf[page_index]
                 try:
+                    # Extract images from page first (before text extraction)
+                    try:
+                        image_list = page.get_images()
+                        if image_list:
+                            logger.info(f"PDF_TO_DOCX_FALLBACK: Found {len(image_list)} images on page {page_index + 1}")
+                            for img_idx, img in enumerate(image_list):
+                                try:
+                                    # Get image data
+                                    xref = img[0]
+                                    base_image = pdf.extract_image(xref)
+                                    image_bytes = base_image["image"]
+                                    image_ext = base_image["ext"]
+                                    
+                                    # Add image to DOCX (at the start of page)
+                                    if image_bytes:
+                                        # Create a temporary file-like object for the image
+                                        img_stream = io.BytesIO(image_bytes)
+                                        # Add image to document (width=6 inches max to fit page)
+                                        para_img = docx_doc.add_paragraph()
+                                        run_img = para_img.add_run()
+                                        run_img.add_picture(img_stream, width=Inches(6))
+                                        logger.info(f"PDF_TO_DOCX_FALLBACK: Added image {img_idx + 1} to page {page_index + 1}")
+                                except Exception as img_error:
+                                    logger.warning(f"PDF_TO_DOCX_FALLBACK: Error extracting image {img_idx + 1}: {img_error}")
+                                    continue
+                    except Exception as img_extract_error:
+                        logger.debug(f"PDF_TO_DOCX_FALLBACK: Image extraction error: {img_extract_error}")
+                    
                     # Add page marker
                     page_para = docx_doc.add_paragraph(f"--- Page {page_index + 1} ---")
                     page_para.runs[0].font.bold = True
@@ -2355,8 +2383,35 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                     
                     for block in text_dict.get("blocks", []):
                         if "lines" in block:
-                            # Create one paragraph per block
-                            para = docx_doc.add_paragraph()
+                            # Collect all text from block to detect list patterns
+                            block_text = ""
+                            for line in block["lines"]:
+                                for span in line.get("spans", []):
+                                    block_text += span.get("text", "") + " "
+                            block_text = block_text.strip()
+                            
+                            # Detect numbered list patterns (1a, 1b, 2a, etc. or 1., 2., etc.)
+                            is_numbered_list = False
+                            list_style = None
+                            
+                            # Pattern: starts with number followed by letter (1a, 1b, 2a, etc.)
+                            if re.match(r'^\d+[a-z]', block_text, re.IGNORECASE):
+                                is_numbered_list = True
+                                list_style = 'List Number 2'  # For sub-items like 1a, 1b
+                            # Pattern: starts with number followed by period or parenthesis (1., 2., (1), etc.)
+                            elif re.match(r'^[\d]+[\.\)]', block_text):
+                                is_numbered_list = True
+                                list_style = 'List Number'
+                            # Pattern: starts with letter followed by period (a., b., etc.)
+                            elif re.match(r'^[a-z][\.\)]', block_text, re.IGNORECASE):
+                                is_numbered_list = True
+                                list_style = 'List Bullet 2'
+                            
+                            # Create paragraph with or without list formatting
+                            if is_numbered_list:
+                                para = docx_doc.add_paragraph(style=list_style)
+                            else:
+                                para = docx_doc.add_paragraph()
                             
                             for line_idx, line in enumerate(block["lines"]):
                                 # Collect all spans with their formatting
