@@ -57,14 +57,12 @@ const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessi
     }
     
     setUploading(true);
-    setMessage('Preparing vendor submission files for upload...');
+    setMessage('Preparing vendor submission file for upload...');
     setMessageType('');
     
     try {
-      // Prepare files for upload with vendor submission renaming
-      const preparedFiles = await fileUtils.prepareFilesForUpload(selectedFiles, {
-        renameForVendorSubmission: true
-      });
+      // Prepare files for upload while preserving original filename
+      const preparedFiles = await fileUtils.prepareFilesForUpload(selectedFiles);
       
       setMessage('Uploading vendor submission files...');
       
