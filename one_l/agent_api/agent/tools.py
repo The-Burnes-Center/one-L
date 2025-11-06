@@ -2394,18 +2394,27 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                             is_numbered_list = False
                             list_style = None
                             
-                            # Pattern: starts with number followed by letter (1a, 1b, 2a, etc.)
-                            if re.match(r'^\d+[a-z]', block_text, re.IGNORECASE):
+                            # Pattern: starts with number followed by letter (1a, 1b, 2a, etc.) - standalone sub-items
+                            if re.match(r'^\d+[a-z]\b', block_text, re.IGNORECASE):
                                 is_numbered_list = True
                                 list_style = 'List Number 2'  # For sub-items like 1a, 1b
                             # Pattern: starts with number followed by period or parenthesis (1., 2., (1), etc.)
                             elif re.match(r'^[\d]+[\.\)]', block_text):
                                 is_numbered_list = True
                                 list_style = 'List Number'
-                            # Pattern: starts with letter followed by period (a., b., etc.)
+                            # Pattern: starts with letter followed by period or parenthesis (a., b., (a), etc.)
                             elif re.match(r'^[a-z][\.\)]', block_text, re.IGNORECASE):
                                 is_numbered_list = True
                                 list_style = 'List Bullet 2'
+                            # Pattern: contains sub-item pattern like "(a)", "(b)", "(i)", "(ii)" at start
+                            elif re.match(r'^\([a-z0-9]+\)', block_text, re.IGNORECASE):
+                                is_numbered_list = True
+                                list_style = 'List Bullet 2'  # For sub-items like (a), (b), (i), (ii)
+                            # Pattern: contains "1a", "1b", "2a", etc. anywhere in text (for cases where it's not at start)
+                            elif re.search(r'\b\d+[a-z]\b', block_text, re.IGNORECASE) and len(block_text) < 100:
+                                # Only apply if text is short (likely a list item)
+                                is_numbered_list = True
+                                list_style = 'List Number 2'
                             
                             # Create paragraph with or without list formatting
                             if is_numbered_list:
@@ -2470,6 +2479,8 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                                             font_map = {
                                                 'Arial': 'Arial',
                                                 'ArialMT': 'Arial',
+                                                'Arial-BoldMT': 'Arial',
+                                                'Arial-ItalicMT': 'Arial',
                                                 'Helvetica': 'Arial',
                                                 'Helvetica-Bold': 'Arial',
                                                 'Helvetica-Oblique': 'Arial',
@@ -2484,20 +2495,18 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                                                 'Calibri-Bold': 'Calibri',
                                                 'Calibri-Italic': 'Calibri',
                                             }
-                                            # Check if font should be applied (skip only default Times variants)
+                                            # Always try to apply font mapping (except default Times-Roman)
                                             if span_data['font'] not in ['Times-Roman']:
                                                 font_name = font_map.get(span_data['font'], span_data['font'])
-                                                # Try to set font name, but don't fail if font doesn't exist
+                                                # Try to set font name - python-docx will use default if font unavailable
                                                 try:
                                                     run.font.name = font_name
-                                                except:
-                                                    # If font name doesn't work, try without mapping
-                                                    if font_name != span_data['font']:
-                                                        try:
-                                                            run.font.name = span_data['font']
-                                                        except:
-                                                            pass
-                                    except:
+                                                except Exception as font_err:
+                                                    # Log but don't fail - font might not be available in DOCX
+                                                    logger.debug(f"PDF_TO_DOCX_FALLBACK: Could not set font {font_name}: {font_err}")
+                                                    pass
+                                    except Exception as font_error:
+                                        logger.debug(f"PDF_TO_DOCX_FALLBACK: Font processing error: {font_error}")
                                         pass
                                     
                                     # Add space after span (except last in line)
