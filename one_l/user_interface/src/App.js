@@ -439,6 +439,16 @@ const SessionWorkspace = ({ session }) => {
       setLoadingResults(true);
       const userId = authService.getUserId();
       
+      // Check if this session has recent WebSocket updates that should be prioritized
+      const sessionData = sessionDataRef.current[session.session_id];
+      const hasRecentWebSocketUpdates = sessionData?.hasWebSocketUpdates && 
+        sessionData?.lastWebSocketUpdate &&
+        (Date.now() - sessionData.lastWebSocketUpdate) < 60000; // Within last 60 seconds
+      
+      if (hasRecentWebSocketUpdates) {
+        console.log(`Session ${session.session_id} has recent WebSocket updates. Prioritizing localStorage data.`);
+      }
+      
       // Always try to load results - the backend will return empty if none exist
       const response = await sessionAPI.getSessionResults(session.session_id, userId);
       
@@ -581,6 +591,12 @@ const SessionWorkspace = ({ session }) => {
             if (originalKey && matchedKeys.has(originalKey)) return false;
             return key || originalKey;
           });
+          
+          // If this session has recent WebSocket updates, prioritize those over DB results
+          // This ensures that fresh WebSocket data isn't lost during the DB sync delay
+          if (hasRecentWebSocketUpdates && unmatchedExisting.length > 0) {
+            console.log(`Preserving ${unmatchedExisting.length} WebSocket-updated document(s) for session ${session.session_id}`);
+          }
           
           return [...inProgress, ...uniqueCompleted, ...unmatchedExisting];
         });
@@ -768,6 +784,9 @@ const SessionWorkspace = ({ session }) => {
         ? (entry.workflowMessage || stageMessages.generating)
         : 'Document processing completed successfully!';
       entry.workflowMessageType = stillProcessing ? (entry.workflowMessageType || 'progress') : 'success';
+      // Mark this session as having WebSocket updates that need to be preserved
+      entry.hasWebSocketUpdates = true;
+      entry.lastWebSocketUpdate = Date.now();
       saveSessionDataToStorage(sessionDataRef.current);
       return { stillProcessing };
     };
@@ -808,7 +827,9 @@ const SessionWorkspace = ({ session }) => {
         }
       }, 2000);
     } else {
+      // For background sessions, persist the completion
       persistSessionCompletion();
+      console.log(`Background session ${session_id} received completion for job ${job_id}. Data saved to localStorage for later retrieval.`);
     }
   };
 
