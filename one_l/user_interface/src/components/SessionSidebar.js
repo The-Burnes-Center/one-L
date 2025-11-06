@@ -143,9 +143,10 @@ const SessionSidebar = ({
   };
 
   const getParallelSessionWarning = (action) => (
-    'Parallel sessions are not supported yet.\n' +
-    `Please do not ${action} while a redline is generating.\n\n` +
-    'Do you want to continue?'
+    'A redline is currently running.\n' +
+    `If you ${action}, the progress indicator will be lost and results may not appear properly.\n\n` +
+    'We recommend waiting for the current redline to complete.\n\n' +
+    'Continue anyway?'
   );
 
   const handleNewSession = async () => {
@@ -153,8 +154,7 @@ const SessionSidebar = ({
 
     if (hasActiveProcessing) {
       const proceedWithParallelWarning = window.confirm(
-        getParallelSessionWarning('create a new session') + '\n\n' +
-        'You have an active document processing job. Creating a new session will navigate away and pause the progress indicator (processing will continue in the background).'
+        getParallelSessionWarning('create a new session')
       );
 
       if (!proceedWithParallelWarning) {
@@ -272,10 +272,8 @@ const SessionSidebar = ({
     
     // Show warning if there's active processing
     if (hasActiveProcessing || hasProcessingInStorage) {
-      const generalSwitchWarning = getParallelSessionWarning('switch sessions');
       const confirmed = window.confirm(
-        generalSwitchWarning + '\n\n' +
-        'You have an active document processing job. Switching sessions will pause the progress indicator for this session (processing will continue in the background).'
+        getParallelSessionWarning('switch sessions')
       );
       if (!confirmed) {
         return; // Don't navigate if user cancels
