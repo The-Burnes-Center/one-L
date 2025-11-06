@@ -869,6 +869,15 @@ const SessionWorkspace = ({ session }) => {
   };
 
   const handleGenerateRedline = async () => {
+    const sessionIdAtStart = session?.session_id;
+    const userIdAtStart = session?.user_id || authService.getUserId();
+    if (!sessionIdAtStart || !userIdAtStart) {
+      setWorkflowMessage('Unable to start processing because the session or user could not be identified. Please refresh and try again.');
+      setWorkflowMessageType('error');
+      return;
+    }
+    const isCurrentSession = () => currentSessionIdRef.current === sessionIdAtStart;
+    
     const vendorFiles = uploadedFiles.filter(f => f.type === 'vendor_submission');
     const referenceFiles = uploadedFiles.filter(f => f.type === 'reference_document');
     
@@ -887,41 +896,52 @@ const SessionWorkspace = ({ session }) => {
     setGenerating(true);
     
     // Start the smooth 3-stage progress flow
-    startProgressFlow();
+    startProgressFlow(0, {
+      initialStage: 'kb_sync',
+      initialMessage: stageMessages.kb_sync
+    });
     
+    let hasProcessingResults = false;
     try {
       const redlineResults = [];
       
       // Process each vendor file
       for (const vendorFile of vendorFiles) {
-        setWorkflowMessage(`Starting analysis of ${vendorFile.filename}...`);
+        if (isCurrentSession()) {
+          setWorkflowMessage(`Starting analysis of ${vendorFile.filename}...`);
+          setWorkflowMessageType('progress');
+        }
         
         try {
           const reviewResponse = await agentAPI.reviewDocument(
             vendorFile.s3_key, 
             'agent_processing',
-            session?.session_id,
-            session?.user_id
+            sessionIdAtStart,
+            userIdAtStart
           );
           
           // Check if processing is asynchronous
           if (reviewResponse.processing && reviewResponse.job_id) {
-            setWorkflowMessage(`Processing ${vendorFile.filename} in background...`);
+            if (isCurrentSession()) {
+              setWorkflowMessage(`Processing ${vendorFile.filename} in background...`);
+            }
             
             // Subscribe to WebSocket notifications for this job
             try {
-              webSocketService.subscribeToJob(reviewResponse.job_id, session?.session_id);
+              webSocketService.subscribeToJob(reviewResponse.job_id, sessionIdAtStart);
 
               
               // Add job to tracking with initial progress
-              setRedlinedDocuments(prev => [...prev, {
-                originalFile: vendorFile,
-                jobId: reviewResponse.job_id,
-                status: 'processing',
-                progress: 0,
-                message: 'Starting document analysis...',
-                processing: true
-              }]);
+              if (isCurrentSession()) {
+                setRedlinedDocuments(prev => [...prev, {
+                  originalFile: vendorFile,
+                  jobId: reviewResponse.job_id,
+                  status: 'processing',
+                  progress: 0,
+                  message: 'Starting document analysis...',
+                  processing: true
+                }]);
+              }
               
             } catch (error) {
 
@@ -930,7 +950,7 @@ const SessionWorkspace = ({ session }) => {
             // Poll for completion (WebSocket is primary, polling is fallback)
             const finalResult = await pollJobStatus(
               reviewResponse.job_id, 
-              session?.user_id, 
+              userIdAtStart, 
               vendorFile.filename
             );
             
@@ -984,7 +1004,7 @@ const SessionWorkspace = ({ session }) => {
             // but the session-level subscription will catch the completion notification
             window.currentProcessingJob = {
               filename: vendorFile.filename,
-              sessionId: session?.session_id,
+              sessionId: sessionIdAtStart,
               vendorFileKey: vendorFile.s3_key
             };
             
@@ -1018,8 +1038,11 @@ const SessionWorkspace = ({ session }) => {
       const successfulResults = redlineResults.filter(r => r.success);
       const failedResults = redlineResults.filter(r => !r.success && !r.processing);
       const processingResults = redlineResults.filter(r => r.processing);
+      hasProcessingResults = processingResults.length > 0;
       
-      setRedlinedDocuments(redlineResults);
+      if (isCurrentSession()) {
+        setRedlinedDocuments(redlineResults);
+      }
       
       if (successfulResults.length > 0) {
         let message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
@@ -1032,37 +1055,74 @@ const SessionWorkspace = ({ session }) => {
         if (successfulResults.length > 0) {
           message += ' Scroll down to download completed documents.';
         }
-        setWorkflowMessage(message);
-        setWorkflowMessageType('success');
+        if (isCurrentSession()) {
+          setWorkflowMessage(message);
+          setWorkflowMessageType('success');
+        }
       } else if (processingResults.length > 0) {
-        setWorkflowMessage(
-          `${processingResults.length} document(s) are processing in background due to complexity. Please wait for completion.`
-        );
-        setWorkflowMessageType('');
+        if (isCurrentSession()) {
+          setWorkflowMessage(
+            `${processingResults.length} document(s) are processing in background due to complexity. Please wait for completion.`
+          );
+          setWorkflowMessageType('');
+        }
       } else if (failedResults.length > 0) {
-        setWorkflowMessage('All redline generation attempts failed. Please check your documents and try again.');
-        setWorkflowMessageType('error');
+        if (isCurrentSession()) {
+          setWorkflowMessage('All redline generation attempts failed. Please check your documents and try again.');
+          setWorkflowMessageType('error');
+        }
       } else {
         // No results yet - processing is starting, show processing message
-        setWorkflowMessage('Starting document processing... Please wait for completion.');
-        setWorkflowMessageType('');
+        if (isCurrentSession()) {
+          setWorkflowMessage('Starting document processing... Please wait for completion.');
+          setWorkflowMessageType('');
+        }
       }
       
     } catch (error) {
-
-      
-      // Clean up progress interval on error
+      console.error('Error generating redlined documents:', error);
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
-      
-      setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
-      setWorkflowMessageType('error');
-      setProcessingStage('');
-      setStageProgress(0);
+      if (isCurrentSession()) {
+        setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
+        setWorkflowMessageType('error');
+        setProcessingStage('');
+        setStageProgress(0);
+      } else {
+        const sessionEntry = sessionDataRef.current[sessionIdAtStart];
+        if (sessionEntry) {
+          sessionEntry.workflowMessage = `Failed to generate redlined documents: ${error.message}`;
+          sessionEntry.workflowMessageType = 'error';
+          sessionEntry.processingStage = '';
+          sessionEntry.stageProgress = 0;
+          sessionEntry.generating = false;
+          saveSessionDataToStorage(sessionDataRef.current);
+        }
+      }
+      hasProcessingResults = false;
     } finally {
-      setGenerating(false);
+      const sessionEntry = sessionDataRef.current[sessionIdAtStart];
+      const stillProcessing = hasProcessingResults || (sessionEntry?.redlinedDocuments?.some(doc => doc.processing) ?? false);
+      if (isCurrentSession()) {
+        if (!stillProcessing) {
+          setGenerating(false);
+          setProcessingStage('');
+          setStageProgress(0);
+        }
+      } else if (sessionEntry) {
+        if (!stillProcessing) {
+          sessionEntry.generating = false;
+          sessionEntry.processingStage = '';
+          sessionEntry.stageProgress = 0;
+          saveSessionDataToStorage(sessionDataRef.current);
+        } else {
+          sessionEntry.generating = true;
+          sessionEntry.processingStage = sessionEntry.processingStage || getStageForProgress(sessionEntry.stageProgress || 0);
+          saveSessionDataToStorage(sessionDataRef.current);
+        }
+      }
     }
   };
 
