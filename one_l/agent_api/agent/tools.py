@@ -1249,7 +1249,6 @@ def _ensure_docx_page_coverage(doc, pages_needing_coverage: List[int], existing_
             continue
 
 
->>>>>>> a9788d2 (Reduce excessive Legal-AI review notes - only add one note per page with zero conflicts)
 def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
     """TIER 0: Ultra-aggressive matching with sentence-level search."""
     
