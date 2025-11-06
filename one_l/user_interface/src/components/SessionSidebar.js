@@ -150,15 +150,16 @@ const SessionSidebar = ({
 
   const handleNewSession = async () => {
     const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
-    const proceedWithParallelWarning = window.confirm(
-      getParallelSessionWarning('create a new session') +
-      (hasActiveProcessing
-        ? '\n\nYou have an active document processing job. Creating a new session will navigate away and pause the progress indicator (processing will continue in the background).'
-        : '')
-    );
 
-    if (!proceedWithParallelWarning) {
-      return;
+    if (hasActiveProcessing) {
+      const proceedWithParallelWarning = window.confirm(
+        getParallelSessionWarning('create a new session') + '\n\n' +
+        'You have an active document processing job. Creating a new session will navigate away and pause the progress indicator (processing will continue in the background).'
+      );
+
+      if (!proceedWithParallelWarning) {
+        return;
+      }
     }
 
     try {
@@ -270,20 +271,14 @@ const SessionSidebar = ({
     }
     
     // Show warning if there's active processing
-    const generalSwitchWarning = getParallelSessionWarning('switch sessions');
-
     if (hasActiveProcessing || hasProcessingInStorage) {
+      const generalSwitchWarning = getParallelSessionWarning('switch sessions');
       const confirmed = window.confirm(
         generalSwitchWarning + '\n\n' +
         'You have an active document processing job. Switching sessions will pause the progress indicator for this session (processing will continue in the background).'
       );
       if (!confirmed) {
         return; // Don't navigate if user cancels
-      }
-    } else {
-      const confirmed = window.confirm(generalSwitchWarning);
-      if (!confirmed) {
-        return;
       }
     }
     
