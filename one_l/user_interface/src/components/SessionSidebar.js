@@ -149,21 +149,50 @@ const SessionSidebar = ({
     'Continue anyway?'
   );
 
-  const handleNewSession = async () => {
-    const hasActiveProcessing = window.isRedlineProcessing === true && window.currentProcessingSessionId === sessionId;
+  const getCurrentSessionProcessingState = () => {
+    if (typeof window === 'undefined') {
+      return { globalActive: false, storageActive: false };
+    }
 
-    if (hasActiveProcessing) {
+    const globalActive = window.isRedlineProcessing === true && window.currentProcessingSessionId === sessionId;
+    let storageActive = false;
+
+    if (currentUserId && sessionId) {
+      try {
+        const storageKey = `one_l_session_data_${currentUserId}`;
+        const stored = window.localStorage.getItem(storageKey);
+        if (stored) {
+          const sessionData = JSON.parse(stored);
+          const currentSessionData = sessionData?.[sessionId];
+          if (currentSessionData) {
+            const isGenerating = currentSessionData.generating === true;
+            const hasProcessingDocs = currentSessionData.redlinedDocuments?.some(
+              doc => doc?.processing === true || doc?.status === 'processing'
+            ) || false;
+            const hasProcessingStage = Boolean(
+              currentSessionData.processingStage && currentSessionData.processingStage !== ''
+            );
+            storageActive = isGenerating || hasProcessingDocs || hasProcessingStage;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking processing status:', error);
+      }
+    }
+
+    return { globalActive, storageActive };
+  };
+
+  const handleNewSession = async () => {
+    const { globalActive, storageActive } = getCurrentSessionProcessingState();
+
+    if (globalActive || storageActive) {
       const proceedWithParallelWarning = window.confirm(
         getParallelSessionWarning('create a new session')
       );
 
       if (!proceedWithParallelWarning) {
         return;
-      }
-
-      if (window.currentProcessingSessionId === sessionId) {
-        window.isRedlineProcessing = false;
-        window.currentProcessingSessionId = null;
       }
     }
 
@@ -236,58 +265,16 @@ const SessionSidebar = ({
       return;
     }
 
-    // Check if there's active processing in the current session
-    const hasActiveProcessing = window.isRedlineProcessing === true && window.currentProcessingSessionId === sessionId;
-    
-    // Also check localStorage for processing status
-    const userId = currentUserId;
-    let hasProcessingInStorage = false;
-    
-    if (userId) {
-      try {
-        const storageKey = `one_l_session_data_${userId}`;
-        const stored = localStorage.getItem(storageKey);
-        if (stored) {
-          const sessionData = JSON.parse(stored);
-          // Check if current session has active processing
-          const currentSessionId = sessionId;
-          if (currentSessionId && sessionData[currentSessionId]) {
-            const currentSessionData = sessionData[currentSessionId];
-            
-            // Check if generating is true
-            const isGenerating = currentSessionData.generating === true;
-            
-            // Check if there are processing documents
-            const hasProcessingDocs = currentSessionData.redlinedDocuments?.some(
-              doc => doc.processing === true || doc.status === 'processing'
-            ) || false;
-            
-            // Check if processing stage is active
-            const hasProcessingStage = currentSessionData.processingStage &&
-                                      currentSessionData.processingStage !== '';
-            
-            hasProcessingInStorage = isGenerating || hasProcessingDocs || hasProcessingStage;
-          }
-        }
-      } catch (error) {
-        console.error('Error checking processing status:', error);
-      }
-    }
+    const { globalActive, storageActive } = getCurrentSessionProcessingState();
     
     // Show warning if there's active processing
-    if (hasActiveProcessing || hasProcessingInStorage) {
+    if (globalActive || storageActive) {
       const confirmed = window.confirm(
         getParallelSessionWarning('switch sessions')
       );
       if (!confirmed) {
         return; // Don't navigate if user cancels
       }
-    }
-    
-    // If we get here, either no processing or user confirmed
-    if (hasActiveProcessing && window.currentProcessingSessionId === sessionId) {
-      window.isRedlineProcessing = false;
-      window.currentProcessingSessionId = null;
     }
     
     navigate(`/${session.session_id}`, { 
