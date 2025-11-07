@@ -147,7 +147,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             job_id = str(uuid.uuid4())
             
             # Save initial job status to DynamoDB
-            save_job_status(job_id, document_s3_key, user_id, session_id, "kb_sync")
+            save_job_status(job_id, document_s3_key, user_id, session_id, "processing")
             
             # Return immediate response to frontend
             immediate_response = {
@@ -164,32 +164,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             try:
                 # Initialize Lambda client for notifications
                 lambda_client = boto3.client('lambda')
-
-                notification_function_name = f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-websocket-notification')}"
-
-                # Notify UI that we're beginning with knowledge base sync preparation
-                try:
-                    progress_payload = {
-                        'notification_type': 'job_progress',
-                        'job_id': job_id,
-                        'user_id': user_id,
-                        'session_id': session_id,
-                        'data': {
-                            'status': 'kb_sync',
-                            'stage': 'kb_sync',
-                            'progress': 10,
-                            'message': 'Preparing knowledge base for document review...'
-                        }
-                    }
-
-                    if notification_function_name:
-                        lambda_client.invoke(
-                            FunctionName=notification_function_name,
-                            InvocationType='Event',
-                            Payload=json.dumps(progress_payload)
-                        )
-                except Exception as e:
-                    pass
                 
                 # Clear knowledge base cache for fresh document review session
                 from agent_api.agent.tools import clear_knowledge_base_cache
@@ -203,6 +177,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 
                 # Send WebSocket progress notification
                 try:
+                    notification_function_name = f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-websocket-notification')}"
                     progress_payload = {
                         'notification_type': 'job_progress',
                         'job_id': job_id,
@@ -210,18 +185,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'session_id': session_id,
                         'data': {
                             'status': 'analyzing',
-                            'stage': 'document_review',
                             'progress': 25,
                             'message': 'Analyzing document with AI...'
                         }
                     }
-
-                    if notification_function_name:
-                        lambda_client.invoke(
-                            FunctionName=notification_function_name,
-                            InvocationType='Event',
-                            Payload=json.dumps(progress_payload)
-                        )
+                    
+                    lambda_client.invoke(
+                        FunctionName=notification_function_name,
+                        InvocationType='Event',
+                        Payload=json.dumps(progress_payload)
+                    )
                 except Exception as e:
                     pass
                 
@@ -245,18 +218,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'session_id': session_id,
                         'data': {
                             'status': 'generating_redline',
-                            'stage': 'generating',
                             'progress': 75,
                             'message': 'Generating redlined document...'
                         }
                     }
-
-                    if notification_function_name:
-                        lambda_client.invoke(
-                            FunctionName=notification_function_name,
-                            InvocationType='Event',
-                            Payload=json.dumps(progress_payload)
-                        )
+                    
+                    lambda_client.invoke(
+                        FunctionName=notification_function_name,
+                        InvocationType='Event',
+                        Payload=json.dumps(progress_payload)
+                    )
                 except Exception as e:
                     pass
                 
@@ -330,20 +301,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             'session_id': session_id,
                             'data': {
                                 'status': 'completed',
-                                'stage': 'completed',
                                 'analysis_id': analysis_id,
                                 'redlined_document': redlined_result,
                                 'message': 'Document analysis completed successfully'
                             }
                         }
-
+                        
                         # Invoke WebSocket notification function asynchronously
-                        if notification_function_name:
-                            lambda_client.invoke(
-                                FunctionName=notification_function_name,
-                                InvocationType='Event',  # Async call
-                                Payload=json.dumps(notification_payload)
-                            )
+                        lambda_client.invoke(
+                            FunctionName=notification_function_name,
+                            InvocationType='Event',  # Async call
+                            Payload=json.dumps(notification_payload)
+                        )
 
                         
                     except Exception as e:
