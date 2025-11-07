@@ -2300,11 +2300,7 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                     except Exception as img_extract_error:
                         logger.debug(f"PDF_TO_DOCX: Image extraction error: {img_extract_error}")
                     
-                    # Add page marker
-                    page_para = docx_doc.add_paragraph(f"--- Page {page_index + 1} ---")
-                    page_para.runs[0].font.bold = True
-                    
-                    # Try to extract tables first
+                    # Try to extract tables first (no page markers to preserve exact PDF structure)
                     try:
                         tables = page.find_tables()
                         if tables:
@@ -2329,54 +2325,28 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                     except (AttributeError, Exception) as table_extract_error:
                         logger.debug(f"PDF_TO_DOCX: Table extraction not available: {table_extract_error}")
                     
-                    # Extract text blocks with enhanced formatting preservation
+                    # Extract text blocks with EXACT line-by-line preservation
+                    # This ensures line breaks, alignment, and sentence boundaries match PDF exactly
                     text_dict = page.get_text("dict")
                     
                     for block in text_dict.get("blocks", []):
                         if "lines" in block:
-                            # Collect all text from block to detect list patterns
-                            block_text = ""
-                            for line in block["lines"]:
-                                for span in line.get("spans", []):
-                                    block_text += span.get("text", "") + " "
-                            block_text = block_text.strip()
-                            
-                            # Detect numbered list patterns
-                            is_numbered_list = False
-                            list_style = None
-                            
-                            if re.match(r'^\d+[a-z]\b', block_text, re.IGNORECASE):
-                                is_numbered_list = True
-                                list_style = 'List Number 2'
-                            elif re.match(r'^[\d]+[\.\)]', block_text):
-                                is_numbered_list = True
-                                list_style = 'List Number'
-                            elif re.match(r'^[a-z][\.\)]', block_text, re.IGNORECASE):
-                                is_numbered_list = True
-                                list_style = 'List Bullet 2'
-                            elif re.match(r'^\([a-z0-9]+\)', block_text, re.IGNORECASE):
-                                is_numbered_list = True
-                                list_style = 'List Bullet 2'
-                            elif re.search(r'\b\d+[a-z]\b', block_text, re.IGNORECASE) and len(block_text) < 100:
-                                is_numbered_list = True
-                                list_style = 'List Number 2'
-                            
-                            # Create paragraph with or without list formatting
-                            if is_numbered_list:
-                                para = docx_doc.add_paragraph(style=list_style)
-                            else:
-                                para = docx_doc.add_paragraph()
-                            
+                            # Process each line separately to preserve exact line breaks
                             for line_idx, line in enumerate(block["lines"]):
+                                # Collect text from this line only (preserve line boundaries)
+                                line_text = ""
                                 spans_data = []
+                                
                                 for span in line.get("spans", []):
-                                    text = span.get("text", "").strip()
+                                    # Preserve exact text including spaces (don't strip)
+                                    text = span.get("text", "")
                                     if text:
                                         flags = span.get("flags", 0)
                                         font_size = span.get("size", 11)
                                         font_color = span.get("color", 0)
                                         font_name = span.get("font", "")
                                         
+                                        line_text += text  # Preserve exact text with spaces
                                         spans_data.append({
                                             'text': text,
                                             'bold': bool(flags & 16),
@@ -2386,9 +2356,40 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                                             'font': font_name
                                         })
                                 
-                                # Add each span as a separate run with preserved formatting
+                                # Skip empty lines
+                                if not line_text.strip():
+                                    continue
+                                
+                                # Detect numbered list patterns on this line
+                                line_text_stripped = line_text.strip()
+                                is_numbered_list = False
+                                list_style = None
+                                
+                                if re.match(r'^\d+[a-z]\b', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Number 2'
+                                elif re.match(r'^[\d]+[\.\)]', line_text_stripped):
+                                    is_numbered_list = True
+                                    list_style = 'List Number'
+                                elif re.match(r'^[a-z][\.\)]', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Bullet 2'
+                                elif re.match(r'^\([a-z0-9]+\)', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Bullet 2'
+                                elif re.search(r'\b\d+[a-z]\b', line_text_stripped, re.IGNORECASE) and len(line_text_stripped) < 100:
+                                    is_numbered_list = True
+                                    list_style = 'List Number 2'
+                                
+                                # Create ONE paragraph per line to preserve exact line breaks
+                                if is_numbered_list:
+                                    para = docx_doc.add_paragraph(style=list_style)
+                                else:
+                                    para = docx_doc.add_paragraph()
+                                
+                                # Add each span with preserved formatting and exact spacing
                                 for span_idx, span_data in enumerate(spans_data):
-                                    run = para.add_run(span_data['text'])
+                                    run = para.add_run(span_data['text'])  # Preserve exact text including spaces
                                     
                                     if span_data['bold']:
                                         run.font.bold = True
@@ -2442,12 +2443,9 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                                     except Exception as font_error:
                                         logger.debug(f"PDF_TO_DOCX: Font processing error: {font_error}")
                                         pass
-                                    
-                                    if span_idx < len(spans_data) - 1:
-                                        para.add_run(' ')
                                 
-                                if line_idx < len(block["lines"]) - 1:
-                                    para.add_run(' ')
+                                # Each line becomes a separate paragraph - preserves exact line breaks
+                                # No need to add spaces between spans since we preserve exact text
                 except Exception as page_error:
                     logger.warning(f"PDF_TO_DOCX: Error processing page {page_index + 1}: {page_error}")
                     continue
