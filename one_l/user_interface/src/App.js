@@ -227,46 +227,30 @@ const SessionWorkspace = ({ session }) => {
   const isNewSession = initialIsNewSessionRef.current ?? false;
 
 useEffect(() => {
-  if (typeof window !== 'undefined') {
-    if (window.isRedlineProcessing === undefined) {
-      window.isRedlineProcessing = false;
-    }
-    if (window.currentProcessingSessionId === undefined) {
-      window.currentProcessingSessionId = null;
-    }
-  }
-
   if (!session?.session_id) {
     return;
   }
 
-  const hasProcessingDocuments = redlinedDocuments?.some(
-    doc => doc?.processing === true || doc?.status === 'processing'
-  );
-
   const isSessionProcessing = Boolean(
     generating ||
-    (processingStage && processingStage !== '') ||
-    hasProcessingDocuments
+    (processingStage && processingStage !== '')
   );
 
-  if (typeof window !== 'undefined') {
-    if (isSessionProcessing) {
-      window.isRedlineProcessing = true;
-      window.currentProcessingSessionId = session.session_id;
-    } else if (window.currentProcessingSessionId === session.session_id) {
-      window.isRedlineProcessing = false;
-      window.currentProcessingSessionId = null;
-    }
+  if (isSessionProcessing) {
+    window.isRedlineProcessing = true;
+    window.currentProcessingSessionId = session.session_id;
+  } else if (window.currentProcessingSessionId === session.session_id) {
+    window.isRedlineProcessing = false;
+    window.currentProcessingSessionId = null;
   }
 
   return () => {
-    if (typeof window !== 'undefined' && window.currentProcessingSessionId === session?.session_id) {
+    if (window.currentProcessingSessionId === session?.session_id && !isSessionProcessing) {
       window.isRedlineProcessing = false;
       window.currentProcessingSessionId = null;
     }
   };
-}, [generating, processingStage, redlinedDocuments, session?.session_id]);
+}, [generating, processingStage, session?.session_id]);
 
   // Keep session data ref in sync with current state (for current session)
   // Only sync if we're not in the middle of switching sessions
