@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { sessionAPI } from '../services/api';
 import { useNavigate, useParams } from 'react-router-dom';
 
+const ACTIVE_PROCESSING_STATUSES = new Set(['processing', 'kb_sync', 'analyzing', 'generating_redline']);
+const isProcessingStatus = (status) => status && ACTIVE_PROCESSING_STATUSES.has(status);
+
 const SessionSidebar = ({ 
   currentUserId, 
   isVisible = true,
@@ -254,7 +257,7 @@ const SessionSidebar = ({
             
             // Check if there are processing documents
             const hasProcessingDocs = currentSessionData.redlinedDocuments?.some(
-              doc => doc.processing === true || doc.status === 'processing'
+              doc => doc.processing === true || isProcessingStatus(doc.status)
             ) || false;
             
             // Check if processing stage is active

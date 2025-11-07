@@ -14,6 +14,9 @@ import { agentAPI, sessionAPI } from './services/api';
 import authService from './services/auth';
 import webSocketService from './services/websocket';
 
+const ACTIVE_PROCESSING_STATUSES = ['processing', 'kb_sync', 'analyzing', 'generating_redline'];
+const isProcessingStatus = (status) => status && ACTIVE_PROCESSING_STATUSES.includes(status);
+
 // Simple session component that loads session from URL
 const SessionView = () => {
   const { sessionId } = useParams();
@@ -153,7 +156,8 @@ const SessionWorkspace = ({ session }) => {
   const statusToStageMap = {
     analyzing: 'document_review',
     generating_redline: 'generating',
-    kb_sync: 'kb_sync'
+    kb_sync: 'kb_sync',
+    processing: 'kb_sync'
   };
 
   // Session-specific storage: store uploadedFiles and redlinedDocuments per session
@@ -500,7 +504,7 @@ const SessionWorkspace = ({ session }) => {
             ? restoredRedlinedDocs 
             : prev;
           // Keep any in-progress documents from baseline
-          const inProgress = baseline.filter(doc => doc.processing || doc.status === 'processing');
+          const inProgress = baseline.filter(doc => doc.processing || isProcessingStatus(doc.status));
           
           // Create a map of existing documents by analysis_id, redlinedDocument key, or jobId
           const existingDocsMap = new Map();
@@ -593,7 +597,7 @@ const SessionWorkspace = ({ session }) => {
           // Keep existing completed documents that weren't matched by DB (e.g., WebSocket docs not yet saved)
           const unmatchedExisting = baseline.filter(doc => {
             // Skip in-progress (already handled above)
-            if (doc.processing || doc.status === 'processing') return false;
+            if (doc.processing || isProcessingStatus(doc.status)) return false;
             // Keep documents that weren't matched by DB results
             const key = doc.jobId || doc.analysis || doc.redlinedDocument;
             const originalKey = buildOriginalKey(doc.originalFile);
@@ -654,10 +658,45 @@ const SessionWorkspace = ({ session }) => {
 
   // ← NEW HANDLER FUNCTION
   const handleKbSyncStatusChange = (status, progress, message) => {
-
     setKbSyncStatus(status);
     setKbSyncProgress(progress);
     setKbSyncMessage(message);
+
+    if (!status) {
+      return;
+    }
+
+    const resolvedMessage = message || (status === 'syncing' ? stageMessages.kb_sync : '');
+
+    if (status === 'syncing') {
+      if (!generating) {
+        setCompletedStages(prev => prev.filter(stage => stage !== 'kb_sync'));
+        setProcessingStage('kb_sync');
+        if (resolvedMessage) {
+          setWorkflowMessage(resolvedMessage);
+          setWorkflowMessageType('progress');
+        }
+      }
+    } else if (status === 'ready') {
+      setCompletedStages(prev => prev.includes('kb_sync') ? prev : [...prev, 'kb_sync']);
+      if (!generating) {
+        setProcessingStage('');
+        if (resolvedMessage) {
+          setWorkflowMessage(resolvedMessage || 'Knowledge base sync completed successfully!');
+          setWorkflowMessageType(resolvedMessage ? 'success' : '');
+        } else {
+          setWorkflowMessage('Knowledge base sync completed successfully!');
+          setWorkflowMessageType('success');
+        }
+      }
+    } else if (status === 'error') {
+      setCompletedStages(prev => prev.filter(stage => stage !== 'kb_sync'));
+      if (!generating) {
+        setProcessingStage('');
+        setWorkflowMessage(resolvedMessage || 'Knowledge base sync failed. Please try again.');
+        setWorkflowMessageType('error');
+      }
+    }
   };
 
   const setupWebSocket = async () => {
@@ -716,7 +755,8 @@ const SessionWorkspace = ({ session }) => {
     if (session_id === session?.session_id) {
       const inferredStage = data.stage || statusToStageMap[data.status];
       if (inferredStage) {
-        setProcessingPhase(inferredStage, data.message);
+        const stageMessage = data.message || stageMessages[inferredStage];
+        setProcessingPhase(inferredStage, stageMessage);
       } else if (data.message) {
         setWorkflowMessage(data.message);
         setWorkflowMessageType('progress');
@@ -773,11 +813,11 @@ const SessionWorkspace = ({ session }) => {
           progress: 100
         });
       }
-      const stillProcessing = updatedDocs.some(doc => doc.processing === true || doc.status === 'processing');
+      const stillProcessing = updatedDocs.some(doc => doc.processing === true || isProcessingStatus(doc.status));
       return { updatedDocs, stillProcessing };
     };
     
-    const persistSessionCompletion = () => {
+  const persistSessionCompletion = (stageContext, messageContext, messageTypeContext) => {
       if (!sessionDataRef.current[session_id]) {
         sessionDataRef.current[session_id] = {
           uploadedFiles: [],
@@ -794,16 +834,16 @@ const SessionWorkspace = ({ session }) => {
       entry.redlinedDocuments = updatedDocs;
       entry.generating = stillProcessing;
 
-      if (stillProcessing) {
-        entry.processingStage = entry.processingStage || 'document_review';
-        entry.completedStages = Array.isArray(entry.completedStages) ? entry.completedStages : [];
-        entry.workflowMessage = entry.workflowMessage || stageMessages[entry.processingStage] || 'Processing documents. Please stand by.';
-        entry.workflowMessageType = entry.workflowMessageType || 'progress';
+    if (stillProcessing) {
+      entry.processingStage = stageContext || entry.processingStage || 'document_review';
+      entry.completedStages = Array.isArray(entry.completedStages) ? entry.completedStages : [];
+      entry.workflowMessage = messageContext || entry.workflowMessage || stageMessages[entry.processingStage] || 'Processing documents. Please stand by.';
+      entry.workflowMessageType = 'progress';
       } else {
         entry.processingStage = '';
         entry.completedStages = stageOrder.map(item => item.key);
-        entry.workflowMessage = 'Document processing completed successfully!';
-        entry.workflowMessageType = 'success';
+      entry.workflowMessage = messageContext || 'Document processing completed successfully!';
+      entry.workflowMessageType = messageTypeContext || 'success';
       }
 
       // Mark this session as having WebSocket updates that need to be preserved
@@ -818,22 +858,41 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
-      
-      markProcessingComplete();
-      
+
+      const generatingMessage = data?.message || stageMessages.generating;
+      setProcessingPhase('generating', generatingMessage);
+
+      let redlineSucceeded = data?.redlined_document?.success === true;
       let stillProcessingAfterUpdate = false;
       setRedlinedDocuments(prev => {
         const { updatedDocs, stillProcessing } = reconcileDocuments(prev);
         stillProcessingAfterUpdate = stillProcessing;
+        if (!redlineSucceeded) {
+          const matchedDoc = updatedDocs.find(doc => (doc.jobId === job_id) || (data?.analysis_id && doc.analysis === data.analysis_id));
+          redlineSucceeded = matchedDoc ? matchedDoc.success === true : redlineSucceeded;
+        }
         return updatedDocs;
       });
       
       window.currentProcessingJob = null;
       
-      const { stillProcessing } = persistSessionCompletion();
+      const completionMessage = data?.message || (redlineSucceeded
+        ? 'Document processing completed successfully!'
+        : 'Document processing finished without a generated redline.');
+      const completionMessageType = redlineSucceeded ? 'success' : 'error';
+
+      const { stillProcessing } = persistSessionCompletion(
+        stillProcessingAfterUpdate ? 'generating' : '',
+        stillProcessingAfterUpdate ? generatingMessage : completionMessage,
+        stillProcessingAfterUpdate ? 'progress' : completionMessageType
+      );
       stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
       if (!stillProcessingAfterUpdate) {
         setGenerating(false);
+        markProcessingComplete(completionMessage, completionMessageType);
+      } else {
+        setWorkflowMessage(generatingMessage);
+        setWorkflowMessageType('progress');
       }
       
       setTimeout(async () => {
@@ -845,7 +904,12 @@ const SessionWorkspace = ({ session }) => {
       }, 2000);
     } else {
       // For background sessions, persist the completion
-      persistSessionCompletion();
+      const generatingMessage = data?.message || stageMessages.generating;
+      persistSessionCompletion(
+        'generating',
+        generatingMessage,
+        data?.redlined_document?.success === false ? 'error' : undefined
+      );
       console.log(`Background session ${session_id} received completion for job ${job_id}. Data saved to localStorage for later retrieval.`);
     }
   };
@@ -1025,9 +1089,9 @@ const SessionWorkspace = ({ session }) => {
                 setRedlinedDocuments(prev => [...prev, {
                   originalFile: vendorFile,
                   jobId: reviewResponse.job_id,
-                  status: 'processing',
+                  status: 'kb_sync',
                   progress: 0,
-                  message: 'Starting document analysis...',
+                  message: 'Preparing knowledge base for document review...',
                   processing: true
                 }]);
               }
