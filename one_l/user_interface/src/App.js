@@ -226,32 +226,6 @@ const SessionWorkspace = ({ session }) => {
   // Use ref to persist the initial state, as location.state can be cleared
   const isNewSession = initialIsNewSessionRef.current ?? false;
 
-useEffect(() => {
-  if (!session?.session_id) {
-    return;
-  }
-
-  const isSessionProcessing = Boolean(
-    generating ||
-    (processingStage && processingStage !== '')
-  );
-
-  if (isSessionProcessing) {
-    window.isRedlineProcessing = true;
-    window.currentProcessingSessionId = session.session_id;
-  } else if (window.currentProcessingSessionId === session.session_id) {
-    window.isRedlineProcessing = false;
-    window.currentProcessingSessionId = null;
-  }
-
-  return () => {
-    if (window.currentProcessingSessionId === session?.session_id && !isSessionProcessing) {
-      window.isRedlineProcessing = false;
-      window.currentProcessingSessionId = null;
-    }
-  };
-}, [generating, processingStage, session?.session_id]);
-
   // Keep session data ref in sync with current state (for current session)
   // Only sync if we're not in the middle of switching sessions
   useEffect(() => {

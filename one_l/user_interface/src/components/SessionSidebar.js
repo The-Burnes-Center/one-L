@@ -150,7 +150,7 @@ const SessionSidebar = ({
   );
 
   const handleNewSession = async () => {
-    const hasActiveProcessing = window.isRedlineProcessing === true && window.currentProcessingSessionId === sessionId;
+    const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
 
     if (hasActiveProcessing) {
       const proceedWithParallelWarning = window.confirm(
@@ -159,11 +159,6 @@ const SessionSidebar = ({
 
       if (!proceedWithParallelWarning) {
         return;
-      }
-
-      if (window.currentProcessingSessionId === sessionId) {
-        window.isRedlineProcessing = false;
-        window.currentProcessingSessionId = null;
       }
     }
 
@@ -237,7 +232,7 @@ const SessionSidebar = ({
     }
 
     // Check if there's active processing in the current session
-    const hasActiveProcessing = window.isRedlineProcessing === true && window.currentProcessingSessionId === sessionId;
+    const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
     
     // Also check localStorage for processing status
     const userId = currentUserId;
@@ -263,8 +258,9 @@ const SessionSidebar = ({
             ) || false;
             
             // Check if processing stage is active
-            const hasProcessingStage = currentSessionData.processingStage &&
-                                      currentSessionData.processingStage !== '';
+            const hasProcessingStage = currentSessionData.processingStage && 
+                                      currentSessionData.processingStage !== '' &&
+                                      currentSessionData.stageProgress < 100;
             
             hasProcessingInStorage = isGenerating || hasProcessingDocs || hasProcessingStage;
           }
@@ -285,9 +281,12 @@ const SessionSidebar = ({
     }
     
     // If we get here, either no processing or user confirmed
-    if (hasActiveProcessing && window.currentProcessingSessionId === sessionId) {
-      window.isRedlineProcessing = false;
-      window.currentProcessingSessionId = null;
+    if (hasActiveProcessing) {
+      // Clear the progress interval when switching away
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
     }
     
     navigate(`/${session.session_id}`, { 
@@ -524,7 +523,7 @@ const SessionSidebar = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-        handleDeleteSession(session.session_id);
+                        handleDeleteSession(session.session_id);
                       }}
                       style={{
                         background: 'none',
