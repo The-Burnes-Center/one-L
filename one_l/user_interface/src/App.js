@@ -138,16 +138,22 @@ const SessionView = () => {
 const SessionWorkspace = ({ session }) => {
   const location = useLocation();
   
+  const stageOrder = [
+    { key: 'kb_sync', label: 'Knowledge Base Sync' },
+    { key: 'document_review', label: 'Document Review' },
+    { key: 'generating', label: 'Result Generation' }
+  ];
+
   const stageMessages = {
-    kb_sync: 'Syncing knowledge base...',
-    identifying: 'Identifying conflicts...',
-    generating: 'Generating redlines...'
+    kb_sync: 'Syncing knowledge base. Please stand by.',
+    document_review: 'Reviewing documents with AI. Please stand by.',
+    generating: 'Generating redlines. Please stand by.'
   };
 
-  const getStageForProgress = (progress = 0) => {
-    if (progress >= 66) return 'generating';
-    if (progress >= 33) return 'identifying';
-    return 'kb_sync';
+  const statusToStageMap = {
+    analyzing: 'document_review',
+    generating_redline: 'generating',
+    kb_sync: 'kb_sync'
   };
 
   // Session-specific storage: store uploadedFiles and redlinedDocuments per session
@@ -190,8 +196,8 @@ const SessionWorkspace = ({ session }) => {
   const [generating, setGenerating] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
   const [workflowMessageType, setWorkflowMessageType] = useState('');
-  const [processingStage, setProcessingStage] = useState(''); // 'syncing', 'identifying', 'generating'
-  const [stageProgress, setStageProgress] = useState(0); // 0-100
+  const [processingStage, setProcessingStage] = useState(''); // 'kb_sync', 'document_review', 'generating'
+  const [completedStages, setCompletedStages] = useState([]); // array of completed stage keys
   const [redlinedDocuments, setRedlinedDocuments] = useState([]);
   const [sessionResults, setSessionResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
@@ -257,7 +263,7 @@ const SessionWorkspace = ({ session }) => {
           : [],
         generating: generating, // Save generating state to detect active processing
         processingStage: processingStage, // Save processing stage
-        stageProgress: stageProgress, // Save stage progress
+        completedStages: completedStages, // Save completed stages
         workflowMessage: workflowMessage,
         workflowMessageType: workflowMessageType
       };
@@ -265,7 +271,7 @@ const SessionWorkspace = ({ session }) => {
       // Save to localStorage whenever session data changes
       saveSessionDataToStorage(sessionDataRef.current);
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, stageProgress, workflowMessage, workflowMessageType, saveSessionDataToStorage]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, saveSessionDataToStorage]);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
@@ -307,7 +313,7 @@ const SessionWorkspace = ({ session }) => {
             : [],
           generating: generating,
           processingStage: processingStage,
-          stageProgress: stageProgress,
+          completedStages: completedStages,
           workflowMessage: workflowMessage,
           workflowMessageType: workflowMessageType
         };
@@ -325,7 +331,7 @@ const SessionWorkspace = ({ session }) => {
         redlinedDocuments: [],
         generating: false,
         processingStage: '',
-        stageProgress: 0,
+        completedStages: [],
         workflowMessage: '',
         workflowMessageType: ''
       };
@@ -338,7 +344,7 @@ const SessionWorkspace = ({ session }) => {
           redlinedDocuments: [],
           generating: false,
           processingStage: '',
-          stageProgress: 0,
+          completedStages: [],
           workflowMessage: '',
           workflowMessageType: ''
         };
@@ -349,7 +355,7 @@ const SessionWorkspace = ({ session }) => {
         setRedlinedDocuments([]);
         setGenerating(false);
         setProcessingStage('');
-        setStageProgress(0);
+        setCompletedStages([]);
         setWorkflowMessage('');
         setWorkflowMessageType('');
         // Update ref AFTER clearing state to prevent sync from running with old data
@@ -390,27 +396,31 @@ const SessionWorkspace = ({ session }) => {
           }));
         });
         const restoredGenerating = sessionData.generating === true;
-        const restoredProgress = restoredGenerating && typeof sessionData.stageProgress === 'number'
-          ? sessionData.stageProgress
-          : 0;
+        const restoredCompletedStages = Array.isArray(sessionData.completedStages)
+          ? sessionData.completedStages
+          : [];
+        const fallbackStage = restoredCompletedStages.length > 0
+          ? restoredCompletedStages[restoredCompletedStages.length - 1]
+          : 'kb_sync';
         const restoredStage = restoredGenerating
-          ? (sessionData.processingStage || getStageForProgress(restoredProgress))
+          ? (sessionData.processingStage || fallbackStage)
           : '';
-        const restoredMessage = sessionData.workflowMessage || (restoredGenerating ? stageMessages[restoredStage] : '');
-        const restoredMessageType = sessionData.workflowMessageType || (restoredMessage ? 'progress' : '');
+        const restoredMessage = sessionData.workflowMessage || (
+          restoredGenerating && restoredStage
+            ? stageMessages[restoredStage] || ''
+            : ''
+        );
+        const restoredMessageType = sessionData.workflowMessageType || (
+          restoredGenerating
+            ? (restoredMessage ? 'progress' : '')
+            : (restoredMessage ? 'success' : '')
+        );
 
         setGenerating(restoredGenerating);
         setProcessingStage(restoredGenerating ? restoredStage : '');
-        setStageProgress(restoredGenerating ? restoredProgress : 0);
+        setCompletedStages(restoredCompletedStages);
         setWorkflowMessage(restoredMessage || '');
-        setWorkflowMessageType(restoredMessageType);
-
-        if (restoredGenerating && restoredProgress < 99) {
-          startProgressFlow(restoredProgress, {
-            initialStage: restoredStage,
-            initialMessage: restoredMessage
-          });
-        }
+        setWorkflowMessageType(restoredMessageType || '');
         // Update ref AFTER restoring state for existing sessions
         previousSessionIdRef.current = currentSessionId;
       }
@@ -704,8 +714,13 @@ const SessionWorkspace = ({ session }) => {
     
     // Update UI with progress
     if (session_id === session?.session_id) {
-      setWorkflowMessage(data.message || `Processing... ${data.progress || 0}%`);
-      setWorkflowMessageType('progress');
+      const inferredStage = data.stage || statusToStageMap[data.status];
+      if (inferredStage) {
+        setProcessingPhase(inferredStage, data.message);
+      } else if (data.message) {
+        setWorkflowMessage(data.message);
+        setWorkflowMessageType('progress');
+      }
       
       // Update progress for any active jobs
       setRedlinedDocuments(prev => prev.map(doc => {
@@ -769,7 +784,7 @@ const SessionWorkspace = ({ session }) => {
           redlinedDocuments: [],
           generating: false,
           processingStage: '',
-          stageProgress: 0,
+          completedStages: [],
           workflowMessage: '',
           workflowMessageType: ''
         };
@@ -778,12 +793,19 @@ const SessionWorkspace = ({ session }) => {
       const { updatedDocs, stillProcessing } = reconcileDocuments(entry.redlinedDocuments);
       entry.redlinedDocuments = updatedDocs;
       entry.generating = stillProcessing;
-      entry.processingStage = stillProcessing ? (entry.processingStage || getStageForProgress(entry.stageProgress || 0)) : 'completed';
-      entry.stageProgress = stillProcessing ? Math.max(entry.stageProgress || 0, 99) : 100;
-      entry.workflowMessage = stillProcessing
-        ? (entry.workflowMessage || stageMessages.generating)
-        : 'Document processing completed successfully!';
-      entry.workflowMessageType = stillProcessing ? (entry.workflowMessageType || 'progress') : 'success';
+
+      if (stillProcessing) {
+        entry.processingStage = entry.processingStage || 'document_review';
+        entry.completedStages = Array.isArray(entry.completedStages) ? entry.completedStages : [];
+        entry.workflowMessage = entry.workflowMessage || stageMessages[entry.processingStage] || 'Processing documents. Please stand by.';
+        entry.workflowMessageType = entry.workflowMessageType || 'progress';
+      } else {
+        entry.processingStage = '';
+        entry.completedStages = stageOrder.map(item => item.key);
+        entry.workflowMessage = 'Document processing completed successfully!';
+        entry.workflowMessageType = 'success';
+      }
+
       // Mark this session as having WebSocket updates that need to be preserved
       entry.hasWebSocketUpdates = true;
       entry.lastWebSocketUpdate = Date.now();
@@ -797,10 +819,7 @@ const SessionWorkspace = ({ session }) => {
         window.progressInterval = null;
       }
       
-      setStageProgress(100);
-      setProcessingStage('completed');
-      setWorkflowMessage('Document processing completed successfully!');
-      setWorkflowMessageType('success');
+      markProcessingComplete();
       
       let stillProcessingAfterUpdate = false;
       setRedlinedDocuments(prev => {
@@ -815,8 +834,6 @@ const SessionWorkspace = ({ session }) => {
       stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
       if (!stillProcessingAfterUpdate) {
         setGenerating(false);
-      } else {
-        setStageProgress(prev => (prev < 99 ? 99 : prev));
       }
       
       setTimeout(async () => {
@@ -894,50 +911,55 @@ const SessionWorkspace = ({ session }) => {
     */
   };
 
-  // Unified progress management system
-  const updateProcessingStage = (stage, progress, message) => {
+  // Unified stage management without artificial percentage tracking
+  const resetProcessingStages = () => {
+    setProcessingStage('');
+    setCompletedStages([]);
+  };
+
+  const setProcessingPhase = (stage, message) => {
+    if (!stage) {
+      resetProcessingStages();
+      if (message) {
+        setWorkflowMessage(message);
+        setWorkflowMessageType('progress');
+      } else {
+        setWorkflowMessage('');
+        setWorkflowMessageType('');
+      }
+      return;
+    }
+
+    const stageIndex = stageOrder.findIndex(item => item.key === stage);
+    if (stageIndex === -1) {
+      const fallbackMessage = message || '';
+      setWorkflowMessage(fallbackMessage);
+      setWorkflowMessageType(fallbackMessage ? 'progress' : '');
+      return;
+    }
+
+    setCompletedStages(prev => {
+      const next = new Set(prev);
+      stageOrder.forEach((item, idx) => {
+        if (idx < stageIndex) {
+          next.add(item.key);
+        }
+      });
+      return Array.from(next);
+    });
+
     setProcessingStage(stage);
-    setStageProgress(progress);
-    const resolvedMessage = message !== undefined ? message : (stage ? stageMessages[stage] : '');
-    setWorkflowMessage(resolvedMessage || '');
+    const resolvedMessage = message || stageMessages[stage] || '';
+    setWorkflowMessage(resolvedMessage);
     setWorkflowMessageType(resolvedMessage ? 'progress' : '');
   };
 
-  // Smooth progress flow - 1% per 2 seconds for entire progress bar
-  const startProgressFlow = (initialProgress = 0, options = {}) => {
-    const { initialStage, initialMessage } = options;
-    let currentProgress = Math.max(0, Math.min(initialProgress || 0, 99));
-    
-    // Clear any existing interval before starting a new one
-    if (window.progressInterval) {
-      clearInterval(window.progressInterval);
-      window.progressInterval = null;
-    }
-    
-    let currentStage = initialStage || getStageForProgress(currentProgress);
-    updateProcessingStage(currentStage, currentProgress, initialMessage);
-    
-    if (currentProgress >= 99) {
-      // Already at completion threshold - no need to start interval
-      return;
-    }
-    
-    const progressInterval = setInterval(() => {
-      currentProgress += 1; // 1% per 2 seconds for entire progress bar
-      currentStage = getStageForProgress(currentProgress);
-      
-      if (currentProgress < 99) {
-        updateProcessingStage(currentStage, currentProgress, stageMessages[currentStage]);
-      } else {
-        // Wait at 99% until WebSocket completion
-        updateProcessingStage('generating', 99, stageMessages.generating);
-        clearInterval(progressInterval);
-        window.progressInterval = null;
-      }
-    }, 2000); // 2000ms interval for 1% per 2 seconds
-    
-    // Store interval ID for cleanup
-    window.progressInterval = progressInterval;
+  const markProcessingComplete = (message, messageType = 'success') => {
+    setProcessingStage('');
+    setCompletedStages(stageOrder.map(item => item.key));
+    const resolvedMessage = message || 'Document processing completed successfully!';
+    setWorkflowMessage(resolvedMessage);
+    setWorkflowMessageType(messageType);
   };
 
   const handleGenerateRedline = async () => {
@@ -966,12 +988,8 @@ const SessionWorkspace = ({ session }) => {
     }
     
     setGenerating(true);
-    
-    // Start the smooth 3-stage progress flow
-    startProgressFlow(0, {
-      initialStage: 'kb_sync',
-      initialMessage: stageMessages.kb_sync
-    });
+    resetProcessingStages();
+    setProcessingPhase('kb_sync', stageMessages.kb_sync);
     
     let hasProcessingResults = false;
     try {
@@ -980,8 +998,7 @@ const SessionWorkspace = ({ session }) => {
       // Process each vendor file
       for (const vendorFile of vendorFiles) {
         if (isCurrentSession()) {
-          setWorkflowMessage(`Starting analysis of ${vendorFile.filename}...`);
-          setWorkflowMessageType('progress');
+          setProcessingPhase('document_review', `Reviewing ${vendorFile.filename} with AI. Please stand by.`);
         }
         
         try {
@@ -1041,6 +1058,9 @@ const SessionWorkspace = ({ session }) => {
               });
             }
           } else if (reviewResponse.processing === false && reviewResponse.redlined_document && reviewResponse.redlined_document.success) {
+          if (isCurrentSession()) {
+            setProcessingPhase('generating', `Generating redlined document for ${vendorFile.filename}. Please stand by.`);
+          }
             redlineResults.push({
               originalFile: vendorFile,
               redlinedDocument: reviewResponse.redlined_document.redlined_document,
@@ -1128,26 +1148,30 @@ const SessionWorkspace = ({ session }) => {
           message += ' Scroll down to download completed documents.';
         }
         if (isCurrentSession()) {
-          setWorkflowMessage(message);
-          setWorkflowMessageType('success');
+          if (processingResults.length === 0) {
+            const completionType = failedResults.length > 0 ? 'error' : 'success';
+            markProcessingComplete(message, completionType);
+          } else {
+            setProcessingPhase('generating', message);
+          }
         }
       } else if (processingResults.length > 0) {
         if (isCurrentSession()) {
-          setWorkflowMessage(
+          setProcessingPhase(
+            'generating',
             `${processingResults.length} document(s) are processing in background due to complexity. Please wait for completion.`
           );
-          setWorkflowMessageType('');
         }
       } else if (failedResults.length > 0) {
         if (isCurrentSession()) {
+          resetProcessingStages();
           setWorkflowMessage('All redline generation attempts failed. Please check your documents and try again.');
           setWorkflowMessageType('error');
         }
       } else {
         // No results yet - processing is starting, show processing message
         if (isCurrentSession()) {
-          setWorkflowMessage('Starting document processing... Please wait for completion.');
-          setWorkflowMessageType('');
+          setProcessingPhase('kb_sync', 'Starting document processing... Please wait for completion.');
         }
       }
       
@@ -1160,15 +1184,14 @@ const SessionWorkspace = ({ session }) => {
       if (isCurrentSession()) {
         setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
         setWorkflowMessageType('error');
-        setProcessingStage('');
-        setStageProgress(0);
+        resetProcessingStages();
       } else {
         const sessionEntry = sessionDataRef.current[sessionIdAtStart];
         if (sessionEntry) {
           sessionEntry.workflowMessage = `Failed to generate redlined documents: ${error.message}`;
           sessionEntry.workflowMessageType = 'error';
           sessionEntry.processingStage = '';
-          sessionEntry.stageProgress = 0;
+          sessionEntry.completedStages = [];
           sessionEntry.generating = false;
           saveSessionDataToStorage(sessionDataRef.current);
         }
@@ -1180,18 +1203,19 @@ const SessionWorkspace = ({ session }) => {
       if (isCurrentSession()) {
         if (!stillProcessing) {
           setGenerating(false);
-          setProcessingStage('');
-          setStageProgress(0);
         }
       } else if (sessionEntry) {
         if (!stillProcessing) {
           sessionEntry.generating = false;
           sessionEntry.processingStage = '';
-          sessionEntry.stageProgress = 0;
+          sessionEntry.completedStages = [];
           saveSessionDataToStorage(sessionDataRef.current);
         } else {
           sessionEntry.generating = true;
-          sessionEntry.processingStage = sessionEntry.processingStage || getStageForProgress(sessionEntry.stageProgress || 0);
+          sessionEntry.processingStage = sessionEntry.processingStage || 'document_review';
+          sessionEntry.completedStages = Array.isArray(sessionEntry.completedStages)
+            ? sessionEntry.completedStages
+            : [];
           saveSessionDataToStorage(sessionDataRef.current);
         }
       }
@@ -1555,15 +1579,20 @@ const SessionWorkspace = ({ session }) => {
           </button>
         </div>
         
-        {/* Unified Progress UI */}
+        {/* Unified Status UI */}
         {(generating || processingStage || (redlinedDocuments.filter(doc => doc.success && !doc.processing).length > 0)) && (() => {
-          // Determine display state
           const hasCompletedResults = redlinedDocuments.filter(doc => doc.success && !doc.processing).length > 0;
           const isCompleted = hasCompletedResults && !generating && !processingStage;
-          const displayProgress = isCompleted ? 100 : stageProgress;
-          const displayStage = isCompleted ? 'completed' : processingStage;
-          const displayMessage = isCompleted ? 'Document processing completed successfully!' : workflowMessage;
-          
+          const effectiveCompletedStages = isCompleted ? stageOrder.map(stage => stage.key) : completedStages;
+          const completedStageSet = new Set(effectiveCompletedStages);
+          const activeStageKey = isCompleted ? '' : processingStage;
+          const activeStage = stageOrder.find(stage => stage.key === activeStageKey);
+          const fallbackMessage = activeStage ? stageMessages[activeStage.key] : '';
+          const displayMessage = isCompleted
+            ? 'Document processing completed successfully!'
+            : (workflowMessage || fallbackMessage || 'Please stand by while we process your documents.');
+          const showSpinner = !isCompleted;
+
           return (
             <div style={{ 
               marginTop: '20px', 
@@ -1575,98 +1604,66 @@ const SessionWorkspace = ({ session }) => {
               <h4 style={{ marginBottom: '16px', color: '#333' }}>
                 {isCompleted ? 'Document Processing Complete' : 'Processing Document'}
               </h4>
-            
-            {/* Stage Indicators */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-              <div style={{ 
-                textAlign: 'center', 
-                flex: 1,
-                color: displayStage === 'kb_sync' || displayProgress >= 1 || isCompleted ? '#007bff' : '#6c757d'
-              }}>
-                <div style={{
-                  width: '12px',
-                  height: '12px',
-                  borderRadius: '50%',
-                  backgroundColor: displayProgress > 33 || isCompleted ? '#28a745' : (displayStage === 'kb_sync' ? '#007bff' : '#6c757d'),
-                  margin: '0 auto 4px'
-                }}></div>
-                <small>Knowledge Base Sync</small>
+
+              {/* Stage Indicators */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', gap: '12px' }}>
+                {stageOrder.map(stage => {
+                  const status = completedStageSet.has(stage.key)
+                    ? 'completed'
+                    : (stage.key === activeStageKey ? 'current' : 'pending');
+                  const dotColor = status === 'completed' ? '#28a745' : (status === 'current' ? '#007bff' : 'transparent');
+                  const borderColor = status === 'pending' ? '#ced4da' : 'transparent';
+                  const textColor = status === 'pending' ? '#6c757d' : '#007bff';
+                  return (
+                    <div key={stage.key} style={{ textAlign: 'center', flex: 1, color: textColor }}>
+                      <div style={{
+                        width: '18px',
+                        height: '18px',
+                        borderRadius: '50%',
+                        margin: '0 auto 6px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: dotColor,
+                        border: `2px solid ${borderColor}`,
+                        color: '#fff',
+                        fontSize: '11px'
+                      }}>
+                        {status === 'completed' ? '✓' : ''}
+                      </div>
+                      <small>{stage.label}</small>
+                    </div>
+                  );
+                })}
               </div>
-              <div style={{ 
-                textAlign: 'center', 
-                flex: 1,
-                color: displayStage === 'identifying' || displayProgress > 33 || isCompleted ? '#007bff' : '#6c757d'
-              }}>
-                <div style={{
-                  width: '12px',
-                  height: '12px',
-                  borderRadius: '50%',
-                  backgroundColor: displayProgress > 66 || isCompleted ? '#28a745' : (displayStage === 'identifying' ? '#007bff' : '#6c757d'),
-                  margin: '0 auto 4px'
-                }}></div>
-                <small>Identifying Conflicts</small>
-              </div>
-              <div style={{ 
-                textAlign: 'center', 
-                flex: 1,
-                color: displayStage === 'generating' || displayProgress > 66 || isCompleted ? '#007bff' : '#6c757d'
-              }}>
-                <div style={{
-                  width: '12px',
-                  height: '12px',
-                  borderRadius: '50%',
-                  backgroundColor: displayProgress >= 100 || isCompleted ? '#28a745' : (displayStage === 'generating' ? '#007bff' : '#6c757d'),
-                  margin: '0 auto 4px'
-                }}></div>
-                <small>Generating Redlines</small>
+
+              {/* Current Status */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {showSpinner ? (
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    border: '2px solid #007bff',
+                    borderTop: '2px solid transparent',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }}></div>
+                ) : (
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    color: '#28a745',
+                    fontSize: '16px'
+                  }}>
+                    ✓
+                  </div>
+                )}
+                <span style={{ color: '#333' }}>
+                  {displayMessage}
+                  {!isCompleted && activeStage ? ` (${activeStage.label})` : ''}
+                </span>
               </div>
             </div>
-            
-            {/* Progress Bar */}
-            <div style={{ 
-              width: '100%', 
-              height: '8px', 
-              backgroundColor: '#e9ecef', 
-              borderRadius: '4px',
-              marginBottom: '12px',
-              overflow: 'hidden'
-            }}>
-              <div style={{
-                width: `${displayProgress}%`,
-                height: '100%',
-                backgroundColor: isCompleted ? '#28a745' : '#007bff',
-                transition: 'width 0.3s ease',
-                borderRadius: '4px'
-              }}></div>
-            </div>
-            
-            {/* Current Status */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {(!isCompleted && displayProgress < 100) && (
-                <div style={{
-                  width: '16px',
-                  height: '16px',
-                  border: '2px solid #007bff',
-                  borderTop: '2px solid transparent',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite'
-                }}></div>
-              )}
-              {(isCompleted || displayProgress >= 100) && (
-                <div style={{
-                  width: '16px',
-                  height: '16px',
-                  color: '#28a745',
-                  fontSize: '16px'
-                }}>
-                  ✓
-                </div>
-              )}
-              <span style={{ color: '#333' }}>
-                {displayMessage} ({Math.round(displayProgress)}%)
-              </span>
-            </div>
-          </div>
           );
         })()}
         
