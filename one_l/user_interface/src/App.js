@@ -190,6 +190,7 @@ const SessionWorkspace = ({ session }) => {
   // Initialize sessionDataRef from localStorage on mount
   const sessionDataRef = useRef(loadSessionDataFromStorage());
   const previousSessionIdRef = useRef(null);
+  const highestStageIndexRef = useRef(-1);
   
   // Workflow state for this session
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -915,6 +916,7 @@ const SessionWorkspace = ({ session }) => {
   const resetProcessingStages = () => {
     setProcessingStage('');
     setCompletedStages([]);
+    highestStageIndexRef.current = -1;
   };
 
   const setProcessingPhase = (stage, message) => {
@@ -938,6 +940,22 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
 
+    const currentActiveIndex = processingStage
+      ? stageOrder.findIndex(item => item.key === processingStage)
+      : -1;
+    const highestReachedIndex = Math.max(
+      highestStageIndexRef.current,
+      currentActiveIndex
+    );
+
+    if (highestReachedIndex >= 0 && stageIndex < highestReachedIndex && stage !== processingStage) {
+      if (message) {
+        setWorkflowMessage(message);
+        setWorkflowMessageType('progress');
+      }
+      return;
+    }
+
     setCompletedStages(prev => {
       const next = new Set(prev);
       stageOrder.forEach((item, idx) => {
@@ -952,6 +970,9 @@ const SessionWorkspace = ({ session }) => {
     const resolvedMessage = message || stageMessages[stage] || '';
     setWorkflowMessage(resolvedMessage);
     setWorkflowMessageType(resolvedMessage ? 'progress' : '');
+    if (stageIndex > highestStageIndexRef.current) {
+      highestStageIndexRef.current = stageIndex;
+    }
   };
 
   const markProcessingComplete = (message, messageType = 'success') => {
@@ -960,6 +981,7 @@ const SessionWorkspace = ({ session }) => {
     const resolvedMessage = message || 'Document processing completed successfully!';
     setWorkflowMessage(resolvedMessage);
     setWorkflowMessageType(messageType);
+    highestStageIndexRef.current = stageOrder.length - 1;
   };
 
   const handleGenerateRedline = async () => {
