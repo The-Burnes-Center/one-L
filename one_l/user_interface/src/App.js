@@ -192,6 +192,38 @@ const SessionWorkspace = ({ session }) => {
   const previousSessionIdRef = useRef(null);
   const highestStageIndexRef = useRef(-1);
 
+  const getJobSessionMapStorageKey = () => {
+    const userId = authService.getUserId();
+    return userId ? `one_l_job_session_map_${userId}` : null;
+  };
+
+  const loadJobSessionMapFromStorage = () => {
+    const storageKey = getJobSessionMapStorageKey();
+    if (!storageKey) return {};
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('Error loading job session map from localStorage:', error);
+    }
+    return {};
+  };
+
+  const saveJobSessionMapToStorage = useCallback((data) => {
+    const storageKey = getJobSessionMapStorageKey();
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(data));
+    } catch (error) {
+      console.error('Error saving job session map to localStorage:', error);
+    }
+  }, []);
+
+  const jobSessionMapRef = useRef(loadJobSessionMapFromStorage());
+  const activeJobsRef = useRef({});
+
   const cloneUploadedFiles = (files = []) => {
     if (!Array.isArray(files)) {
       return [];
@@ -854,11 +886,15 @@ const SessionWorkspace = ({ session }) => {
   };
 
   const handleJobProgress = (message) => {
-
     const { job_id, session_id, data } = message;
-    
-    // Update UI with progress
-    if (session_id === session?.session_id) {
+    const mappedSessionId = jobSessionMapRef.current[job_id] || session_id || activeJobsRef.current[job_id]?.sessionId;
+
+    if (!mappedSessionId) {
+      return;
+    }
+
+    // Update UI with progress if this session is currently visible
+    if (mappedSessionId === session?.session_id) {
       const inferredStage = data.stage || statusToStageMap[data.status];
       if (inferredStage) {
         setProcessingPhase(inferredStage, data.message);
@@ -880,11 +916,22 @@ const SessionWorkspace = ({ session }) => {
         return doc;
       }));
     }
+
+    if (activeJobsRef.current[job_id]) {
+      activeJobsRef.current[job_id].lastProgress = Date.now();
+    }
   };
 
   const handleJobCompleted = async (message) => {
     const { job_id, session_id, data } = message;
-    const isCurrentSession = session_id === session?.session_id;
+    const mappedSessionId = jobSessionMapRef.current[job_id] || session_id || activeJobsRef.current[job_id]?.sessionId;
+
+    if (!mappedSessionId) {
+      console.warn('Received job_completed without session mapping', { job_id, session_id, data });
+      return;
+    }
+
+    const isCurrentSession = mappedSessionId === session?.session_id;
     
     const reconcileDocuments = (docs = []) => {
       let matched = false;
@@ -907,8 +954,9 @@ const SessionWorkspace = ({ session }) => {
         return doc;
       });
       if (!matched && data.redlined_document && data.redlined_document.success) {
+        const jobMeta = activeJobsRef.current[job_id];
         updatedDocs.push({
-          originalFile: window.currentProcessingJob || { filename: `Document for job ${job_id}` },
+          originalFile: jobMeta?.vendorFile ? { ...jobMeta.vendorFile } : { filename: `Document for job ${job_id}` },
           redlinedDocument: data.redlined_document.redlined_document,
           analysis: data.analysis_id,
           success: true,
@@ -922,9 +970,9 @@ const SessionWorkspace = ({ session }) => {
       return { updatedDocs, stillProcessing };
     };
     
-    const persistSessionCompletion = () => {
-      if (!sessionDataRef.current[session_id]) {
-        sessionDataRef.current[session_id] = {
+    const persistSessionCompletion = (targetSessionId) => {
+      if (!sessionDataRef.current[targetSessionId]) {
+        sessionDataRef.current[targetSessionId] = {
           uploadedFiles: [],
           redlinedDocuments: [],
           generating: false,
@@ -934,7 +982,7 @@ const SessionWorkspace = ({ session }) => {
           workflowMessageType: ''
         };
       }
-      const entry = sessionDataRef.current[session_id];
+      const entry = sessionDataRef.current[targetSessionId];
       const { updatedDocs, stillProcessing } = reconcileDocuments(entry.redlinedDocuments);
       entry.redlinedDocuments = updatedDocs;
       entry.generating = stillProcessing;
@@ -955,7 +1003,7 @@ const SessionWorkspace = ({ session }) => {
       entry.hasWebSocketUpdates = true;
       entry.lastWebSocketUpdate = Date.now();
       saveSessionDataToStorage(sessionDataRef.current);
-    updateGlobalProcessingFlag(session_id, stillProcessing);
+      updateGlobalProcessingFlag(targetSessionId, stillProcessing);
       return { stillProcessing };
     };
     
@@ -972,9 +1020,7 @@ const SessionWorkspace = ({ session }) => {
         return updatedDocs;
       });
       
-      window.currentProcessingJob = null;
-      
-      const { stillProcessing } = persistSessionCompletion();
+      const { stillProcessing } = persistSessionCompletion(mappedSessionId);
       stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
       if (!stillProcessingAfterUpdate) {
         markProcessingComplete();
@@ -992,11 +1038,19 @@ const SessionWorkspace = ({ session }) => {
       }, 2000);
     } else {
       // For background sessions, persist the completion
-      persistSessionCompletion();
-      if (window.currentProcessingJob && window.currentProcessingJob.sessionId === session_id) {
-        window.currentProcessingJob = null;
-      }
-      console.log(`Background session ${session_id} received completion for job ${job_id}. Data saved to localStorage for later retrieval.`);
+      persistSessionCompletion(mappedSessionId);
+      console.log(`Background session ${mappedSessionId} received completion for job ${job_id}. Data saved to localStorage for later retrieval.`);
+    }
+
+    if (jobSessionMapRef.current[job_id]) {
+      delete jobSessionMapRef.current[job_id];
+      saveJobSessionMapToStorage(jobSessionMapRef.current);
+    }
+    if (activeJobsRef.current[job_id]) {
+      delete activeJobsRef.current[job_id];
+    }
+    if (window.currentProcessingJob && (window.currentProcessingJob.jobId === job_id || window.currentProcessingJob.sessionId === mappedSessionId)) {
+      window.currentProcessingJob = null;
     }
   };
 
@@ -1227,14 +1281,6 @@ const SessionWorkspace = ({ session }) => {
       workflowMessageType: 'progress'
     });
     updateGlobalProcessingFlag(sessionIdAtStart, true);
-    window.currentProcessingJob = {
-      ...(window.currentProcessingJob || {}),
-      sessionId: sessionIdAtStart,
-      filename: vendorFiles[0]?.filename || '',
-      startedAt: Date.now(),
-      pendingDocuments: vendorFiles.map(file => file.filename)
-    };
-    
     let hasProcessingResults = false;
     try {
       const redlineResults = [];
@@ -1264,6 +1310,18 @@ const SessionWorkspace = ({ session }) => {
               webSocketService.subscribeToJob(reviewResponse.job_id, sessionIdAtStart);
 
               
+              jobSessionMapRef.current[reviewResponse.job_id] = sessionIdAtStart;
+              saveJobSessionMapToStorage(jobSessionMapRef.current);
+              activeJobsRef.current[reviewResponse.job_id] = {
+                sessionId: sessionIdAtStart,
+                vendorFile,
+                startedAt: Date.now()
+              };
+              window.currentProcessingJob = {
+                jobId: reviewResponse.job_id,
+                sessionId: sessionIdAtStart
+              };
+
               // Add job to tracking with initial progress
               const processingEntry = {
                 originalFile: vendorFile,
@@ -1358,12 +1416,6 @@ const SessionWorkspace = ({ session }) => {
             // Store the job info for WebSocket tracking without showing old UI
             // Note: We can't get the real job ID from the backend due to timeout,
             // but the session-level subscription will catch the completion notification
-            window.currentProcessingJob = {
-              filename: vendorFile.filename,
-              sessionId: sessionIdAtStart,
-              vendorFileKey: vendorFile.s3_key
-            };
-            
             // Ensure WebSocket connection is strong and subscribe to any updates for this session
             try {
               if (!webSocketService.getConnectionStatus().isConnected) {
