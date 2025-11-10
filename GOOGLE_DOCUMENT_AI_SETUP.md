@@ -61,16 +61,35 @@ GOOGLE_DOCUMENT_AI_LOCATION = "us"  # The region you selected in Step 2
 
 ### Step 5: Configure Lambda with Service Account Key
 
-You'll need to add the service account JSON key to your Lambda function. There are two options:
+**IMPORTANT: Never commit credentials to git!**
 
-**Option A: Store in AWS Secrets Manager (Recommended)**
-1. Upload the JSON key to AWS Secrets Manager
+You'll need to add the service account JSON key to your Lambda function. Use one of these options:
+
+**Option A: Via CDK Context (Recommended)**
+1. Encode your JSON credentials file using the helper script:
+   ```bash
+   python scripts/encode_google_credentials.py path/to/your-credentials.json
+   ```
+2. Copy the base64-encoded string
+3. Deploy with CDK context (credentials are NOT stored in code):
+   ```bash
+   cdk deploy --context googleCredentialsJson="<paste-encoded-string-here>"
+   ```
+
+**Option B: Via Environment Variable**
+1. Encode your JSON credentials file:
+   ```bash
+   python scripts/encode_google_credentials.py path/to/your-credentials.json
+   ```
+2. Set environment variable before deploying:
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS_JSON="<paste-encoded-string-here>"
+   cdk deploy
+   ```
+
+**Option C: AWS Secrets Manager (Most Secure for Production)**
+1. Store credentials in AWS Secrets Manager
 2. Update Lambda code to read from Secrets Manager
-
-**Option B: Store as Lambda Environment Variable (Simpler but less secure)**
-1. Base64 encode the JSON file
-2. Add as environment variable `GOOGLE_APPLICATION_CREDENTIALS_JSON`
-3. Update Lambda code to write it to `/tmp/credentials.json` at runtime
 
 ### Step 6: Deploy
 
