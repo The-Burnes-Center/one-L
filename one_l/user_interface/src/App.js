@@ -503,12 +503,16 @@ const SessionWorkspace = ({ session }) => {
   }, [session?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSessionResults = async (restoredRedlinedDocs = []) => {
+    const currentSessionId = session?.session_id;
+    let sessionData = currentSessionId
+      ? sessionDataRef.current[currentSessionId]
+      : undefined;
+
     try {
       setLoadingResults(true);
       const userId = authService.getUserId();
       
       // Check if this session has recent WebSocket updates that should be prioritized
-      const sessionData = sessionDataRef.current[session.session_id];
       const hasRecentWebSocketUpdates = sessionData?.hasWebSocketUpdates && 
         sessionData?.lastWebSocketUpdate &&
         (Date.now() - sessionData.lastWebSocketUpdate) < 60000; // Within last 60 seconds
