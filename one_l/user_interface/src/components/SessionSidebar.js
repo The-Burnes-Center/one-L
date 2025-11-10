@@ -162,21 +162,27 @@ const SessionSidebar = ({
       }
     }
 
+    const inspectEntry = (entry) => {
+      if (!entry) return false;
+      const isGenerating = entry.generating === true;
+      const hasProcessingStage = Boolean(entry.processingStage && entry.processingStage !== '');
+      const hasProcessingDocs = Array.isArray(entry.redlinedDocuments) &&
+        entry.redlinedDocuments.some(doc =>
+          doc.processing === true ||
+          doc.status === 'processing' ||
+          (typeof doc.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
+        );
+      return isGenerating || hasProcessingStage || hasProcessingDocs;
+    };
+
+    let sessionData = null;
     let storageProcessing = false;
     if (currentUserId) {
       try {
         const storageKey = `one_l_session_data_${currentUserId}`;
         const stored = localStorage.getItem(storageKey);
         if (stored) {
-          const sessionData = JSON.parse(stored);
-          const inspectEntry = (entry) => {
-            if (!entry) return false;
-            const isGenerating = entry.generating === true;
-            const hasProcessingDocs = Array.isArray(entry.redlinedDocuments) &&
-              entry.redlinedDocuments.some(doc => doc.processing === true || doc.status === 'processing' || (typeof doc.progress === 'number' && doc.progress < 100));
-            const hasProcessingStage = Boolean(entry.processingStage && entry.processingStage !== '');
-            return isGenerating || hasProcessingDocs || hasProcessingStage;
-          };
+          sessionData = JSON.parse(stored);
 
           if (sessionId && sessionData?.[sessionId]) {
             storageProcessing = inspectEntry(sessionData[sessionId]);
@@ -191,19 +197,32 @@ const SessionSidebar = ({
 
     let globalProcessing = false;
     if (window.processingSessionFlags) {
-      if (sessionId && window.processingSessionFlags[sessionId]) {
-        globalProcessing = true;
-      } else if (!sessionId) {
-        globalProcessing = Object.keys(window.processingSessionFlags).length > 0;
+      const flags = Object.entries(window.processingSessionFlags);
+      for (const [flagSessionId, details] of flags) {
+        const entry = sessionData?.[flagSessionId];
+        const stillProcessing = inspectEntry(entry);
+        // Expire stale flags older than 5 minutes even if we can't confirm processing
+        const tooOld = details?.updatedAt && (Date.now() - details.updatedAt) > 5 * 60 * 1000;
+
+        if (!stillProcessing || tooOld) {
+          delete window.processingSessionFlags[flagSessionId];
+          continue;
+        }
+
+        if (!sessionId || flagSessionId === sessionId) {
+          globalProcessing = true;
+        }
       }
     }
+
+    const isProcessing = progressIntervalActive || currentJobActive || storageProcessing || globalProcessing;
 
     return {
       hasProgressInterval: progressIntervalActive,
       hasActiveJob: currentJobActive,
       hasStorageProcessing: storageProcessing,
       hasGlobalProcessing: globalProcessing,
-      isProcessing: progressIntervalActive || currentJobActive || storageProcessing || globalProcessing
+      isProcessing
     };
   };
 
