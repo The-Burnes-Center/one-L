@@ -217,17 +217,15 @@ const SessionSidebar = ({
 
     const isProcessing = progressIntervalActive || currentJobActive || storageProcessing || globalProcessing;
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[SessionSidebar] processing status check', {
-        progressIntervalActive,
-        currentJobActive,
-        storageProcessing,
-        globalProcessing,
-        hasProcessingFlagSessions: window.processingSessionFlags ? Object.keys(window.processingSessionFlags) : [],
-        activeSessionId: sessionId,
-        isProcessing
-      });
-    }
+    console.log('[SessionSidebar] processing status check', {
+      progressIntervalActive,
+      currentJobActive,
+      storageProcessing,
+      globalProcessing,
+      hasProcessingFlagSessions: window.processingSessionFlags ? Object.keys(window.processingSessionFlags) : [],
+      activeSessionId: sessionId,
+      isProcessing
+    });
 
     return {
       hasProgressInterval: progressIntervalActive,
@@ -242,9 +240,7 @@ const SessionSidebar = ({
     const processingStatus = getActiveProcessingStatus();
 
     if (processingStatus.isProcessing) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[SessionSidebar] blocking new session (processing active)', processingStatus);
-      }
+      console.log('[SessionSidebar] blocking new session (processing active)', processingStatus);
       const proceedWithParallelWarning = window.confirm(
         getParallelSessionWarning('create a new session')
       );
@@ -328,12 +324,10 @@ const SessionSidebar = ({
     
     // Show warning if there's active processing
     if (processingStatus.isProcessing) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[SessionSidebar] blocking session switch (processing active)', {
-          targetSessionId: session.session_id,
-          processingStatus
-        });
-      }
+      console.log('[SessionSidebar] blocking session switch (processing active)', {
+        targetSessionId: session.session_id,
+        processingStatus
+      });
       const confirmed = window.confirm(
         getParallelSessionWarning('switch sessions')
       );
