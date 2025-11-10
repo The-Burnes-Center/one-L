@@ -173,7 +173,7 @@ const SessionSidebar = ({
           (typeof doc?.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
         );
 
-      const isProcessing = isGenerating || hasProcessingStage || hasProcessingDocs;
+      const isProcessing = hasProcessingDocs;
       if (isProcessing) {
         console.log('[SessionSidebar] inspectEntry flagged processing', {
           sessionKey: key,
