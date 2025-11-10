@@ -993,6 +993,9 @@ const SessionWorkspace = ({ session }) => {
     } else {
       // For background sessions, persist the completion
       persistSessionCompletion();
+      if (window.currentProcessingJob && window.currentProcessingJob.sessionId === session_id) {
+        window.currentProcessingJob = null;
+      }
       console.log(`Background session ${session_id} received completion for job ${job_id}. Data saved to localStorage for later retrieval.`);
     }
   };
