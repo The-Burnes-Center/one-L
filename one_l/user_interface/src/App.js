@@ -352,7 +352,7 @@ const SessionWorkspace = ({ session }) => {
         workflowMessageType
       });
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, saveSessionDataToStorage]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, persistSessionState]);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
