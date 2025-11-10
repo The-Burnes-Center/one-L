@@ -149,10 +149,68 @@ const SessionSidebar = ({
     'Continue anyway?'
   );
 
-  const handleNewSession = async () => {
-    const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
+  const getActiveProcessingStatus = () => {
+    const progressIntervalActive = window.progressInterval !== null && window.progressInterval !== undefined;
 
-    if (hasActiveProcessing) {
+    let currentJobActive = false;
+    if (window.currentProcessingJob) {
+      if (!sessionId) {
+        currentJobActive = true;
+      } else {
+        const jobSessionId = window.currentProcessingJob.sessionId;
+        currentJobActive = !jobSessionId || jobSessionId === sessionId;
+      }
+    }
+
+    let storageProcessing = false;
+    if (currentUserId) {
+      try {
+        const storageKey = `one_l_session_data_${currentUserId}`;
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          const sessionData = JSON.parse(stored);
+          const inspectEntry = (entry) => {
+            if (!entry) return false;
+            const isGenerating = entry.generating === true;
+            const hasProcessingDocs = Array.isArray(entry.redlinedDocuments) &&
+              entry.redlinedDocuments.some(doc => doc.processing === true || doc.status === 'processing' || (typeof doc.progress === 'number' && doc.progress < 100));
+            const hasProcessingStage = Boolean(entry.processingStage && entry.processingStage !== '');
+            return isGenerating || hasProcessingDocs || hasProcessingStage;
+          };
+
+          if (sessionId && sessionData?.[sessionId]) {
+            storageProcessing = inspectEntry(sessionData[sessionId]);
+          } else if (!sessionId && sessionData) {
+            storageProcessing = Object.values(sessionData).some(inspectEntry);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking processing status:', error);
+      }
+    }
+
+    let globalProcessing = false;
+    if (window.processingSessionFlags) {
+      if (sessionId && window.processingSessionFlags[sessionId]) {
+        globalProcessing = true;
+      } else if (!sessionId) {
+        globalProcessing = Object.keys(window.processingSessionFlags).length > 0;
+      }
+    }
+
+    return {
+      hasProgressInterval: progressIntervalActive,
+      hasActiveJob: currentJobActive,
+      hasStorageProcessing: storageProcessing,
+      hasGlobalProcessing: globalProcessing,
+      isProcessing: progressIntervalActive || currentJobActive || storageProcessing || globalProcessing
+    };
+  };
+
+  const handleNewSession = async () => {
+    const processingStatus = getActiveProcessingStatus();
+
+    if (processingStatus.isProcessing) {
       const proceedWithParallelWarning = window.confirm(
         getParallelSessionWarning('create a new session')
       );
@@ -232,46 +290,10 @@ const SessionSidebar = ({
     }
 
     // Check if there's active processing in the current session
-    const hasActiveProcessing = window.progressInterval !== null && window.progressInterval !== undefined;
-    
-    // Also check localStorage for processing status
-    const userId = currentUserId;
-    let hasProcessingInStorage = false;
-    
-    if (userId) {
-      try {
-        const storageKey = `one_l_session_data_${userId}`;
-        const stored = localStorage.getItem(storageKey);
-        if (stored) {
-          const sessionData = JSON.parse(stored);
-          // Check if current session has active processing
-          const currentSessionId = sessionId;
-          if (currentSessionId && sessionData[currentSessionId]) {
-            const currentSessionData = sessionData[currentSessionId];
-            
-            // Check if generating is true
-            const isGenerating = currentSessionData.generating === true;
-            
-            // Check if there are processing documents
-            const hasProcessingDocs = currentSessionData.redlinedDocuments?.some(
-              doc => doc.processing === true || doc.status === 'processing'
-            ) || false;
-            
-            // Check if processing stage is active
-            const hasProcessingStage = currentSessionData.processingStage && 
-                                      currentSessionData.processingStage !== '' &&
-                                      currentSessionData.stageProgress < 100;
-            
-            hasProcessingInStorage = isGenerating || hasProcessingDocs || hasProcessingStage;
-          }
-        }
-      } catch (error) {
-        console.error('Error checking processing status:', error);
-      }
-    }
+    const processingStatus = getActiveProcessingStatus();
     
     // Show warning if there's active processing
-    if (hasActiveProcessing || hasProcessingInStorage) {
+    if (processingStatus.isProcessing) {
       const confirmed = window.confirm(
         getParallelSessionWarning('switch sessions')
       );
@@ -281,7 +303,7 @@ const SessionSidebar = ({
     }
     
     // If we get here, either no processing or user confirmed
-    if (hasActiveProcessing) {
+    if (processingStatus.hasProgressInterval) {
       // Clear the progress interval when switching away
       if (window.progressInterval) {
         clearInterval(window.progressInterval);

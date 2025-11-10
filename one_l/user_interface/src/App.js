@@ -191,6 +191,112 @@ const SessionWorkspace = ({ session }) => {
   const sessionDataRef = useRef(loadSessionDataFromStorage());
   const previousSessionIdRef = useRef(null);
   const highestStageIndexRef = useRef(-1);
+
+  const cloneUploadedFiles = (files = []) => {
+    if (!Array.isArray(files)) {
+      return [];
+    }
+    return files.map(file => ({
+      ...file,
+      s3_key: file?.s3_key,
+      filename: file?.filename,
+      unique_filename: file?.unique_filename,
+      bucket_name: file?.bucket_name,
+      type: file?.type
+    }));
+  };
+
+  const cloneRedlinedDocuments = (docs = []) => {
+    if (!Array.isArray(docs)) {
+      return [];
+    }
+    return docs.map(doc => ({
+      ...doc,
+      originalFile: doc?.originalFile ? { ...doc.originalFile } : undefined,
+      redlinedDocument: doc?.redlinedDocument,
+      analysis: doc?.analysis,
+      success: doc?.success,
+      processing: doc?.processing,
+      jobId: doc?.jobId,
+      status: doc?.status,
+      progress: doc?.progress,
+      message: doc?.message,
+      timeoutError: doc?.timeoutError
+    }));
+  };
+
+  const persistSessionState = useCallback((sessionId, partialState = {}) => {
+    if (!sessionId) {
+      return;
+    }
+
+    if (!sessionDataRef.current[sessionId]) {
+      sessionDataRef.current[sessionId] = {
+        uploadedFiles: [],
+        redlinedDocuments: [],
+        generating: false,
+        processingStage: '',
+        completedStages: [],
+        workflowMessage: '',
+        workflowMessageType: ''
+      };
+    }
+
+    const currentState = sessionDataRef.current[sessionId];
+    const nextState = {
+      ...currentState
+    };
+
+    if (partialState.uploadedFiles !== undefined) {
+      nextState.uploadedFiles = cloneUploadedFiles(partialState.uploadedFiles);
+    }
+
+    if (partialState.redlinedDocuments !== undefined) {
+      nextState.redlinedDocuments = cloneRedlinedDocuments(partialState.redlinedDocuments);
+    }
+
+    if (partialState.completedStages !== undefined) {
+      nextState.completedStages = Array.isArray(partialState.completedStages)
+        ? [...partialState.completedStages]
+        : [];
+    }
+
+    const scalarKeys = [
+      'generating',
+      'processingStage',
+      'workflowMessage',
+      'workflowMessageType',
+      'hasWebSocketUpdates',
+      'lastWebSocketUpdate'
+    ];
+
+    scalarKeys.forEach(key => {
+      if (partialState[key] !== undefined) {
+        nextState[key] = partialState[key];
+      }
+    });
+
+    sessionDataRef.current[sessionId] = nextState;
+    saveSessionDataToStorage(sessionDataRef.current);
+  }, [saveSessionDataToStorage]);
+
+  const updateGlobalProcessingFlag = useCallback((sessionId, isProcessing) => {
+    if (!sessionId) {
+      return;
+    }
+
+    if (!window.processingSessionFlags) {
+      window.processingSessionFlags = {};
+    }
+
+    if (isProcessing) {
+      window.processingSessionFlags[sessionId] = {
+        updatedAt: Date.now()
+      };
+    } else {
+      delete window.processingSessionFlags[sessionId];
+    }
+  }, []);
   
   // Workflow state for this session
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -236,41 +342,15 @@ const SessionWorkspace = ({ session }) => {
     if (session?.session_id && 
         previousSessionIdRef.current === session.session_id &&
         sessionDataRef.current[session.session_id]) {
-      // Only sync if this is the current session (not switching)
-      // Deep copy to avoid reference issues and ensure proper persistence
-      sessionDataRef.current[session.session_id] = {
-        uploadedFiles: uploadedFiles && uploadedFiles.length > 0 
-          ? uploadedFiles.map(file => ({
-              ...file,
-              s3_key: file.s3_key,
-              filename: file.filename,
-              unique_filename: file.unique_filename,
-              bucket_name: file.bucket_name,
-              type: file.type
-            }))
-          : [],
-        redlinedDocuments: redlinedDocuments && redlinedDocuments.length > 0
-          ? redlinedDocuments.map(doc => ({
-              ...doc,
-              originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
-              redlinedDocument: doc.redlinedDocument,
-              analysis: doc.analysis,
-              success: doc.success,
-              processing: doc.processing,
-              jobId: doc.jobId,
-              status: doc.status,
-              progress: doc.progress
-            }))
-          : [],
-        generating: generating, // Save generating state to detect active processing
-        processingStage: processingStage, // Save processing stage
-        completedStages: completedStages, // Save completed stages
-        workflowMessage: workflowMessage,
-        workflowMessageType: workflowMessageType
-      };
-      
-      // Save to localStorage whenever session data changes
-      saveSessionDataToStorage(sessionDataRef.current);
+      persistSessionState(session.session_id, {
+        uploadedFiles,
+        redlinedDocuments,
+        generating,
+        processingStage,
+        completedStages,
+        workflowMessage,
+        workflowMessageType
+      });
     }
   }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, saveSessionDataToStorage]);
 
@@ -288,38 +368,15 @@ const SessionWorkspace = ({ session }) => {
       
       // Save previous session's data BEFORE switching (if we had a previous session)
       if (previousSessionId && previousSessionId !== currentSessionId) {
-        sessionDataRef.current[previousSessionId] = {
-          uploadedFiles: uploadedFiles && uploadedFiles.length > 0 
-            ? uploadedFiles.map(file => ({
-                ...file,
-                s3_key: file.s3_key,
-                filename: file.filename,
-                unique_filename: file.unique_filename,
-                bucket_name: file.bucket_name,
-                type: file.type
-              }))
-            : [],
-          redlinedDocuments: redlinedDocuments && redlinedDocuments.length > 0
-            ? redlinedDocuments.map(doc => ({
-                ...doc,
-                originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
-                redlinedDocument: doc.redlinedDocument,
-                analysis: doc.analysis,
-                success: doc.success,
-                processing: doc.processing,
-                jobId: doc.jobId,
-                status: doc.status,
-                progress: doc.progress
-              }))
-            : [],
-          generating: generating,
-          processingStage: processingStage,
-          completedStages: completedStages,
-          workflowMessage: workflowMessage,
-          workflowMessageType: workflowMessageType
-        };
-        // Save to localStorage after saving previous session data
-        saveSessionDataToStorage(sessionDataRef.current);
+        persistSessionState(previousSessionId, {
+          uploadedFiles,
+          redlinedDocuments,
+          generating,
+          processingStage,
+          completedStages,
+          workflowMessage,
+          workflowMessageType
+        });
       }
       
       // Check if this is a new session (not in sessionDataRef yet)
@@ -495,6 +552,7 @@ const SessionWorkspace = ({ session }) => {
           }));
         
         // Merge with restored session data and any in-progress documents
+        let latestRedlinedDocs = [];
         setRedlinedDocuments(prev => {
           // Use restored session data as baseline if prev is empty (just restored)
           const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
@@ -609,22 +667,77 @@ const SessionWorkspace = ({ session }) => {
             console.log(`Preserving ${unmatchedExisting.length} WebSocket-updated document(s) for session ${session.session_id}`);
           }
           
-          return [...inProgress, ...uniqueCompleted, ...unmatchedExisting];
+          latestRedlinedDocs = [...inProgress, ...uniqueCompleted, ...unmatchedExisting];
+          return latestRedlinedDocs;
         });
+
+        if (session?.session_id) {
+          const hasProcessingDocs = Array.isArray(latestRedlinedDocs) && latestRedlinedDocs.some(doc =>
+            doc?.processing === true ||
+            doc?.status === 'processing' ||
+            (typeof doc?.progress === 'number' && doc.progress < 100)
+          );
+
+          const completionMessage = hasProcessingDocs
+            ? (sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.')
+            : 'Document processing completed successfully!';
+
+          const completionMessageType = hasProcessingDocs ? 'progress' : 'success';
+
+          persistSessionState(session.session_id, {
+            redlinedDocuments: latestRedlinedDocs,
+            generating: hasProcessingDocs,
+            processingStage: hasProcessingDocs ? (sessionData?.processingStage || 'generating') : '',
+            completedStages: hasProcessingDocs
+              ? (sessionData?.completedStages || [])
+              : stageOrder.map(item => item.key),
+            workflowMessage: completionMessage,
+            workflowMessageType: completionMessageType
+          });
+
+          updateGlobalProcessingFlag(session.session_id, hasProcessingDocs);
+        }
       } else {
         // Session might not have results yet
         // BUT: Don't clear redlinedDocuments if they exist from WebSocket updates
         // Only clear sessionResults, preserve any WebSocket-updated documents
         setSessionResults([]);
         // Preserve restored session data - don't clear if we have restored documents
+        let latestRedlinedDocs = [];
         setRedlinedDocuments(prev => {
           // If we have restored session data, use it as baseline
           const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
             ? restoredRedlinedDocs 
             : prev;
           // Always preserve existing documents - they might be from session restore or WebSocket
-          return baseline;
+          latestRedlinedDocs = baseline;
+          return latestRedlinedDocs;
         });
+
+        if (session?.session_id) {
+          const hasProcessingDocs = Array.isArray(latestRedlinedDocs) && latestRedlinedDocs.some(doc =>
+            doc?.processing === true ||
+            doc?.status === 'processing' ||
+            (typeof doc?.progress === 'number' && doc.progress < 100)
+          );
+
+          persistSessionState(session.session_id, {
+            redlinedDocuments: latestRedlinedDocs,
+            generating: hasProcessingDocs,
+            processingStage: hasProcessingDocs ? (sessionData?.processingStage || 'generating') : '',
+            completedStages: hasProcessingDocs
+              ? (sessionData?.completedStages || [])
+              : stageOrder.map(item => item.key),
+            workflowMessage: hasProcessingDocs
+              ? (sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.')
+              : (sessionData?.workflowMessage || ''),
+            workflowMessageType: hasProcessingDocs
+              ? (sessionData?.workflowMessageType || 'progress')
+              : (sessionData?.workflowMessageType || (latestRedlinedDocs.length > 0 ? 'success' : ''))
+          });
+
+          updateGlobalProcessingFlag(session.session_id, hasProcessingDocs);
+        }
       }
     } catch (error) {
       // Don't log as error for new sessions - they won't have results yet
@@ -633,13 +746,40 @@ const SessionWorkspace = ({ session }) => {
       }
       setSessionResults([]);
       // Preserve restored session data on error
+      let latestRedlinedDocs = [];
       setRedlinedDocuments(prev => {
         // If we have restored session data, use it as baseline
         const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
           ? restoredRedlinedDocs 
           : prev;
-        return baseline;
+        latestRedlinedDocs = baseline;
+        return latestRedlinedDocs;
       });
+
+      if (session?.session_id) {
+        const hasProcessingDocs = Array.isArray(latestRedlinedDocs) && latestRedlinedDocs.some(doc =>
+          doc?.processing === true ||
+          doc?.status === 'processing' ||
+          (typeof doc?.progress === 'number' && doc.progress < 100)
+        );
+
+        persistSessionState(session.session_id, {
+          redlinedDocuments: latestRedlinedDocs,
+          generating: hasProcessingDocs,
+          processingStage: hasProcessingDocs ? (sessionData?.processingStage || 'generating') : '',
+          completedStages: hasProcessingDocs
+            ? (sessionData?.completedStages || [])
+            : stageOrder.map(item => item.key),
+          workflowMessage: hasProcessingDocs
+            ? (sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.')
+            : (sessionData?.workflowMessage || ''),
+          workflowMessageType: hasProcessingDocs
+            ? (sessionData?.workflowMessageType || 'progress')
+            : (sessionData?.workflowMessageType || '')
+        });
+
+        updateGlobalProcessingFlag(session.session_id, hasProcessingDocs);
+      }
     } finally {
       setLoadingResults(false);
     }
@@ -811,6 +951,7 @@ const SessionWorkspace = ({ session }) => {
       entry.hasWebSocketUpdates = true;
       entry.lastWebSocketUpdate = Date.now();
       saveSessionDataToStorage(sessionDataRef.current);
+    updateGlobalProcessingFlag(session_id, stillProcessing);
       return { stillProcessing };
     };
     
@@ -819,8 +960,6 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
-      
-      markProcessingComplete();
       
       let stillProcessingAfterUpdate = false;
       setRedlinedDocuments(prev => {
@@ -834,7 +973,10 @@ const SessionWorkspace = ({ session }) => {
       const { stillProcessing } = persistSessionCompletion();
       stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
       if (!stillProcessingAfterUpdate) {
+        markProcessingComplete();
         setGenerating(false);
+      } else {
+        setProcessingPhase('generating', stageMessages.generating);
       }
       
       setTimeout(async () => {
@@ -913,21 +1055,54 @@ const SessionWorkspace = ({ session }) => {
   };
 
   // Unified stage management without artificial percentage tracking
-  const resetProcessingStages = () => {
+  const resetProcessingStages = (options = {}) => {
     setProcessingStage('');
     setCompletedStages([]);
     highestStageIndexRef.current = -1;
+    
+    if (session?.session_id) {
+      const payload = {
+        processingStage: '',
+        completedStages: []
+      };
+
+      if (options.keepGeneratingState === true) {
+        payload.generating = true;
+      } else if (options.keepGeneratingState === false) {
+        payload.generating = false;
+      } else {
+        payload.generating = false;
+      }
+
+      if (!options.skipWorkflowReset) {
+        payload.workflowMessage = '';
+        payload.workflowMessageType = '';
+      }
+
+      persistSessionState(session.session_id, payload);
+      if (options.keepGeneratingState !== true) {
+        updateGlobalProcessingFlag(session.session_id, false);
+      }
+    }
   };
 
   const setProcessingPhase = (stage, message) => {
     if (!stage) {
-      resetProcessingStages();
+      resetProcessingStages({ skipWorkflowReset: true });
       if (message) {
         setWorkflowMessage(message);
         setWorkflowMessageType('progress');
       } else {
         setWorkflowMessage('');
         setWorkflowMessageType('');
+      }
+      if (session?.session_id) {
+        persistSessionState(session.session_id, {
+          workflowMessage: message || '',
+          workflowMessageType: message ? 'progress' : '',
+          generating: false
+        });
+        updateGlobalProcessingFlag(session.session_id, false);
       }
       return;
     }
@@ -956,6 +1131,7 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
 
+    let updatedCompleted = [];
     setCompletedStages(prev => {
       const next = new Set(prev);
       stageOrder.forEach((item, idx) => {
@@ -963,7 +1139,8 @@ const SessionWorkspace = ({ session }) => {
           next.add(item.key);
         }
       });
-      return Array.from(next);
+      updatedCompleted = Array.from(next);
+      return updatedCompleted;
     });
 
     setProcessingStage(stage);
@@ -972,6 +1149,17 @@ const SessionWorkspace = ({ session }) => {
     setWorkflowMessageType(resolvedMessage ? 'progress' : '');
     if (stageIndex > highestStageIndexRef.current) {
       highestStageIndexRef.current = stageIndex;
+    }
+
+    if (session?.session_id) {
+      persistSessionState(session.session_id, {
+        processingStage: stage,
+        completedStages: updatedCompleted,
+        workflowMessage: resolvedMessage,
+        workflowMessageType: resolvedMessage ? 'progress' : '',
+        generating: true
+      });
+      updateGlobalProcessingFlag(session.session_id, true);
     }
   };
 
@@ -982,6 +1170,17 @@ const SessionWorkspace = ({ session }) => {
     setWorkflowMessage(resolvedMessage);
     setWorkflowMessageType(messageType);
     highestStageIndexRef.current = stageOrder.length - 1;
+
+    if (session?.session_id) {
+      persistSessionState(session.session_id, {
+        processingStage: '',
+        completedStages: stageOrder.map(item => item.key),
+        workflowMessage: resolvedMessage,
+        workflowMessageType: messageType,
+        generating: false
+      });
+      updateGlobalProcessingFlag(session.session_id, false);
+    }
   };
 
   const handleGenerateRedline = async () => {
@@ -1010,8 +1209,24 @@ const SessionWorkspace = ({ session }) => {
     }
     
     setGenerating(true);
-    resetProcessingStages();
+    resetProcessingStages({ keepGeneratingState: true, skipWorkflowReset: true });
     setProcessingPhase('kb_sync', stageMessages.kb_sync);
+    persistSessionState(sessionIdAtStart, {
+      uploadedFiles,
+      generating: true,
+      processingStage: 'kb_sync',
+      completedStages: [],
+      workflowMessage: stageMessages.kb_sync,
+      workflowMessageType: 'progress'
+    });
+    updateGlobalProcessingFlag(sessionIdAtStart, true);
+    window.currentProcessingJob = {
+      ...(window.currentProcessingJob || {}),
+      sessionId: sessionIdAtStart,
+      filename: vendorFiles[0]?.filename || '',
+      startedAt: Date.now(),
+      pendingDocuments: vendorFiles.map(file => file.filename)
+    };
     
     let hasProcessingResults = false;
     try {
@@ -1043,15 +1258,35 @@ const SessionWorkspace = ({ session }) => {
 
               
               // Add job to tracking with initial progress
+              const processingEntry = {
+                originalFile: vendorFile,
+                jobId: reviewResponse.job_id,
+                status: 'processing',
+                progress: 0,
+                message: 'Starting document analysis...',
+                processing: true
+              };
+
               if (isCurrentSession()) {
-                setRedlinedDocuments(prev => [...prev, {
-                  originalFile: vendorFile,
-                  jobId: reviewResponse.job_id,
-                  status: 'processing',
-                  progress: 0,
-                  message: 'Starting document analysis...',
-                  processing: true
-                }]);
+                setRedlinedDocuments(prev => {
+                  const nextDocs = [...prev, processingEntry];
+                  persistSessionState(sessionIdAtStart, {
+                    redlinedDocuments: nextDocs,
+                    generating: true
+                  });
+                  updateGlobalProcessingFlag(sessionIdAtStart, true);
+                  return nextDocs;
+                });
+              } else {
+                const existingDocs = cloneRedlinedDocuments(
+                  sessionDataRef.current?.[sessionIdAtStart]?.redlinedDocuments || []
+                );
+                const nextDocs = [...existingDocs, processingEntry];
+                persistSessionState(sessionIdAtStart, {
+                  redlinedDocuments: nextDocs,
+                  generating: true
+                });
+                updateGlobalProcessingFlag(sessionIdAtStart, true);
               }
               
             } catch (error) {
@@ -1157,6 +1392,12 @@ const SessionWorkspace = ({ session }) => {
       if (isCurrentSession()) {
         setRedlinedDocuments(redlineResults);
       }
+
+      persistSessionState(sessionIdAtStart, {
+        redlinedDocuments: redlineResults,
+        generating: hasProcessingResults
+      });
+      updateGlobalProcessingFlag(sessionIdAtStart, hasProcessingResults);
       
       if (successfulResults.length > 0) {
         let message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
@@ -1208,15 +1449,14 @@ const SessionWorkspace = ({ session }) => {
         setWorkflowMessageType('error');
         resetProcessingStages();
       } else {
-        const sessionEntry = sessionDataRef.current[sessionIdAtStart];
-        if (sessionEntry) {
-          sessionEntry.workflowMessage = `Failed to generate redlined documents: ${error.message}`;
-          sessionEntry.workflowMessageType = 'error';
-          sessionEntry.processingStage = '';
-          sessionEntry.completedStages = [];
-          sessionEntry.generating = false;
-          saveSessionDataToStorage(sessionDataRef.current);
-        }
+        persistSessionState(sessionIdAtStart, {
+          workflowMessage: `Failed to generate redlined documents: ${error.message}`,
+          workflowMessageType: 'error',
+          processingStage: '',
+          completedStages: [],
+          generating: false
+        });
+        updateGlobalProcessingFlag(sessionIdAtStart, false);
       }
       hasProcessingResults = false;
     } finally {
@@ -1226,21 +1466,24 @@ const SessionWorkspace = ({ session }) => {
         if (!stillProcessing) {
           setGenerating(false);
         }
-      } else if (sessionEntry) {
-        if (!stillProcessing) {
-          sessionEntry.generating = false;
-          sessionEntry.processingStage = '';
-          sessionEntry.completedStages = [];
-          saveSessionDataToStorage(sessionDataRef.current);
-        } else {
-          sessionEntry.generating = true;
-          sessionEntry.processingStage = sessionEntry.processingStage || 'document_review';
-          sessionEntry.completedStages = Array.isArray(sessionEntry.completedStages)
-            ? sessionEntry.completedStages
-            : [];
-          saveSessionDataToStorage(sessionDataRef.current);
-        }
       }
+
+      if (stillProcessing) {
+        persistSessionState(sessionIdAtStart, {
+          generating: true,
+          processingStage: sessionEntry?.processingStage || 'document_review',
+          completedStages: Array.isArray(sessionEntry?.completedStages)
+            ? sessionEntry.completedStages
+            : []
+        });
+      } else {
+        persistSessionState(sessionIdAtStart, {
+          generating: false,
+          processingStage: '',
+          completedStages: stageOrder.map(item => item.key)
+        });
+      }
+      updateGlobalProcessingFlag(sessionIdAtStart, stillProcessing);
     }
   };
 
