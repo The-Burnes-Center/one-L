@@ -162,17 +162,28 @@ const SessionSidebar = ({
       }
     }
 
-    const inspectEntry = (entry) => {
+    const inspectEntry = (entry, key) => {
       if (!entry) return false;
       const isGenerating = entry.generating === true;
-      const hasProcessingStage = Boolean(entry.processingStage && entry.processingStage !== '');
+      const hasProcessingStage = isGenerating && Boolean(entry.processingStage && entry.processingStage !== '');
       const hasProcessingDocs = Array.isArray(entry.redlinedDocuments) &&
         entry.redlinedDocuments.some(doc =>
-          doc.processing === true ||
-          doc.status === 'processing' ||
-          (typeof doc.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
+          doc?.processing === true ||
+          doc?.status === 'processing' ||
+          (typeof doc?.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
         );
-      return isGenerating || hasProcessingStage || hasProcessingDocs;
+
+      const isProcessing = isGenerating || hasProcessingStage || hasProcessingDocs;
+      if (isProcessing) {
+        console.log('[SessionSidebar] inspectEntry flagged processing', {
+          sessionKey: key,
+          entry,
+          isGenerating,
+          hasProcessingStage,
+          hasProcessingDocs
+        });
+      }
+      return isProcessing;
     };
 
     let sessionData = null;
@@ -185,9 +196,9 @@ const SessionSidebar = ({
           sessionData = JSON.parse(stored);
 
           if (sessionId && sessionData?.[sessionId]) {
-            storageProcessing = inspectEntry(sessionData[sessionId]);
+            storageProcessing = inspectEntry(sessionData[sessionId], sessionId);
           } else if (!sessionId && sessionData) {
-            storageProcessing = Object.values(sessionData).some(inspectEntry);
+            storageProcessing = Object.entries(sessionData).some(([key, value]) => inspectEntry(value, key));
           }
         }
       } catch (error) {
@@ -200,7 +211,7 @@ const SessionSidebar = ({
       const flags = Object.entries(window.processingSessionFlags);
       for (const [flagSessionId, details] of flags) {
         const entry = sessionData?.[flagSessionId];
-        const stillProcessing = inspectEntry(entry);
+        const stillProcessing = inspectEntry(entry, flagSessionId);
         // Expire stale flags older than 5 minutes even if we can't confirm processing
         const tooOld = details?.updatedAt && (Date.now() - details.updatedAt) > 5 * 60 * 1000;
 
