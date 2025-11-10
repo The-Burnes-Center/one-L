@@ -16,6 +16,12 @@ const SessionSidebar = ({
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [adminExpanded, setAdminExpanded] = useState(false);
+  
+  useEffect(() => {
+    if (sessionId) {
+      window.activeSessionId = sessionId;
+    }
+  }, [sessionId]);
 
   // Load user sessions
   useEffect(() => {
@@ -150,17 +156,26 @@ const SessionSidebar = ({
   );
 
   const getActiveProcessingStatus = () => {
-    const progressIntervalActive = window.progressInterval !== null && window.progressInterval !== undefined;
+    const activeJob = window.currentProcessingJob;
+    let effectiveSessionId = sessionId || window.activeSessionId || null;
 
-    let currentJobActive = false;
-    if (window.currentProcessingJob) {
-      if (!sessionId) {
-        currentJobActive = true;
-      } else {
-        const jobSessionId = window.currentProcessingJob.sessionId;
-        currentJobActive = !jobSessionId || jobSessionId === sessionId;
+    if (!effectiveSessionId && window.processingSessionFlags) {
+      const flaggedSessions = Object.keys(window.processingSessionFlags);
+      if (flaggedSessions.length === 1) {
+        effectiveSessionId = flaggedSessions[0];
       }
     }
+
+    if (!effectiveSessionId && activeJob?.sessionId) {
+      effectiveSessionId = activeJob.sessionId;
+    }
+
+    const currentJobActive = Boolean(effectiveSessionId && activeJob && activeJob.sessionId === effectiveSessionId);
+    const progressIntervalActive = Boolean(
+      window.progressInterval !== null &&
+      window.progressInterval !== undefined &&
+      currentJobActive
+    );
 
     const inspectEntry = (entry, key) => {
       if (!entry) return false;
@@ -173,20 +188,12 @@ const SessionSidebar = ({
           (typeof doc?.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
         );
 
-      const isProcessing = hasProcessingDocs;
-      if (isProcessing) {
-        console.log('[SessionSidebar] inspectEntry flagged processing', {
-          sessionKey: key,
-          entry,
-          isGenerating,
-          hasProcessingStage,
-          hasProcessingDocs
-        });
-      }
+      const isProcessing = hasProcessingDocs || hasProcessingStage;
       return isProcessing;
     };
 
     let sessionData = null;
+    let sessionEntry = null;
     let storageProcessing = false;
     if (currentUserId) {
       try {
@@ -195,10 +202,9 @@ const SessionSidebar = ({
         if (stored) {
           sessionData = JSON.parse(stored);
 
-          if (sessionId && sessionData?.[sessionId]) {
-            storageProcessing = inspectEntry(sessionData[sessionId], sessionId);
-          } else if (!sessionId && sessionData) {
-            storageProcessing = Object.entries(sessionData).some(([key, value]) => inspectEntry(value, key));
+          if (effectiveSessionId && sessionData?.[effectiveSessionId]) {
+            sessionEntry = sessionData[effectiveSessionId];
+            storageProcessing = inspectEntry(sessionEntry, effectiveSessionId);
           }
         }
       } catch (error) {
@@ -206,43 +212,26 @@ const SessionSidebar = ({
       }
     }
 
-    let globalProcessing = false;
-    if (window.processingSessionFlags) {
-      const flags = Object.entries(window.processingSessionFlags);
-      for (const [flagSessionId, details] of flags) {
-        const entry = sessionData?.[flagSessionId];
-        const stillProcessing = inspectEntry(entry, flagSessionId);
-        // Expire stale flags older than 5 minutes even if we can't confirm processing
-        const tooOld = details?.updatedAt && (Date.now() - details.updatedAt) > 5 * 60 * 1000;
+    let flagProcessing = false;
+    if (effectiveSessionId && window.processingSessionFlags && window.processingSessionFlags[effectiveSessionId]) {
+      const details = window.processingSessionFlags[effectiveSessionId];
+      const stillProcessing = inspectEntry(sessionEntry, effectiveSessionId);
+      const tooOld = details?.updatedAt && (Date.now() - details.updatedAt) > 5 * 60 * 1000;
 
-        if (!stillProcessing || tooOld) {
-          delete window.processingSessionFlags[flagSessionId];
-          continue;
-        }
-
-        if (!sessionId || flagSessionId === sessionId) {
-          globalProcessing = true;
-        }
+      if (!stillProcessing || tooOld) {
+        delete window.processingSessionFlags[effectiveSessionId];
+      } else {
+        flagProcessing = true;
       }
     }
 
-    const isProcessing = progressIntervalActive || currentJobActive || storageProcessing || globalProcessing;
-
-    console.log('[SessionSidebar] processing status check', {
-      progressIntervalActive,
-      currentJobActive,
-      storageProcessing,
-      globalProcessing,
-      hasProcessingFlagSessions: window.processingSessionFlags ? Object.keys(window.processingSessionFlags) : [],
-      activeSessionId: sessionId,
-      isProcessing
-    });
+    const isProcessing = progressIntervalActive || currentJobActive || storageProcessing || flagProcessing;
 
     return {
       hasProgressInterval: progressIntervalActive,
       hasActiveJob: currentJobActive,
       hasStorageProcessing: storageProcessing,
-      hasGlobalProcessing: globalProcessing,
+      hasGlobalProcessing: flagProcessing,
       isProcessing
     };
   };
@@ -251,7 +240,6 @@ const SessionSidebar = ({
     const processingStatus = getActiveProcessingStatus();
 
     if (processingStatus.isProcessing) {
-      console.log('[SessionSidebar] blocking new session (processing active)', processingStatus);
       const proceedWithParallelWarning = window.confirm(
         getParallelSessionWarning('create a new session')
       );
@@ -335,10 +323,6 @@ const SessionSidebar = ({
     
     // Show warning if there's active processing
     if (processingStatus.isProcessing) {
-      console.log('[SessionSidebar] blocking session switch (processing active)', {
-        targetSessionId: session.session_id,
-        processingStatus
-      });
       const confirmed = window.confirm(
         getParallelSessionWarning('switch sessions')
       );
