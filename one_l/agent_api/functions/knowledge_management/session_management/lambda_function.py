@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any
+from decimal import Decimal
 
 # Set up logging
 logger = logging.getLogger()
@@ -21,8 +22,23 @@ AGENT_PROCESSING_BUCKET = os.environ.get('AGENT_PROCESSING_BUCKET')
 SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE', 'one-l-sessions')
 ANALYSIS_RESULTS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
 
+def convert_decimals(obj):
+    """Recursively convert Decimal types to int or float for JSON serialization"""
+    if isinstance(obj, Decimal):
+        # Convert Decimal to int if it's a whole number, otherwise float
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_decimals(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals(item) for item in obj]
+    return obj
+
 def create_cors_response(status_code: int, body: dict) -> dict:
     """Create a response with CORS headers"""
+    # Convert any Decimal types to native Python types for JSON serialization
+    body = convert_decimals(body)
     return {
         'statusCode': status_code,
         'headers': {
@@ -100,21 +116,53 @@ def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, An
 def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str, Any]:
     """Get all sessions for a user, optionally filtered by whether they have results"""
     try:
+        # Validate environment variables
+        if not SESSIONS_TABLE:
+            logger.error("SESSIONS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Sessions table not configured',
+                'sessions': []
+            }
+        
         # Try to get from DynamoDB
         try:
             table = dynamodb.Table(SESSIONS_TABLE)
-            response = table.scan(
-                FilterExpression='user_id = :user_id',
-                ExpressionAttributeValues={':user_id': user_id}
-            )
-            sessions = response.get('Items', [])
+            sessions = []
+            last_evaluated_key = None
+            
+            # Handle pagination for scan operation (DynamoDB has 1MB limit per page)
+            while True:
+                scan_kwargs = {
+                    'FilterExpression': 'user_id = :user_id',
+                    'ExpressionAttributeValues': {':user_id': user_id}
+                }
+                
+                if last_evaluated_key:
+                    scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                
+                response = table.scan(**scan_kwargs)
+                sessions.extend(response.get('Items', []))
+                
+                # Check if there are more pages
+                last_evaluated_key = response.get('LastEvaluatedKey')
+                if not last_evaluated_key:
+                    break
             
             # Filter sessions with results if requested
             if filter_by_results:
                 sessions = [s for s in sessions if s.get('has_results', False)]
             
-            # Sort by created_at descending
-            sessions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            # Sort by created_at descending (handle missing or invalid dates)
+            try:
+                sessions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            except (TypeError, AttributeError) as sort_error:
+                logger.warning(f"Error sorting sessions by created_at: {sort_error}")
+                # Fallback: sort by updated_at if available, otherwise keep original order
+                try:
+                    sessions.sort(key=lambda x: x.get('updated_at', ''), reverse=True)
+                except (TypeError, AttributeError):
+                    pass  # Keep original order if sorting fails
             
             logger.info(f"Retrieved {len(sessions)} sessions for user {user_id} (filter_by_results: {filter_by_results})")
             
@@ -124,24 +172,55 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str
             }
             
         except Exception as e:
-            logger.warning(f"Could not retrieve sessions from DynamoDB: {e}")
-            # Return empty list if DynamoDB fails
+            error_type = type(e).__name__
+            error_msg = str(e)
+            
+            # Log the full error for debugging
+            logger.error(f"Could not retrieve sessions from DynamoDB: {error_type}: {error_msg}")
+            logger.error(f"Full error details: {repr(e)}")
+            
+            # Check if it's a specific DynamoDB error
+            if 'ResourceNotFoundException' in error_type or 'does not exist' in error_msg:
+                logger.error(f"SESSIONS_TABLE '{SESSIONS_TABLE}' does not exist")
+                return {
+                    'success': False,
+                    'error': f'Sessions table not found: {SESSIONS_TABLE}',
+                    'sessions': []
+                }
+            elif 'AccessDeniedException' in error_type or 'Access denied' in error_msg:
+                logger.error(f"Access denied to SESSIONS_TABLE '{SESSIONS_TABLE}'")
+                return {
+                    'success': False,
+                    'error': 'Access denied to sessions table',
+                    'sessions': []
+                }
+            
+            # For other errors, return empty list gracefully (don't fail completely)
+            logger.warning(f"Returning empty sessions list due to error: {error_msg}")
             return {
                 'success': True,
                 'sessions': []
             }
             
     except Exception as e:
-        logger.error(f"Error getting user sessions: {e}")
+        logger.error(f"Unexpected error getting user sessions: {e}", exc_info=True)
         return {
             'success': False,
-            'error': str(e),
+            'error': f'Unexpected error: {str(e)}',
             'sessions': []
         }
 
 def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str, Any]:
     """Update session title"""
     try:
+        # Validate environment variables
+        if not SESSIONS_TABLE:
+            logger.error("SESSIONS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Sessions table not configured'
+            }
+        
         table = dynamodb.Table(SESSIONS_TABLE)
         
         # Update the session
@@ -166,10 +245,26 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         }
         
     except Exception as e:
-        logger.error(f"Error updating session title: {e}")
+        error_type = type(e).__name__
+        error_msg = str(e)
+        logger.error(f"Error updating session title ({error_type}): {error_msg}")
+        logger.error(f"Full error details: {repr(e)}")
+        
+        # Provide more specific error messages
+        if 'ConditionalCheckFailedException' in error_type:
+            return {
+                'success': False,
+                'error': 'Session not found or access denied'
+            }
+        elif 'ResourceNotFoundException' in error_type:
+            return {
+                'success': False,
+                'error': f'Sessions table not found: {SESSIONS_TABLE}'
+            }
+        
         return {
             'success': False,
-            'error': str(e)
+            'error': f'Failed to update session title: {error_msg}'
         }
 
 def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
@@ -177,20 +272,68 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
     try:
         table = dynamodb.Table(SESSIONS_TABLE)
         
+        # First, check if session exists and belongs to user
+        try:
+            existing_session = table.get_item(Key={'session_id': session_id})
+            if 'Item' not in existing_session:
+                logger.warning(f"Session {session_id} does not exist, cannot mark as having results")
+                return {
+                    'success': False,
+                    'error': 'Session not found'
+                }
+            
+            if existing_session['Item'].get('user_id') != user_id:
+                logger.warning(f"Session {session_id} does not belong to user {user_id}")
+                return {
+                    'success': False,
+                    'error': 'Session access denied'
+                }
+        except Exception as check_error:
+            logger.error(f"Error checking session existence: {check_error}")
+            # Continue anyway - let the update_item handle it
+        
         # Update session to mark it has results
-        response = table.update_item(
-            Key={'session_id': session_id},
-            UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity, document_count = document_count + :inc',
-            ExpressionAttributeValues={
-                ':has_results': True,
-                ':updated_at': datetime.now(timezone.utc).isoformat(),
-                ':last_activity': datetime.now(timezone.utc).isoformat(),
-                ':inc': 1,
-                ':user_id': user_id
-            },
-            ConditionExpression='user_id = :user_id',
-            ReturnValues='ALL_NEW'
-        )
+        # Use ADD for document_count (works even if attribute doesn't exist) and SET for other fields
+        try:
+            response = table.update_item(
+                Key={'session_id': session_id},
+                UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity ADD document_count :inc',
+                ExpressionAttributeValues={
+                    ':has_results': True,
+                    ':updated_at': datetime.now(timezone.utc).isoformat(),
+                    ':last_activity': datetime.now(timezone.utc).isoformat(),
+                    ':inc': 1,
+                    ':user_id': user_id
+                },
+                ConditionExpression='user_id = :user_id',
+                ReturnValues='ALL_NEW'
+            )
+        except Exception as update_error:
+            error_type = type(update_error).__name__
+            # If the conditional check fails or document_count causes issues, try without the increment
+            if 'ConditionalCheckFailedException' in error_type or 'document_count' in str(update_error):
+                logger.warning(f"Update failed for session {session_id}, trying without document_count increment: {update_error}")
+                try:
+                    response = table.update_item(
+                        Key={'session_id': session_id},
+                        UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity',
+                        ExpressionAttributeValues={
+                            ':has_results': True,
+                            ':updated_at': datetime.now(timezone.utc).isoformat(),
+                            ':last_activity': datetime.now(timezone.utc).isoformat(),
+                            ':user_id': user_id
+                        },
+                        ConditionExpression='user_id = :user_id',
+                        ReturnValues='ALL_NEW'
+                    )
+                except Exception as retry_error:
+                    logger.error(f"Error marking session with results (retry): {retry_error}")
+                    return {
+                        'success': False,
+                        'error': str(retry_error)
+                    }
+            else:
+                raise
         
         logger.info(f"Marked session {session_id} as having results")
         
@@ -200,7 +343,18 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error marking session with results: {e}")
+        error_type = type(e).__name__
+        logger.error(f"Error marking session with results ({error_type}): {e}")
+        
+        # Handle ConditionalCheckFailedException gracefully
+        if 'ConditionalCheckFailedException' in error_type:
+            logger.warning(f"Session {session_id} conditional check failed - session may not exist or user_id mismatch")
+            return {
+                'success': False,
+                'error': 'Session not found or access denied',
+                'error_type': 'ConditionalCheckFailedException'
+            }
+        
         return {
             'success': False,
             'error': str(e)

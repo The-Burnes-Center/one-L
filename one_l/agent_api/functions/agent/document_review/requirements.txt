@@ -2,3 +2,5 @@ boto3>=1.34.0
 bayoo-docx
 anthropic>=0.34.0
 PyMuPDF>=1.24.0
+# pdf2docx removed - too large for Lambda (250MB limit)
+# Using PyMuPDF for PDF to DOCX conversion (reverted from Google Document AI)

@@ -3,10 +3,10 @@
  * Handles vendor document upload to agent_processing bucket
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { knowledgeManagementAPI, fileUtils } from '../services/api';
 
-const VendorSubmission = ({ onFilesUploaded }) => {
+const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessionContext = null }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
@@ -17,6 +17,18 @@ const VendorSubmission = ({ onFilesUploaded }) => {
   const maxFiles = 1;
   const bucketType = "agent_processing";
   const prefix = "vendor-submissions/";
+
+  // Clear selected files when session changes
+  useEffect(() => {
+    if (sessionContext?.session_id) {
+      setSelectedFiles([]);
+      setMessage('');
+      setMessageType('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [sessionContext?.session_id]);
 
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files);
@@ -45,14 +57,12 @@ const VendorSubmission = ({ onFilesUploaded }) => {
     }
     
     setUploading(true);
-    setMessage('Preparing vendor submission files for upload...');
+    setMessage('Preparing vendor submission file for upload...');
     setMessageType('');
     
     try {
-      // Prepare files for upload with vendor submission renaming
-      const preparedFiles = await fileUtils.prepareFilesForUpload(selectedFiles, {
-        renameForVendorSubmission: true
-      });
+      // Prepare files for upload while preserving original filename
+      const preparedFiles = await fileUtils.prepareFilesForUpload(selectedFiles);
       
       setMessage('Uploading vendor submission files...');
       
@@ -120,8 +130,53 @@ const VendorSubmission = ({ onFilesUploaded }) => {
         />
       </div>
 
+      {/* Previously uploaded vendor file */}
+      {previouslyUploadedFiles && previouslyUploadedFiles.length > 0 && (
+        <div className="form-group">
+          <label className="form-label" style={{ fontSize: '14px', fontWeight: '500', color: '#666', marginBottom: '8px' }}>
+            Previously Uploaded File
+          </label>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            padding: '12px 16px',
+            backgroundColor: '#d4edda',
+            border: '1px solid #c3e6cb',
+            borderRadius: '12px',
+            color: '#333',
+            gap: '12px',
+            maxWidth: '400px'
+          }}>
+            <div style={{
+              width: '40px',
+              height: '40px',
+              backgroundColor: '#28a745',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '20px'
+            }}>
+              ✓
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: '500', fontSize: '14px' }}>
+                {previouslyUploadedFiles[0].filename || previouslyUploadedFiles[0].name}
+              </div>
+              <div style={{ fontSize: '12px', color: '#666' }}>
+                Already uploaded
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File selected for upload */}
       {selectedFiles.length > 0 && (
         <div className="form-group">
+          <label className="form-label" style={{ fontSize: '14px', fontWeight: '500', color: '#666', marginBottom: '8px' }}>
+            File to Upload
+          </label>
           <div style={{ 
             display: 'flex', 
             alignItems: 'center', 

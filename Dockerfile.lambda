@@ -21,9 +21,9 @@ WORKDIR /build
 COPY one_l/agent_api/functions/agent/document_review/requirements.txt .
 
 # Install Python dependencies in a Lambda-compatible way
-# The Lambda base image is already x86_64, so we don't need to force platform
+# Remove --only-binary=all to allow source builds if needed (may reduce size)
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --only-binary=all -r requirements.txt -t ./python/
+    pip install --no-cache-dir -r requirements.txt -t ./python/
 
 # Copy the Lambda function code
 COPY one_l/agent_api/functions/agent/document_review/lambda_function.py ./python/
@@ -31,17 +31,30 @@ COPY one_l/agent_api/functions/agent/document_review/lambda_function.py ./python
 # Copy the agent modules that the Lambda function imports
 COPY one_l/agent_api/agent ./python/agent_api/agent/
 
+# Clean up unnecessary files to reduce package size
+# CONSERVATIVE CLEANUP: Only remove obvious documentation files, keep all Python modules and package structure
+# DO NOT remove: .dist-info, docs directories (may be Python modules like botocore.docs), or any package structure
+RUN find ./python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find ./python -type f -name "*.pyc" -delete && \
+    find ./python -type f -name "*.pyo" -delete && \
+    # Remove only standalone documentation files (not directories that might be Python modules)
+    find ./python -type f -name "README.md" -delete && \
+    find ./python -type f -name "CHANGELOG.md" -delete && \
+    find ./python -type f -name "LICENSE.txt" -delete && \
+    find ./python -type f -name "LICENSE" -delete
+
 # Ensure proper permissions
 RUN find ./python -type f -exec chmod 644 {} \; && \
     find ./python -type d -exec chmod 755 {} \;
 
-# Create the deployment package
+# Create the deployment package with minimal exclusions
+# Only exclude compiled Python files and cache - keep everything else (docs, .dist-info, etc.)
 RUN cd python && \
     zip -r ../lambda-deployment.zip . \
         -x "*.pyc" \
+        -x "*.pyo" \
         -x "*/__pycache__/*" \
-        -x "*/.DS_Store" \
-        -x "*/test*"
+        -x "*/.DS_Store"
 
 # Output the package - use entrypoint override
 ENTRYPOINT []

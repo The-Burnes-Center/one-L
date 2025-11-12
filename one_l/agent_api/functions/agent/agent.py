@@ -2,6 +2,7 @@
 Agent functions construct for AI-powered document review operations.
 """
 
+import os
 from typing import Optional
 from constructs import Construct
 from aws_cdk import (
@@ -14,6 +15,21 @@ from aws_cdk import (
     Duration,
     Stack
 )
+
+# Google Document AI configuration removed - reverted to PyMuPDF-based conversion
+# Google Document AI code saved in tools_pymupdf_conversion_backup.py for future reference
+# try:
+#     import sys
+#     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../'))
+#     from constants import (
+#         GOOGLE_CLOUD_PROJECT_ID,
+#         GOOGLE_DOCUMENT_AI_PROCESSOR_ID,
+#         GOOGLE_DOCUMENT_AI_LOCATION
+#     )
+# except ImportError:
+#     GOOGLE_CLOUD_PROJECT_ID = ""
+#     GOOGLE_DOCUMENT_AI_PROCESSOR_ID = ""
+#     GOOGLE_DOCUMENT_AI_LOCATION = "us"
 
 
 class AgentConstruct(Construct):
@@ -93,7 +109,9 @@ class AgentConstruct(Construct):
                 "REGION": Stack.of(self).region,
                 "LOG_LEVEL": "INFO",
                 # Enable OCR fallback for PDFs in dev to handle scanned/flattened documents
-                "ENABLE_TEXTRACT_OCR": "1"
+                "ENABLE_TEXTRACT_OCR": "1",
+                # Google Document AI configuration removed - reverted to PyMuPDF-based conversion
+                # Google Document AI code saved in tools_pymupdf_conversion_backup.py for future reference
             }
         )
     

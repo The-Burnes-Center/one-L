@@ -6,15 +6,23 @@ const SessionSidebar = ({
   currentUserId, 
   isVisible = true,
   onAdminSectionChange,
-  onRefreshRequest // Add callback to allow parent to trigger refresh
+  onRefreshRequest, // Add callback to allow parent to trigger refresh
+  isAdmin = false
 }) => {
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [adminExpanded, setAdminExpanded] = useState(false);
+  
+  useEffect(() => {
+    if (sessionId) {
+      window.activeSessionId = sessionId;
+    }
+  }, [sessionId]);
 
   // Load user sessions
   useEffect(() => {
@@ -22,6 +30,51 @@ const SessionSidebar = ({
       loadSessions();
     }
   }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh sessions when sessionId changes (user navigates to different session)
+  // This ensures the first session created by AutoSessionRedirect appears in the sidebar
+  useEffect(() => {
+    if (currentUserId && isVisible && sessionId) {
+      // Load sessions immediately
+      loadSessions();
+      
+      // Retry to handle DynamoDB eventual consistency
+      // This is especially important for the first session created on app load
+      // Retry multiple times to ensure the session appears, but stop on server errors
+      let retryCount = 0;
+      const maxRetries = 5; // Increased retries for first session (handles eventual consistency)
+      let consecutiveServerErrors = 0;
+      
+      const retryInterval = setInterval(async () => {
+        retryCount++;
+        
+        // Stop if we've hit max retries
+        if (retryCount >= maxRetries) {
+          clearInterval(retryInterval);
+          return;
+        }
+        
+        // Try loading sessions
+        const result = await loadSessions();
+        
+        // If we get a server error (500), stop retrying - it's a backend issue, not eventual consistency
+        if (result && result.isServerError) {
+          consecutiveServerErrors++;
+          // Stop after 2 consecutive server errors
+          if (consecutiveServerErrors >= 2) {
+            console.warn('Stopping session retry due to persistent server errors');
+            clearInterval(retryInterval);
+            return;
+          }
+        } else if (result && result.success) {
+          // Reset error count on success
+          consecutiveServerErrors = 0;
+        }
+      }, 1500); // Retry every 1.5 seconds
+      
+      return () => clearInterval(retryInterval);
+    }
+  }, [sessionId, currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh sessions periodically to catch newly completed sessions
   useEffect(() => {
@@ -44,37 +97,250 @@ const SessionSidebar = ({
   const loadSessions = async () => {
     try {
       setLoading(true);
-      // Only load sessions that have processed documents (results)
-      const response = await sessionAPI.getUserSessions(currentUserId, true);
-      if (response.success) {
-        setSessions(response.sessions || []);
-
+      // Load ALL sessions (including new ones without results) so they appear in sidebar
+      const response = await sessionAPI.getUserSessions(currentUserId, false);
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      // Handle HTTP errors (like 500) that might be in the response
+      if (response && response.statusCode && response.statusCode >= 400) {
+        console.error('HTTP error loading sessions:', response.statusCode, responseData);
+        // Don't clear existing sessions on error - keep what we have
+        // Return error indicator so retry logic can stop
+        return { error: true, statusCode: response.statusCode };
+      }
+      
+      if (responseData && responseData.success) {
+        setSessions(responseData.sessions || []);
+        return { success: true };
+      } else {
+        console.error('Failed to load sessions:', responseData?.error || 'Unknown error');
+        // Don't clear existing sessions on error - keep what we have
+        return { error: true };
       }
     } catch (error) {
-
+      // Handle 500 errors and other network errors gracefully
+      if (error.message && error.message.includes('500')) {
+        console.warn('Server error loading sessions (500). Sessions may be temporarily unavailable.');
+        // Don't clear existing sessions - keep what we have displayed
+        // Return error indicator so retry logic can handle it
+        return { error: true, isServerError: true, statusCode: 500 };
+      } else {
+        console.error('Error loading sessions:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+        return { error: true };
+      }
+      // Don't clear existing sessions on error - keep what we have
     } finally {
       setLoading(false);
     }
   };
 
+  const getParallelSessionWarning = (action) => (
+    'A redline is currently running.\n' +
+    `If you ${action}, the progress indicator will be lost and results may not appear properly.\n\n` +
+    'We recommend waiting for the current redline to complete.\n\n' +
+    'Continue anyway?'
+  );
+
+  const getActiveProcessingStatus = () => {
+    const activeJob = window.currentProcessingJob;
+    let effectiveSessionId = sessionId || window.activeSessionId || null;
+
+    if (!effectiveSessionId && window.processingSessionFlags) {
+      const flaggedSessions = Object.keys(window.processingSessionFlags);
+      if (flaggedSessions.length === 1) {
+        effectiveSessionId = flaggedSessions[0];
+      }
+    }
+
+    if (!effectiveSessionId && activeJob?.sessionId) {
+      effectiveSessionId = activeJob.sessionId;
+    }
+
+    const currentJobActive = Boolean(effectiveSessionId && activeJob && activeJob.sessionId === effectiveSessionId);
+    const progressIntervalActive = Boolean(
+      window.progressInterval !== null &&
+      window.progressInterval !== undefined &&
+      currentJobActive
+    );
+
+    const inspectEntry = (entry, key) => {
+      if (!entry) return false;
+      const isGenerating = entry.generating === true;
+      const hasProcessingStage = isGenerating && Boolean(entry.processingStage && entry.processingStage !== '');
+      const hasProcessingDocs = Array.isArray(entry.redlinedDocuments) &&
+        entry.redlinedDocuments.some(doc =>
+          doc?.processing === true ||
+          doc?.status === 'processing' ||
+          (typeof doc?.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
+        );
+
+      const isProcessing = hasProcessingDocs || hasProcessingStage;
+      return isProcessing;
+    };
+
+    let sessionData = null;
+    let sessionEntry = null;
+    let storageProcessing = false;
+    if (currentUserId) {
+      try {
+        const storageKey = `one_l_session_data_${currentUserId}`;
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          sessionData = JSON.parse(stored);
+
+          if (effectiveSessionId && sessionData?.[effectiveSessionId]) {
+            sessionEntry = sessionData[effectiveSessionId];
+            storageProcessing = inspectEntry(sessionEntry, effectiveSessionId);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking processing status:', error);
+      }
+    }
+
+    let flagProcessing = false;
+    if (effectiveSessionId && window.processingSessionFlags && window.processingSessionFlags[effectiveSessionId]) {
+      const details = window.processingSessionFlags[effectiveSessionId];
+      const stillProcessing = inspectEntry(sessionEntry, effectiveSessionId);
+      const tooOld = details?.updatedAt && (Date.now() - details.updatedAt) > 5 * 60 * 1000;
+
+      if (!stillProcessing || tooOld) {
+        delete window.processingSessionFlags[effectiveSessionId];
+      } else {
+        flagProcessing = true;
+      }
+    }
+
+    const isProcessing = progressIntervalActive || currentJobActive || storageProcessing || flagProcessing;
+
+    return {
+      hasProgressInterval: progressIntervalActive,
+      hasActiveJob: currentJobActive,
+      hasStorageProcessing: storageProcessing,
+      hasGlobalProcessing: flagProcessing,
+      isProcessing
+    };
+  };
+
   const handleNewSession = async () => {
+    const processingStatus = getActiveProcessingStatus();
+
+    if (processingStatus.isProcessing) {
+      const proceedWithParallelWarning = window.confirm(
+        getParallelSessionWarning('create a new session')
+      );
+
+      if (!proceedWithParallelWarning) {
+        return;
+      }
+    }
+
     try {
-      setLoading(true);
+      setCreatingSession(true);
       const response = await sessionAPI.createSession(currentUserId);
-      if (response.success) {
-        // Navigate to the new session with new URL structure
-        navigate(`/${response.session.session_id}`, { 
-          state: { session: response.session } 
+      
+      // Handle different response structures (wrapped in body or direct)
+      let responseData = response;
+      if (response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      if (responseData.success && responseData.session) {
+        // Add the new session to the list immediately (optimistic update)
+        const newSession = responseData.session;
+        setSessions(prevSessions => {
+          // Check if session already exists to avoid duplicates
+          const exists = prevSessions.some(s => s.session_id === newSession.session_id);
+          if (exists) {
+            return prevSessions;
+          }
+          // Add new session at the beginning
+          return [newSession, ...prevSessions];
         });
+        
+        // Refresh sessions list from server after a short delay to handle eventual consistency
+        // Use silent refresh to avoid errors interrupting the flow
+        setTimeout(async () => {
+          try {
+            const result = await loadSessions();
+            // If we get a server error, don't keep retrying - the optimistic update is already in place
+            if (result && result.isServerError) {
+              console.warn('Server error refreshing sessions after creation. Session is already in sidebar via optimistic update.');
+            }
+          } catch (error) {
+            // Silently fail - we already have the session in the list via optimistic update
+            console.warn('Failed to refresh sessions list after creation:', error);
+          }
+        }, 1000);
+        
+        // Navigate to the new session with new URL structure
+        navigate(`/${newSession.session_id}`, { 
+          state: { session: newSession } 
+        });
+      } else {
+        console.error('Failed to create session:', responseData.error || 'Unknown error');
+        alert('Failed to create new session. Please try again.');
       }
     } catch (error) {
-
+      console.error('Error creating new session:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      alert(`Error creating new session: ${error.message || 'Unknown error'}`);
     } finally {
-      setLoading(false);
+      setCreatingSession(false);
     }
   };
 
   const handleSessionSelect = (session) => {
+    if (session.session_id === sessionId) {
+      return;
+    }
+
+    // Check if there's active processing in the current session
+    const processingStatus = getActiveProcessingStatus();
+    
+    // Show warning if there's active processing
+    if (processingStatus.isProcessing) {
+      const confirmed = window.confirm(
+        getParallelSessionWarning('switch sessions')
+      );
+      if (!confirmed) {
+        return; // Don't navigate if user cancels
+      }
+    }
+    
+    // If we get here, either no processing or user confirmed
+    if (processingStatus.hasProgressInterval) {
+      // Clear the progress interval when switching away
+      if (window.progressInterval) {
+        clearInterval(window.progressInterval);
+        window.progressInterval = null;
+      }
+    }
+    
     navigate(`/${session.session_id}`, { 
       state: { session: session } 
     });
@@ -91,7 +357,7 @@ const SessionSidebar = ({
       await loadSessions(); // Reload sessions
       setEditingSession(null);
     } catch (error) {
-
+      console.error('Error updating session title:', error);
     }
   };
 
@@ -106,7 +372,7 @@ const SessionSidebar = ({
           navigate('/');
         }
       } catch (error) {
-
+        console.error('Error deleting session:', error);
       }
     }
   };
@@ -148,7 +414,7 @@ const SessionSidebar = ({
       }}>
         <button
           onClick={handleNewSession}
-          disabled={loading}
+          disabled={creatingSession}
           style={{
             width: '100%',
             padding: '12px',
@@ -156,7 +422,7 @@ const SessionSidebar = ({
             color: '#ffffff',
             border: '1px solid #333',
             borderRadius: '6px',
-            cursor: loading ? 'not-allowed' : 'pointer',
+            cursor: creatingSession ? 'not-allowed' : 'pointer',
             fontSize: '14px',
             fontWeight: '500',
             display: 'flex',
@@ -166,14 +432,14 @@ const SessionSidebar = ({
             transition: 'background-color 0.2s'
           }}
           onMouseEnter={(e) => {
-            if (!loading) e.target.style.backgroundColor = '#333';
+            if (!creatingSession) e.target.style.backgroundColor = '#333';
           }}
           onMouseLeave={(e) => {
-            if (!loading) e.target.style.backgroundColor = '#1f1f1f';
+            if (!creatingSession) e.target.style.backgroundColor = '#1f1f1f';
           }}
         >
           <span style={{ fontSize: '16px' }}>+</span>
-          {loading ? 'Creating...' : 'New Session'}
+          {creatingSession ? 'Creating...' : 'New Session'}
         </button>
       </div>
 
@@ -332,75 +598,77 @@ const SessionSidebar = ({
       </div>
 
       {/* Admin Section */}
-      <div style={{
-        borderTop: '1px solid #333'
-      }}>
-        <button
-          onClick={() => setAdminExpanded(!adminExpanded)}
-          style={{
-            width: '100%',
-            padding: '12px',
-            backgroundColor: 'transparent',
-            color: '#ffffff',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '500',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.backgroundColor = '#1f1f1f';
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.backgroundColor = 'transparent';
-          }}
-        >
-          <span>Admin</span>
-          <span style={{
-            fontSize: '12px',
-            transform: adminExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.2s'
-          }}>
-            ▼
-          </span>
-        </button>
-        
-        {/* Admin Submenu */}
-        {adminExpanded && (
-          <div style={{ paddingLeft: '12px', paddingBottom: '8px' }}>
-            <button
-              onClick={() => onAdminSectionChange && onAdminSectionChange('admin')}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                backgroundColor: 'transparent',
-                color: '#cccccc',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                borderRadius: '4px',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.backgroundColor = '#1f1f1f';
-                e.target.style.color = '#ffffff';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.backgroundColor = 'transparent';
-                e.target.style.color = '#cccccc';
-              }}
-            >
-              <span>Knowledge Base</span>
-            </button>
-          </div>
-        )}
-      </div>
+      {isAdmin && (
+        <div style={{
+          borderTop: '1px solid #333'
+        }}>
+          <button
+            onClick={() => setAdminExpanded(!adminExpanded)}
+            style={{
+              width: '100%',
+              padding: '12px',
+              backgroundColor: 'transparent',
+              color: '#ffffff',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.backgroundColor = '#1f1f1f';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.backgroundColor = 'transparent';
+            }}
+          >
+            <span>Admin</span>
+            <span style={{
+              fontSize: '12px',
+              transform: adminExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s'
+            }}>
+              ▼
+            </span>
+          </button>
+          
+          {/* Admin Submenu */}
+          {adminExpanded && (
+            <div style={{ paddingLeft: '12px', paddingBottom: '8px' }}>
+              <button
+                onClick={() => onAdminSectionChange && onAdminSectionChange('admin')}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  backgroundColor: 'transparent',
+                  color: '#cccccc',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '4px',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#1f1f1f';
+                  e.target.style.color = '#ffffff';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                  e.target.style.color = '#cccccc';
+                }}
+              >
+                <span>Knowledge Base</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div style={{

@@ -14,7 +14,7 @@ import hashlib
 from typing import Dict, Any, List
 from collections import defaultdict
 from docx import Document
-from docx.shared import RGBColor
+from docx.shared import RGBColor, Pt, Inches
 import io
 
 # Import PDF processor
@@ -549,22 +549,38 @@ def redline_document(
         if redline_items:
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
+        if not redline_items:
+            return {
+                "success": False,
+                "error": "No conflicts found in analysis data for redlining"
+            }
+        
         # Route to appropriate processor based on file type
-        # For PDFs, ALWAYS generate output even with 0 conflicts (will use fallback annotations)
         if is_pdf and PDF_SUPPORT_ENABLED:
-            logger.info("PROCESSING_PDF: Using PDF annotation-based redlining")
-            return _redline_pdf_document(
-                agent_processing_bucket,
-                agent_document_key,
-                redline_items,
-                document_s3_key,
-                session_id,
-                user_id
-            )
-        else:
-            logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
-            # Continue with DOCX processing below
-            pass
+            logger.info("PROCESSING_PDF: Converting PDF to DOCX first, then processing as DOCX")
+            # Convert PDF to DOCX before processing
+            try:
+                converted_docx_key = _convert_pdf_to_docx_in_processing_bucket(
+                    agent_processing_bucket,
+                    agent_document_key
+                )
+                logger.info(f"PDF_TO_DOCX_COMPLETE: Converted PDF to DOCX: {converted_docx_key}")
+                # Update agent_document_key to use the converted DOCX
+                agent_document_key = converted_docx_key
+            except Exception as convert_error:
+                logger.error(f"PDF_TO_DOCX_FAILED: {str(convert_error)}, falling back to PDF annotation")
+                # Fallback to PDF annotation if conversion fails
+                return _redline_pdf_document(
+                    agent_processing_bucket,
+                    agent_document_key,
+                    redline_items,
+                    document_s3_key,
+                    session_id,
+                    user_id
+                )
+        
+        # DOCX Processing (either original DOCX or converted from PDF)
+        logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
         
         # DOCX Processing - Original code path
         # Step 2: Download and load the DOCX document
@@ -579,43 +595,22 @@ def redline_document(
         # Step 3: Parse conflicts and create redline items from analysis data
         redline_items = parse_conflicts_for_redlining(analysis_data)
         logger.info(f"REDLINE_PARSE: Found {len(redline_items)} conflicts to redline")
+        logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
-        # ALWAYS generate output even if no conflicts found (will add review note)
         if not redline_items:
-            logger.info("REDLINE_EMPTY: No conflicts found, but will still generate output document with review note")
-            # Add a placeholder to ensure document is still processed
-            # The document will be saved with metadata indicating review was completed
+
+            return {
+                "success": False,
+                "error": "No conflicts found in analysis data for redlining"
+            }
         
         # Step 4: Apply redlining with exact sentence matching
-        # If no conflicts, this will still process the document structure
         logger.info(f"REDLINE_APPLY: Starting redlining - {len(redline_items)} conflicts, {len(doc.paragraphs)} paragraphs")
         
-        if redline_items:
-            results = apply_exact_sentence_redlining(doc, redline_items)
-        else:
-            # Create empty results structure when no conflicts
-            results = {
-                'matches_found': 0,
-                'paragraphs_with_redlines': [],
-                'failed_matches': [],
-                'total_conflicts': 0
-            }
-            # Add a review note to the first paragraph to indicate document was reviewed
-            try:
-                if doc.paragraphs:
-                    para = doc.paragraphs[0]
-                    run = para.add_run("\n[Legal-AI Review Complete - No conflicts identified]")
-                    run.font.color.rgb = RGBColor(0, 128, 0)  # Green color
-                    run.font.italic = True
-                    logger.info("DOCX_REVIEW_NOTE: Added review note to first paragraph")
-            except Exception as note_err:
-                logger.warning(f"DOCX_REVIEW_NOTE_FAILED: {note_err}")
+        results = apply_exact_sentence_redlining(doc, redline_items)
         logger.info(f"REDLINE_RESULTS: Matches found: {results['matches_found']}")
         logger.info(f"REDLINE_RESULTS: Failed matches: {len(results.get('failed_matches', []))}")
-        if redline_items:
-            logger.info(f"REDLINE_RESULTS: Success rate: {(results['matches_found']/len(redline_items)*100):.1f}%")
-        else:
-            logger.info("REDLINE_RESULTS: No conflicts to match - document reviewed")
+        logger.info(f"REDLINE_RESULTS: Success rate: {(results['matches_found']/len(redline_items)*100):.1f}%")
 
         # Step 5: Save and upload redlined document
         redlined_s3_key = _create_redlined_filename(agent_document_key, session_id, user_id)
@@ -807,7 +802,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         # Enhanced logging: Document structure analysis
         logger.info(f"DOCUMENT_STRUCTURE: Total paragraphs: {total_paragraphs}")
         logger.info(f"DOCUMENT_STRUCTURE: Total tables: {total_tables}")
-        logger.info(f"DOCUMENT_STRUCTURE: Total pages estimated: {total_paragraphs // 15}")  # Rough estimate
+        logger.info(f"DOCUMENT_STRUCTURE: Total pages estimated: {total_paragraphs // 20}")  # Rough estimate
         logger.info(f"REDLINE_ITEMS: Processing {len(redline_items)} conflicts")
         
         # ENHANCEMENT 1: Generate additional conflict variations
@@ -877,7 +872,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 matches_found += 1
                 if para_idx not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(para_idx)
-                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 15}")
+                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
             else:
                 # Try table matching if paragraph matching failed
                 table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
@@ -938,7 +933,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 matches_found += 1
                 if para_idx not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(para_idx)
-                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 15}")
+                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
             else:
                 # Try semantic similarity matching before giving up
                 semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
@@ -958,7 +953,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     matches_found += 1
                     if para_idx not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(para_idx)
-                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 15}")
+                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
                 else:
                     # Try table matching if paragraph matching failed
                     table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
@@ -999,7 +994,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     matches_found += 1
                     if found_match['para_idx'] not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(found_match['para_idx'])
-                    logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 15}")
+                    logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
             else:
                 # Try table matching if paragraph matching failed in Tier 2
                 table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
@@ -1107,7 +1102,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         
         # Enhanced logging: Page distribution analysis
         if paragraphs_with_redlines:
-            pages_affected = set(para_idx // 15 for para_idx in paragraphs_with_redlines)
+            pages_affected = set(para_idx // 20 for para_idx in paragraphs_with_redlines)
             logger.info(f"PAGE_DISTRIBUTION: {len(pages_affected)} pages affected: {sorted(pages_affected)}")
             logger.info(f"PARAGRAPH_DISTRIBUTION: {len(paragraphs_with_redlines)} paragraphs redlined: {sorted(paragraphs_with_redlines)}")
         
@@ -1126,24 +1121,25 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 pages_with_redlines_set[page_num] = 0
             pages_with_redlines_set[page_num] += 1
         
-        # Ensure EVERY page has at least 2 redlines (not just pages with zero)
+        # Only add review notes to pages with ZERO conflict redlines (not pages with 1 redline)
+        # This reduces the number of review notes appearing in the document
         pages_needing_coverage = []
         for page_num in range(estimated_pages):
             redline_count = pages_with_redlines_set.get(page_num, 0)
-            if redline_count < 2:  # Minimum 2 redlines per page
+            if redline_count == 0:  # Only pages with ZERO redlines get review notes
                 pages_needing_coverage.append(page_num)
         
         if pages_needing_coverage:
-            logger.info(f"DOCX_PAGE_COVERAGE: {len(pages_needing_coverage)} pages need coverage (min 2 redlines per page): {pages_needing_coverage}")
-            _ensure_docx_page_coverage(doc, pages_needing_coverage, paragraphs_with_redlines, estimated_pages)
-            logger.info(f"DOCX_PAGE_COVERAGE: Added fallback redlining to {len(pages_needing_coverage)} pages")
+            logger.info(f"DOCX_PAGE_COVERAGE: {len(pages_needing_coverage)} pages have zero redlines, adding single review note: {pages_needing_coverage}")
+            _ensure_docx_page_coverage(doc, pages_needing_coverage, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=1)
+            logger.info(f"DOCX_PAGE_COVERAGE: Added review notes to {len(pages_needing_coverage)} pages with zero conflicts")
         
-        # ALWAYS ensure every estimated page gets coverage (final guarantee)
-        all_pages = list(range(estimated_pages))
-        if all_pages:
-            logger.info(f"DOCX_PAGE_COVERAGE_FINAL: Ensuring all {len(all_pages)} estimated pages have minimum coverage")
-            _ensure_docx_page_coverage(doc, all_pages, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=2)
-        
+        # DISABLED: User requested to remove excessive review notes
+        # Only add review notes to pages with ZERO conflict redlines, not all pages
+        # all_pages = list(range(estimated_pages))
+        # if all_pages:
+        #     logger.info(f"DOCX_PAGE_COVERAGE_FINAL: Ensuring all {len(all_pages)} estimated pages have minimum coverage")
+        #     _ensure_docx_page_coverage(doc, all_pages, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=2)
         # Log final summary
         if failed_matches:
             logger.warning(f"REDLINING_FAILED: {len(failed_matches)} conflicts could not be matched")
@@ -1163,7 +1159,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             "paragraphs_with_redlines": paragraphs_with_redlines,
             "tables_with_redlines": tables_with_redlines,
             "failed_matches": failed_matches,
-            "pages_affected": len(set(para_idx // 15 for para_idx in paragraphs_with_redlines)) if paragraphs_with_redlines else 0
+            "pages_affected": len(set(para_idx // 20 for para_idx in paragraphs_with_redlines)) if paragraphs_with_redlines else 0
         }
         
     except Exception as e:
@@ -1231,7 +1227,8 @@ def _ensure_docx_page_coverage(doc, pages_needing_coverage: List[int], existing_
             # Skip keyword redlining - only add review notes if page has no conflict redlines
             # (User requested: no single-word redlining, only full conflict paragraphs)
             
-            # Add review notes to suitable paragraphs if page has no conflict redlines
+            # Add ONLY ONE review note per page if page has no conflict redlines
+            # This prevents excessive review notes from appearing throughout the document
             if redlines_added_this_page < min_redlines_per_page:
                 for para_idx in search_range:
                     if redlines_added_this_page >= min_redlines_per_page:
@@ -1243,12 +1240,14 @@ def _ensure_docx_page_coverage(doc, pages_needing_coverage: List[int], existing_
                     para = doc.paragraphs[para_idx]
                     if para.text.strip() and len(para.text.strip()) > 5:
                         try:
+                            # Only add ONE review note per page (not multiple)
                             run = para.add_run(" [Legal-AI: Page reviewed for compliance]")
                             run.font.color.rgb = RGBColor(128, 128, 128)
                             run.font.italic = True
                             existing_redlined_paras.append(para_idx)
                             redlines_added_this_page += 1
-                            logger.info(f"DOCX_PAGE_COVERAGE: Added review note to para {para_idx} (page {page_num + 1})")
+                            logger.info(f"DOCX_PAGE_COVERAGE: Added single review note to para {para_idx} (page {page_num + 1})")
+                            break  # Only add ONE note per page, then stop
                         except Exception as note_err:
                             logger.debug(f"DOCX_PAGE_COVERAGE: Note failed for para {para_idx}: {note_err}")
                             continue
@@ -1287,7 +1286,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         return meaningful_words
     
     def find_word_sequence_match(search_words, para_words, min_match_ratio=0.5):
-        """Find if a significant portion of search words appear in sequence in paragraph. Lowered to 0.5 for better recall on later chunks."""
+        """Find if a significant portion of search words appear in sequence in paragraph."""
         if len(search_words) < 3:
             return False
         
@@ -1328,7 +1327,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         
         # Check if ultra-normalized search text is in ultra-normalized paragraph
         if ultra_normalized_search in ultra_normalized_para:
-            logger.info(f"TIER0_MATCH: Found ultra-normalized match in paragraph {para_idx}, page≈{para_idx // 15}")
+            logger.info(f"TIER0_MATCH: Found ultra-normalized match in paragraph {para_idx}, page≈{para_idx // 20}")
             _apply_redline_to_paragraph(paragraph, para_text, redline_item)
             all_matches.append({'para_idx': para_idx, 'matched_text': 'ultra_normalized_match'})
             matched = True
@@ -1342,7 +1341,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
                 
                 # Check if search text matches this sentence
                 if ultra_normalized_search in ultra_normalized_sentence:
-                    logger.info(f"TIER0_SENTENCE_MATCH: Found sentence-level match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 15}")
+                    logger.info(f"TIER0_SENTENCE_MATCH: Found sentence-level match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
                     _apply_redline_to_paragraph(paragraph, sentence, redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'sentence_match'})
                     matched = True
@@ -1350,7 +1349,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
                 
                 # Try word sequence matching within sentences
                 if len(search_words) >= 3 and find_word_sequence_match(search_words, sentence_words):
-                    logger.info(f"TIER0_SENTENCE_WORDS: Found sentence word sequence match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 15}")
+                    logger.info(f"TIER0_SENTENCE_WORDS: Found sentence word sequence match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
                     _apply_redline_to_paragraph(paragraph, sentence, redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'sentence_word_sequence'})
                     matched = True
@@ -1358,16 +1357,16 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         
         # Try word sequence matching at paragraph level
         if not matched and len(search_words) >= 3 and find_word_sequence_match(search_words, para_words):
-            logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}, page≈{para_idx // 15}")
+            logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}, page≈{para_idx // 20}")
             _apply_redline_to_paragraph(paragraph, para_text, redline_item)
             all_matches.append({'para_idx': para_idx, 'matched_text': 'word_sequence_match'})
             matched = True
         
-        # Try partial word matching (lowered threshold to 40% for more matches, especially for later chunks)
+        # Try partial word matching (lowered threshold to 40% for more matches)
         if not matched and len(search_words) >= 3:
             word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
             if word_matches / len(search_words) >= 0.4:
-                logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}, page≈{para_idx // 15}")
+                logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}, page≈{para_idx // 20}")
                 _apply_redline_to_paragraph(paragraph, para_text, redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'word_partial_match'})
                 matched = True
@@ -1375,7 +1374,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
     # Return first match for compatibility, but log ALL matches found across document
     if all_matches:
         unique_paras = len(set(m['para_idx'] for m in all_matches))
-        pages_affected = sorted(set(m['para_idx'] // 15 for m in all_matches))
+        pages_affected = sorted(set(m['para_idx'] // 20 for m in all_matches))
         logger.info(f"TIER0_COMPLETE: Found {len(all_matches)} total occurrences across {unique_paras} unique paragraphs on pages {pages_affected}")
         return all_matches[0]  # Return first match for backward compatibility
     
@@ -1484,10 +1483,10 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                     all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_sequence_match'})
                     matched = True
                 
-                # Try partial word matching (lowered threshold to 40% for more matches)
+                # Try partial word matching (lowered threshold to 35% for more matches)
                 if not matched and len(search_words) >= 3:
                     word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_cell)
-                    if word_matches / len(search_words) >= 0.4:
+                    if word_matches / len(search_words) >= 0.35:
                         logger.info(f"TIER0_TABLE_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in table {table_idx}, cell ({row_idx},{cell_idx})")
                         _apply_redline_to_table_cell(cell, cell_text, redline_item)
                         all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_partial_match'})
@@ -1637,7 +1636,7 @@ def _tier1_5_semantic_matching(doc, vendor_conflict_text: str, redline_item: Dic
         # Calculate similarity
         similarity = calculate_concept_similarity(conflict_concepts, para_concepts)
         
-        if similarity > best_similarity and similarity > 0.3:  # Threshold for semantic match
+        if similarity > best_similarity and similarity > 0.2:  # Lowered threshold for more aggressive semantic matching
             best_similarity = similarity
             best_match = {
                 'para_idx': para_idx,
@@ -1711,7 +1710,7 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                 
             # Try exact substring match (most reliable with exact vendor quotes)
             if text_variant in para_text:
-                logger.info(f"TIER1_MATCH: Found exact match (variation {i}) in paragraph {para_idx}, page≈{para_idx // 15}")
+                logger.info(f"TIER1_MATCH: Found exact match (variation {i}) in paragraph {para_idx}, page≈{para_idx // 20}")
                 _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': text_variant})
                 matched = True
@@ -1719,7 +1718,7 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             
             # Try case-insensitive match as fallback
             elif text_variant.lower() in para_text.lower():
-                logger.info(f"TIER1_CASE_MATCH: Found case-insensitive match (variation {i}) in paragraph {para_idx}, page≈{para_idx // 15}")
+                logger.info(f"TIER1_CASE_MATCH: Found case-insensitive match (variation {i}) in paragraph {para_idx}, page≈{para_idx // 20}")
                 # Find the actual text with correct case in the document
                 start_idx = para_text.lower().find(text_variant.lower())
                 actual_text = para_text[start_idx:start_idx + len(text_variant)]
@@ -1732,14 +1731,14 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             sentences = extract_sentences_from_paragraph(para_text)
             for sentence_idx, sentence in enumerate(sentences):
                 if text_variant in sentence:
-                    logger.info(f"TIER1_SENTENCE_MATCH: Found sentence-level exact match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 15}")
+                    logger.info(f"TIER1_SENTENCE_MATCH: Found sentence-level exact match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
                     _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': text_variant})
                     matched = True
                     break
                 
                 elif text_variant.lower() in sentence.lower():
-                    logger.info(f"TIER1_SENTENCE_CASE_MATCH: Found sentence-level case-insensitive match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 15}")
+                    logger.info(f"TIER1_SENTENCE_CASE_MATCH: Found sentence-level case-insensitive match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
                     start_idx = sentence.lower().find(text_variant.lower())
                     actual_text = sentence[start_idx:start_idx + len(text_variant)]
                     _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
@@ -1753,7 +1752,7 @@ def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
     # Return first match for compatibility, but log all matches found
     if all_matches:
         unique_paras = len(set(m['para_idx'] for m in all_matches))
-        pages_affected = sorted(set(m['para_idx'] // 15 for m in all_matches))
+        pages_affected = sorted(set(m['para_idx'] // 20 for m in all_matches))
         logger.info(f"TIER1_COMPLETE: Found {len(all_matches)} total occurrences across {unique_paras} unique paragraphs on pages {pages_affected}")
         return all_matches[0]  # Return first match for backward compatibility
     
@@ -1815,27 +1814,27 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
         
         # Check if normalized search text is in normalized paragraph
         if normalized_search in normalized_para:
-            logger.info(f"TIER2_MATCH: Found exact normalized match in paragraph {para_idx}, page≈{para_idx // 15}")
+            logger.info(f"TIER2_MATCH: Found exact normalized match in paragraph {para_idx}, page≈{para_idx // 20}")
             _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
             all_matches.append({'para_idx': para_idx, 'matched_text': 'normalized_match'})
             matched = True
         
-        # Try similarity matching with lowered threshold
+        # Try similarity matching with lowered threshold (more aggressive)
         if not matched and len(normalized_search) > 30:
             similarity = similarity_ratio(normalized_search, normalized_para)
-            if similarity > 0.75:
-                logger.info(f"TIER2_SIMILARITY: Found similarity match (ratio: {similarity:.3f}) in paragraph {para_idx}, page≈{para_idx // 15}")
+            if similarity > 0.65:
+                logger.info(f"TIER2_SIMILARITY: Found similarity match (ratio: {similarity:.3f}) in paragraph {para_idx}, page≈{para_idx // 20}")
                 _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'similarity_match'})
                 matched = True
         
-        # Try partial phrase matching for longer texts
-        if not matched and len(normalized_search) > 100:
+        # Try partial phrase matching for longer texts (more aggressive)
+        if not matched and len(normalized_search) > 80:
             key_phrases = extract_key_phrases(normalized_search)
             for phrase in key_phrases:
                 normalized_phrase = enhanced_normalize_text(phrase)
-                if normalized_phrase in normalized_para and len(normalized_phrase) > 20:
-                    logger.info(f"TIER2_PHRASE: Found phrase match '{phrase[:50]}...' in paragraph {para_idx}, page≈{para_idx // 15}")
+                if normalized_phrase in normalized_para and len(normalized_phrase) > 15:
+                    logger.info(f"TIER2_PHRASE: Found phrase match '{phrase[:50]}...' in paragraph {para_idx}, page≈{para_idx // 20}")
                     _apply_redline_to_paragraph(paragraph, phrase[:100], redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'phrase_match'})
                     matched = True
@@ -1844,7 +1843,7 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
     # Return first match for compatibility, but log all matches found
     if all_matches:
         unique_paras = len(set(m['para_idx'] for m in all_matches))
-        pages_affected = sorted(set(m['para_idx'] // 15 for m in all_matches))
+        pages_affected = sorted(set(m['para_idx'] // 20 for m in all_matches))
         logger.info(f"TIER2_COMPLETE: Found {len(all_matches)} total occurrences across {unique_paras} unique paragraphs on pages {pages_affected}")
         return all_matches[0]  # Return first match for backward compatibility
     
@@ -1902,8 +1901,8 @@ def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item:
         
         return key_phrases
     
-    # Only try partial matching for longer conflict texts
-    if len(vendor_conflict_text) < 80:
+    # Only try partial matching for longer conflict texts (lowered threshold)
+    if len(vendor_conflict_text) < 60:
         return None
     
     key_phrases = extract_key_phrases(vendor_conflict_text)
@@ -1913,9 +1912,9 @@ def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item:
         if not para_text or len(para_text) < 30:
             continue
         
-        # Check if any key phrase matches
+        # Check if any key phrase matches (more aggressive - lowered length threshold)
         for phrase in key_phrases:
-            if len(phrase) > 20 and phrase.lower() in para_text.lower():
+            if len(phrase) > 15 and phrase.lower() in para_text.lower():
 
                 # Apply redlining to the found phrase instead of full text
                 start_idx = para_text.lower().find(phrase.lower())
@@ -2206,9 +2205,6 @@ def _download_and_load_document(bucket: str, s3_key: str):
         raise Exception(f"Failed to download and load document: {str(e)}")
 
 
-# (Reverted) PDF->DOCX conversion helpers removed to restore original PDF flow
-
-
 def _create_redlined_filename(original_s3_key: str, session_id: str = None, user_id: str = None) -> str:
     """
     Create a filename for the redlined document.
@@ -2248,6 +2244,245 @@ def _create_redlined_filename(original_s3_key: str, session_id: str = None, user
     return redlined_s3_key
 
 
+def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str) -> str:
+    """
+    Convert a PDF stored in the processing bucket into a DOCX file with formatting preservation.
+    Uses PyMuPDF + python-docx for conversion with enhanced formatting preservation.
+    
+    This is the RESTORED PyMuPDF implementation (reverted from Google Document AI).
+    Google Document AI code is saved in tools_pymupdf_conversion_backup.py for future reference.
+    
+    Args:
+        agent_bucket: S3 bucket name where PDF is stored
+        pdf_s3_key: S3 key of the PDF file
+        
+    Returns:
+        S3 key of the converted DOCX file
+    """
+    try:
+        logger.info(f"PDF_TO_DOCX_START: Converting {pdf_s3_key} to DOCX with formatting preservation")
+        
+        # Download PDF from S3
+        response = s3_client.get_object(Bucket=agent_bucket, Key=pdf_s3_key)
+        pdf_bytes = response['Body'].read()
+        logger.info(f"PDF_TO_DOCX: Downloaded PDF, size: {len(pdf_bytes)} bytes")
+        
+        # Use PyMuPDF + python-docx for conversion (enhanced with formatting preservation)
+        logger.info("PDF_TO_DOCX: Using PyMuPDF + python-docx with enhanced formatting preservation")
+        try:
+            import fitz  # PyMuPDF
+            
+            docx_doc = Document()
+            pdf_file = io.BytesIO(pdf_bytes)
+            pdf = fitz.open(stream=pdf_file, filetype="pdf")
+            
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
+                try:
+                    # Extract images from page first
+                    try:
+                        image_list = page.get_images()
+                        if image_list:
+                            logger.info(f"PDF_TO_DOCX: Found {len(image_list)} images on page {page_index + 1}")
+                            for img_idx, img in enumerate(image_list):
+                                try:
+                                    xref = img[0]
+                                    base_image = pdf.extract_image(xref)
+                                    image_bytes = base_image["image"]
+                                    
+                                    if image_bytes:
+                                        img_stream = io.BytesIO(image_bytes)
+                                        para_img = docx_doc.add_paragraph()
+                                        run_img = para_img.add_run()
+                                        run_img.add_picture(img_stream, width=Inches(6))
+                                        logger.info(f"PDF_TO_DOCX: Added image {img_idx + 1} to page {page_index + 1}")
+                                except Exception as img_error:
+                                    logger.warning(f"PDF_TO_DOCX: Error extracting image {img_idx + 1}: {img_error}")
+                                    continue
+                    except Exception as img_extract_error:
+                        logger.debug(f"PDF_TO_DOCX: Image extraction error: {img_extract_error}")
+                    
+                    # Try to extract tables first (no page markers to preserve exact PDF structure)
+                    try:
+                        tables = page.find_tables()
+                        if tables:
+                            logger.info(f"PDF_TO_DOCX: Found {len(tables)} tables on page {page_index + 1}")
+                            for table_idx, table in enumerate(tables):
+                                try:
+                                    table_data = table.extract()
+                                    if table_data and len(table_data) > 0:
+                                        docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
+                                        docx_table.style = 'Light Grid Accent 1'
+                                        
+                                        for row_idx, row_data in enumerate(table_data):
+                                            if row_idx < len(docx_table.rows):
+                                                for col_idx, cell_data in enumerate(row_data):
+                                                    if col_idx < len(docx_table.rows[row_idx].cells):
+                                                        cell = docx_table.rows[row_idx].cells[col_idx]
+                                                        cell.text = str(cell_data) if cell_data else ""
+                                        logger.info(f"PDF_TO_DOCX: Added table {table_idx + 1} with {len(table_data)} rows")
+                                except Exception as table_error:
+                                    logger.warning(f"PDF_TO_DOCX: Error extracting table {table_idx + 1}: {table_error}")
+                                    continue
+                    except (AttributeError, Exception) as table_extract_error:
+                        logger.debug(f"PDF_TO_DOCX: Table extraction not available: {table_extract_error}")
+                    
+                    # Extract text blocks with EXACT line-by-line preservation
+                    # This ensures line breaks, alignment, and sentence boundaries match PDF exactly
+                    text_dict = page.get_text("dict")
+                    
+                    for block in text_dict.get("blocks", []):
+                        if "lines" in block:
+                            # Process each line separately to preserve exact line breaks
+                            for line_idx, line in enumerate(block["lines"]):
+                                # Collect text from this line only (preserve line boundaries)
+                                line_text = ""
+                                spans_data = []
+                                
+                                for span in line.get("spans", []):
+                                    # Preserve exact text including spaces (don't strip)
+                                    text = span.get("text", "")
+                                    if text:
+                                        flags = span.get("flags", 0)
+                                        font_size = span.get("size", 11)
+                                        font_color = span.get("color", 0)
+                                        font_name = span.get("font", "")
+                                        
+                                        line_text += text  # Preserve exact text with spaces
+                                        spans_data.append({
+                                            'text': text,
+                                            'bold': bool(flags & 16),
+                                            'italic': bool(flags & 2),
+                                            'size': font_size,
+                                            'color': font_color,
+                                            'font': font_name
+                                        })
+                                
+                                # Skip empty lines
+                                if not line_text.strip():
+                                    continue
+                                
+                                # Detect numbered list patterns on this line
+                                line_text_stripped = line_text.strip()
+                                is_numbered_list = False
+                                list_style = None
+                                
+                                if re.match(r'^\d+[a-z]\b', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Number 2'
+                                elif re.match(r'^[\d]+[\.\)]', line_text_stripped):
+                                    is_numbered_list = True
+                                    list_style = 'List Number'
+                                elif re.match(r'^[a-z][\.\)]', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Bullet 2'
+                                elif re.match(r'^\([a-z0-9]+\)', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Bullet 2'
+                                elif re.search(r'\b\d+[a-z]\b', line_text_stripped, re.IGNORECASE) and len(line_text_stripped) < 100:
+                                    is_numbered_list = True
+                                    list_style = 'List Number 2'
+                                
+                                # Create ONE paragraph per line to preserve exact line breaks
+                                if is_numbered_list:
+                                    para = docx_doc.add_paragraph(style=list_style)
+                                else:
+                                    para = docx_doc.add_paragraph()
+                                
+                                # Add each span with preserved formatting and exact spacing
+                                for span_idx, span_data in enumerate(spans_data):
+                                    run = para.add_run(span_data['text'])  # Preserve exact text including spaces
+                                    
+                                    if span_data['bold']:
+                                        run.font.bold = True
+                                    if span_data['italic']:
+                                        run.font.italic = True
+                                    
+                                    try:
+                                        if span_data['size'] > 0:
+                                            run.font.size = Pt(span_data['size'])
+                                    except:
+                                        pass
+                                    
+                                    try:
+                                        color_int = span_data['color']
+                                        r = (color_int >> 16) & 0xFF
+                                        g = (color_int >> 8) & 0xFF
+                                        b = color_int & 0xFF
+                                        if not (r == 0 and g == 0 and b == 0):
+                                            run.font.color.rgb = RGBColor(r, g, b)
+                                    except:
+                                        pass
+                                    
+                                    try:
+                                        if span_data['font']:
+                                            font_map = {
+                                                'Arial': 'Arial',
+                                                'ArialMT': 'Arial',
+                                                'Arial-BoldMT': 'Arial',
+                                                'Arial-ItalicMT': 'Arial',
+                                                'Helvetica': 'Arial',
+                                                'Helvetica-Bold': 'Arial',
+                                                'Helvetica-Oblique': 'Arial',
+                                                'Times-Roman': 'Times New Roman',
+                                                'TimesNewRomanPSMT': 'Times New Roman',
+                                                'TimesNewRomanPS-BoldMT': 'Times New Roman',
+                                                'TimesNewRomanPS-ItalicMT': 'Times New Roman',
+                                                'Courier': 'Courier New',
+                                                'CourierNew': 'Courier New',
+                                                'CourierNewPSMT': 'Courier New',
+                                                'Calibri': 'Calibri',
+                                                'Calibri-Bold': 'Calibri',
+                                                'Calibri-Italic': 'Calibri',
+                                            }
+                                            if span_data['font'] not in ['Times-Roman']:
+                                                font_name = font_map.get(span_data['font'], span_data['font'])
+                                                try:
+                                                    run.font.name = font_name
+                                                except Exception as font_err:
+                                                    logger.debug(f"PDF_TO_DOCX: Could not set font {font_name}: {font_err}")
+                                                    pass
+                                    except Exception as font_error:
+                                        logger.debug(f"PDF_TO_DOCX: Font processing error: {font_error}")
+                                        pass
+                                
+                                # Each line becomes a separate paragraph - preserves exact line breaks
+                                # No need to add spaces between spans since we preserve exact text
+                except Exception as page_error:
+                    logger.warning(f"PDF_TO_DOCX: Error processing page {page_index + 1}: {page_error}")
+                    continue
+            
+            pdf.close()
+            
+            # Save DOCX to memory
+            docx_bytes_io = io.BytesIO()
+            docx_doc.save(docx_bytes_io)
+            docx_bytes_io.seek(0)
+            docx_bytes = docx_bytes_io.read()
+            
+            # Upload DOCX to S3
+            new_key = pdf_s3_key.rsplit('.', 1)[0] + '.docx'
+            s3_client.put_object(
+                Bucket=agent_bucket,
+                Key=new_key,
+                Body=docx_bytes,
+                ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            )
+            
+            logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key} (enhanced formatting: fonts, sizes, colors, styles, images, lists preserved)")
+            return new_key
+                
+        except Exception as fallback_error:
+            logger.error(f"PDF_TO_DOCX_FALLBACK_FAILED: {str(fallback_error)}")
+            raise Exception(f"PDF to DOCX conversion failed: {str(fallback_error)}")
+            
+    except Exception as e:
+        logger.error(f"PDF_TO_DOCX_ERROR: Failed to convert PDF to DOCX: {str(e)}")
+        raise Exception(f"Failed to convert PDF to DOCX: {str(e)}")
+
+
+
+
 def save_analysis_to_dynamodb(
     analysis_id: str,
     document_s3_key: str,
@@ -2257,7 +2492,8 @@ def save_analysis_to_dynamodb(
     thinking: str = "",
     citations: List[Dict[str, Any]] = None,
     session_id: str = None,
-    user_id: str = None
+    user_id: str = None,
+    redlined_result: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """
     Save analysis results to DynamoDB table including parsed conflicts.
@@ -2309,15 +2545,33 @@ def save_analysis_to_dynamodb(
             'analysis_id': analysis_id,
             'timestamp': timestamp,
             'document_s3_key': document_s3_key,
+            'bucket_type': bucket_type,
             'conflicts_count': len(conflicts),
             'conflicts': conflicts
         }
+
+        if analysis_data:
+            item['analysis_data'] = analysis_data
+
+        if usage_data:
+            item['usage'] = usage_data
+
+        if thinking:
+            item['thinking'] = thinking
+
+        if citations:
+            item['citations'] = citations
         
         # Add session and user linking if provided
         if session_id:
             item['session_id'] = session_id
         if user_id:
             item['user_id'] = user_id
+
+        if redlined_result:
+            redlined_key = redlined_result.get('redlined_document')
+            if redlined_key:
+                item['redlined_document_s3_key'] = redlined_key
         
         # Save to DynamoDB
         table.put_item(Item=item)

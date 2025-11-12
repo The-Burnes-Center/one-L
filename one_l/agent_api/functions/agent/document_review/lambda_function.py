@@ -251,7 +251,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     bucket_type=bucket_type,
                     usage_data=review_result.get('usage', {}),
                     thinking=review_result.get('thinking', ''),
-                    citations=review_result.get('citations', [])
+                    citations=review_result.get('citations', []),
+                    session_id=session_id,
+                    user_id=user_id,
+                    redlined_result=redlined_result
                 )
                 
 
@@ -360,7 +363,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 bucket_type=bucket_type,
                 usage_data=review_result.get('usage', {}),
                 thinking=review_result.get('thinking', ''),
-                citations=review_result.get('citations', [])
+                citations=review_result.get('citations', []),
+                session_id=session_id,
+                user_id=user_id,
+                redlined_result=redlined_result
             )
             
             # Include save status in response
