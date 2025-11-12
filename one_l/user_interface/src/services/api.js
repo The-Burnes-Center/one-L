@@ -214,9 +214,21 @@ const knowledgeManagementAPI = {
    * Retrieve file metadata from S3
    */
   retrieveFile: async (s3Key, bucketType = 'user_documents', returnContent = false) => {
+    // Validate s3Key before proceeding
+    if (!s3Key || typeof s3Key !== 'string' || s3Key.trim() === '') {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          success: false,
+          error: 's3_key is required and must be a non-empty string',
+          status_code: 400
+        })
+      };
+    }
+    
     const payload = {
       bucket_type: bucketType,
-      s3_key: s3Key,
+      s3_key: s3Key.trim(),
       return_content: returnContent
     };
     
@@ -353,6 +365,15 @@ const agentAPI = {
    * Download a file from S3 using a presigned URL
    */
   downloadFile: async (s3Key, bucketType = 'agent_processing', originalFilename = null) => {
+    // Validate s3Key before proceeding
+    if (!s3Key || typeof s3Key !== 'string' || s3Key.trim() === '') {
+      return {
+        success: false,
+        error: 'Invalid s3_key: s3_key is required and must be a non-empty string',
+        message: 'Download failed: Invalid file reference'
+      };
+    }
+    
     try {
       // Helper function to get file extension from content type
       const getExtensionFromContentType = (contentType) => {

@@ -573,13 +573,15 @@ const SessionWorkspace = ({ session }) => {
         // Convert sessionResults to redlinedDocuments format for display
         // This allows existing sessions to show their redline documents
         const redlinedDocsFromResults = responseData.results
-          .filter(result => result.redlined_document_s3_key)
+          .filter(result => result.redlined_document_s3_key && 
+                           typeof result.redlined_document_s3_key === 'string' && 
+                           result.redlined_document_s3_key.trim() !== '')
           .map(result => ({
             originalFile: {
-              filename: result.document_name,
-              s3_key: result.document_s3_key
+              filename: result.document_name || 'Unknown Document',
+              s3_key: result.document_s3_key || ''
             },
-            redlinedDocument: result.redlined_document_s3_key,
+            redlinedDocument: result.redlined_document_s3_key.trim(),
             analysis: result.analysis_id,
             success: true,
             processing: false,
@@ -1604,7 +1606,10 @@ const SessionWorkspace = ({ session }) => {
   };
 
   const handleDownloadRedlined = async (redlineResult) => {
-    if (!redlineResult.redlinedDocument) {
+    // Validate redlinedDocument exists and is a valid string
+    if (!redlineResult.redlinedDocument || 
+        typeof redlineResult.redlinedDocument !== 'string' || 
+        redlineResult.redlinedDocument.trim() === '') {
       setWorkflowMessage('No redlined document available for download.');
       setWorkflowMessageType('error');
       return;
@@ -1612,12 +1617,12 @@ const SessionWorkspace = ({ session }) => {
     
     try {
       // Extract original file extension to preserve it
-      const originalFilename = redlineResult.originalFile.filename;
+      const originalFilename = redlineResult.originalFile?.filename || 'document';
       const filenameWithoutExt = originalFilename.replace(/\.[^/.]+$/, '');
-      const fileExtension = originalFilename.split('.').pop();
+      const fileExtension = originalFilename.split('.').pop() || 'docx';
       
       const downloadResult = await agentAPI.downloadFile(
-        redlineResult.redlinedDocument, 
+        redlineResult.redlinedDocument.trim(), 
         'agent_processing',
         `${filenameWithoutExt}_REDLINED.${fileExtension}`
       );
