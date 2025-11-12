@@ -226,17 +226,15 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         
         table = dynamodb.Table(SESSIONS_TABLE)
         
-        # Update the session
+        # Update the session - table has composite key (session_id + user_id)
         response = table.update_item(
-            Key={'session_id': session_id},
+            Key={'session_id': session_id, 'user_id': user_id},
             UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
             ExpressionAttributeValues={
                 ':title': title,
                 ':updated_at': datetime.now(timezone.utc).isoformat(),
-                ':last_activity': datetime.now(timezone.utc).isoformat(),
-                ':user_id': user_id
+                ':last_activity': datetime.now(timezone.utc).isoformat()
             },
-            ConditionExpression='user_id = :user_id',
             ReturnValues='ALL_NEW'
         )
         
@@ -275,58 +273,35 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
     try:
         table = dynamodb.Table(SESSIONS_TABLE)
         
-        # First, check if session exists and belongs to user
-        try:
-            existing_session = table.get_item(Key={'session_id': session_id})
-            if 'Item' not in existing_session:
-                logger.warning(f"Session {session_id} does not exist, cannot mark as having results")
-                return {
-                    'success': False,
-                    'error': 'Session not found'
-                }
-            
-            if existing_session['Item'].get('user_id') != user_id:
-                logger.warning(f"Session {session_id} does not belong to user {user_id}")
-                return {
-                    'success': False,
-                    'error': 'Session access denied'
-                }
-        except Exception as check_error:
-            logger.error(f"Error checking session existence: {check_error}")
-            # Continue anyway - let the update_item handle it
-        
         # Update session to mark it has results
+        # Table has composite key (session_id + user_id), so both must be in Key
         # Use ADD for document_count (works even if attribute doesn't exist) and SET for other fields
         try:
             response = table.update_item(
-                Key={'session_id': session_id},
+                Key={'session_id': session_id, 'user_id': user_id},
                 UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity ADD document_count :inc',
                 ExpressionAttributeValues={
                     ':has_results': True,
                     ':updated_at': datetime.now(timezone.utc).isoformat(),
                     ':last_activity': datetime.now(timezone.utc).isoformat(),
-                    ':inc': 1,
-                    ':user_id': user_id
+                    ':inc': 1
                 },
-                ConditionExpression='user_id = :user_id',
                 ReturnValues='ALL_NEW'
             )
         except Exception as update_error:
             error_type = type(update_error).__name__
-            # If the conditional check fails or document_count causes issues, try without the increment
-            if 'ConditionalCheckFailedException' in error_type or 'document_count' in str(update_error):
+            # If document_count causes issues, try without the increment
+            if 'document_count' in str(update_error) or 'ResourceNotFoundException' in error_type:
                 logger.warning(f"Update failed for session {session_id}, trying without document_count increment: {update_error}")
                 try:
                     response = table.update_item(
-                        Key={'session_id': session_id},
+                        Key={'session_id': session_id, 'user_id': user_id},
                         UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity',
                         ExpressionAttributeValues={
                             ':has_results': True,
                             ':updated_at': datetime.now(timezone.utc).isoformat(),
-                            ':last_activity': datetime.now(timezone.utc).isoformat(),
-                            ':user_id': user_id
+                            ':last_activity': datetime.now(timezone.utc).isoformat()
                         },
-                        ConditionExpression='user_id = :user_id',
                         ReturnValues='ALL_NEW'
                     )
                 except Exception as retry_error:
@@ -372,10 +347,11 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
         table = dynamodb.Table(SESSIONS_TABLE)
         
         try:
-            response = table.get_item(Key={'session_id': session_id})
+            # Table has composite key (session_id + user_id), so both must be in Key
+            response = table.get_item(Key={'session_id': session_id, 'user_id': user_id})
             session = response.get('Item')
             
-            if not session or session.get('user_id') != user_id:
+            if not session:
                 return {
                     'success': False,
                     'error': 'Session not found or access denied'
@@ -400,11 +376,9 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"Error deleting S3 objects: {e}")
             
-            # Delete from DynamoDB
+            # Delete from DynamoDB - table has composite key (session_id + user_id)
             table.delete_item(
-                Key={'session_id': session_id},
-                ConditionExpression='user_id = :user_id',
-                ExpressionAttributeValues={':user_id': user_id}
+                Key={'session_id': session_id, 'user_id': user_id}
             )
             
             logger.info(f"Deleted session: {session_id}")
