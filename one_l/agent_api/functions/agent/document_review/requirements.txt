@@ -2,8 +2,5 @@ boto3>=1.34.0
 bayoo-docx
 anthropic>=0.34.0
 PyMuPDF>=1.24.0
-# Google Document AI for better PDF to DOCX conversion (optional - falls back to PyMuPDF if not configured)
-google-cloud-documentai>=2.20.0
-google-auth>=2.23.0
 # pdf2docx removed - too large for Lambda (250MB limit)
-# Using Google Document AI (primary) with PyMuPDF fallback for PDF to DOCX conversion
+# Using PyMuPDF for PDF to DOCX conversion (reverted from Google Document AI)

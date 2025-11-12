@@ -2247,11 +2247,10 @@ def _create_redlined_filename(original_s3_key: str, session_id: str = None, user
 def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str) -> str:
     """
     Convert a PDF stored in the processing bucket into a DOCX file with formatting preservation.
+    Uses PyMuPDF + python-docx for conversion with enhanced formatting preservation.
     
-    CURRENT IMPLEMENTATION: Google Document AI (better quality conversion)
-    BACKUP IMPLEMENTATION: PyMuPDF + python-docx (saved in tools_pymupdf_conversion_backup.py)
-    
-    To revert to PyMuPDF: Copy function from tools_pymupdf_conversion_backup.py and replace this function.
+    This is the RESTORED PyMuPDF implementation (reverted from Google Document AI).
+    Google Document AI code is saved in tools_pymupdf_conversion_backup.py for future reference.
     
     Args:
         agent_bucket: S3 bucket name where PDF is stored
@@ -2261,216 +2260,199 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
         S3 key of the converted DOCX file
     """
     try:
-        logger.info(f"PDF_TO_DOCX_START: Converting {pdf_s3_key} to DOCX using Google Document AI")
+        logger.info(f"PDF_TO_DOCX_START: Converting {pdf_s3_key} to DOCX with formatting preservation")
         
         # Download PDF from S3
         response = s3_client.get_object(Bucket=agent_bucket, Key=pdf_s3_key)
         pdf_bytes = response['Body'].read()
         logger.info(f"PDF_TO_DOCX: Downloaded PDF, size: {len(pdf_bytes)} bytes")
         
-        # ====================================================================
-        # BACKUP: PyMuPDF-based conversion (COMMENTED OUT - can revert if needed)
-        # Full backup code saved in: tools_pymupdf_conversion_backup.py
-        # To restore: Uncomment this section and comment out the Google Document AI section below
-        # ====================================================================
-        # try:
-        #     import fitz  # PyMuPDF
-        #     docx_doc = Document()
-        #     pdf_file = io.BytesIO(pdf_bytes)
-        #     pdf = fitz.open(stream=pdf_file, filetype="pdf")
-        #     # ... (full PyMuPDF implementation - see tools_pymupdf_conversion_backup.py for complete code)
-        #     # logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key} (enhanced formatting: fonts, sizes, colors, styles, images, lists preserved)")
-        #     # return new_key
-        # except Exception as fallback_error:
-        #     logger.error(f"PDF_TO_DOCX_FALLBACK_FAILED: {str(fallback_error)}")
-        #     raise Exception(f"PDF to DOCX conversion failed: {str(fallback_error)}")
-        # ====================================================================
-        # END OF BACKUP CODE
-        # ====================================================================
-        
-        # NEW IMPLEMENTATION: Google Document AI for better conversion quality
+        # Use PyMuPDF + python-docx for conversion (enhanced with formatting preservation)
+        logger.info("PDF_TO_DOCX: Using PyMuPDF + python-docx with enhanced formatting preservation")
         try:
-            from google.cloud import documentai
-            from google.api_core import exceptions as google_exceptions
-            from google.oauth2 import service_account
-            import json
-            import base64
+            import fitz  # PyMuPDF
             
-            # Initialize Google Document AI client
-            project_id = os.environ.get('GOOGLE_CLOUD_PROJECT_ID')
-            location = os.environ.get('GOOGLE_DOCUMENT_AI_LOCATION', 'us')  # Default to 'us'
-            processor_id = os.environ.get('GOOGLE_DOCUMENT_AI_PROCESSOR_ID')
-            
-            if not project_id or not processor_id:
-                raise Exception("Google Document AI credentials not configured. Set GOOGLE_CLOUD_PROJECT_ID and GOOGLE_DOCUMENT_AI_PROCESSOR_ID environment variables.")
-            
-            logger.info(f"PDF_TO_DOCX: Using Google Document AI (project: {project_id}, processor: {processor_id})")
-            
-            # Configure authentication
-            # Option 1: Use GOOGLE_APPLICATION_CREDENTIALS_JSON (base64 encoded JSON)
-            credentials_json = None
-            credentials_env = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
-            if credentials_env:
-                try:
-                    # Decode base64 and parse JSON
-                    credentials_json = json.loads(base64.b64decode(credentials_env).decode('utf-8'))
-                    logger.info("PDF_TO_DOCX: Using credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON")
-                except Exception as cred_error:
-                    logger.warning(f"PDF_TO_DOCX: Failed to decode credentials JSON: {cred_error}")
-            
-            # Option 2: Try to read from /tmp/credentials.json (if manually placed)
-            if not credentials_json:
-                try:
-                    with open('/tmp/google-credentials.json', 'r') as f:
-                        credentials_json = json.load(f)
-                    logger.info("PDF_TO_DOCX: Using credentials from /tmp/google-credentials.json")
-                except FileNotFoundError:
-                    pass
-                except Exception as file_error:
-                    logger.debug(f"PDF_TO_DOCX: Could not read credentials file: {file_error}")
-            
-            # Create Document AI client with credentials
-            if credentials_json:
-                credentials = service_account.Credentials.from_service_account_info(credentials_json)
-                client = documentai.DocumentProcessorServiceClient(credentials=credentials)
-            else:
-                # Try default credentials (for local development with gcloud auth)
-                client = documentai.DocumentProcessorServiceClient()
-                logger.info("PDF_TO_DOCX: Using default credentials (may fail in Lambda)")
-            
-            processor_name = client.processor_path(project_id, location, processor_id)
-            
-            # Process the PDF
-            raw_document = documentai.RawDocument(
-                content=pdf_bytes,
-                mime_type="application/pdf"
-            )
-            
-            request = documentai.ProcessRequest(
-                name=processor_name,
-                raw_document=raw_document
-            )
-            
-            logger.info("PDF_TO_DOCX: Sending PDF to Google Document AI for processing...")
-            result = client.process_document(request=request)
-            document = result.document
-            
-            logger.info(f"PDF_TO_DOCX: Google Document AI processed {len(document.pages)} pages")
-            
-            # Build DOCX from Google Document AI output
             docx_doc = Document()
+            pdf_file = io.BytesIO(pdf_bytes)
+            pdf = fitz.open(stream=pdf_file, filetype="pdf")
             
-            # Google Document AI provides structured output
-            # Process pages and their content blocks
-            for page_idx, page in enumerate(document.pages):
-                logger.info(f"PDF_TO_DOCX: Processing page {page_idx + 1} from Google Document AI")
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
+                try:
+                    # Extract images from page first
+                    try:
+                        image_list = page.get_images()
+                        if image_list:
+                            logger.info(f"PDF_TO_DOCX: Found {len(image_list)} images on page {page_index + 1}")
+                            for img_idx, img in enumerate(image_list):
+                                try:
+                                    xref = img[0]
+                                    base_image = pdf.extract_image(xref)
+                                    image_bytes = base_image["image"]
+                                    
+                                    if image_bytes:
+                                        img_stream = io.BytesIO(image_bytes)
+                                        para_img = docx_doc.add_paragraph()
+                                        run_img = para_img.add_run()
+                                        run_img.add_picture(img_stream, width=Inches(6))
+                                        logger.info(f"PDF_TO_DOCX: Added image {img_idx + 1} to page {page_index + 1}")
+                                except Exception as img_error:
+                                    logger.warning(f"PDF_TO_DOCX: Error extracting image {img_idx + 1}: {img_error}")
+                                    continue
+                    except Exception as img_extract_error:
+                        logger.debug(f"PDF_TO_DOCX: Image extraction error: {img_extract_error}")
+                    
+                    # Try to extract tables first (no page markers to preserve exact PDF structure)
+                    try:
+                        tables = page.find_tables()
+                        if tables:
+                            logger.info(f"PDF_TO_DOCX: Found {len(tables)} tables on page {page_index + 1}")
+                            for table_idx, table in enumerate(tables):
+                                try:
+                                    table_data = table.extract()
+                                    if table_data and len(table_data) > 0:
+                                        docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
+                                        docx_table.style = 'Light Grid Accent 1'
+                                        
+                                        for row_idx, row_data in enumerate(table_data):
+                                            if row_idx < len(docx_table.rows):
+                                                for col_idx, cell_data in enumerate(row_data):
+                                                    if col_idx < len(docx_table.rows[row_idx].cells):
+                                                        cell = docx_table.rows[row_idx].cells[col_idx]
+                                                        cell.text = str(cell_data) if cell_data else ""
+                                        logger.info(f"PDF_TO_DOCX: Added table {table_idx + 1} with {len(table_data)} rows")
+                                except Exception as table_error:
+                                    logger.warning(f"PDF_TO_DOCX: Error extracting table {table_idx + 1}: {table_error}")
+                                    continue
+                    except (AttributeError, Exception) as table_extract_error:
+                        logger.debug(f"PDF_TO_DOCX: Table extraction not available: {table_extract_error}")
+                    
+                    # Extract text blocks with EXACT line-by-line preservation
+                    # This ensures line breaks, alignment, and sentence boundaries match PDF exactly
+                    text_dict = page.get_text("dict")
+                    
+                    for block in text_dict.get("blocks", []):
+                        if "lines" in block:
+                            # Process each line separately to preserve exact line breaks
+                            for line_idx, line in enumerate(block["lines"]):
+                                # Collect text from this line only (preserve line boundaries)
+                                line_text = ""
+                                spans_data = []
+                                
+                                for span in line.get("spans", []):
+                                    # Preserve exact text including spaces (don't strip)
+                                    text = span.get("text", "")
+                                    if text:
+                                        flags = span.get("flags", 0)
+                                        font_size = span.get("size", 11)
+                                        font_color = span.get("color", 0)
+                                        font_name = span.get("font", "")
+                                        
+                                        line_text += text  # Preserve exact text with spaces
+                                        spans_data.append({
+                                            'text': text,
+                                            'bold': bool(flags & 16),
+                                            'italic': bool(flags & 2),
+                                            'size': font_size,
+                                            'color': font_color,
+                                            'font': font_name
+                                        })
+                                
+                                # Skip empty lines
+                                if not line_text.strip():
+                                    continue
+                                
+                                # Detect numbered list patterns on this line
+                                line_text_stripped = line_text.strip()
+                                is_numbered_list = False
+                                list_style = None
+                                
+                                if re.match(r'^\d+[a-z]\b', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Number 2'
+                                elif re.match(r'^[\d]+[\.\)]', line_text_stripped):
+                                    is_numbered_list = True
+                                    list_style = 'List Number'
+                                elif re.match(r'^[a-z][\.\)]', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Bullet 2'
+                                elif re.match(r'^\([a-z0-9]+\)', line_text_stripped, re.IGNORECASE):
+                                    is_numbered_list = True
+                                    list_style = 'List Bullet 2'
+                                elif re.search(r'\b\d+[a-z]\b', line_text_stripped, re.IGNORECASE) and len(line_text_stripped) < 100:
+                                    is_numbered_list = True
+                                    list_style = 'List Number 2'
+                                
+                                # Create ONE paragraph per line to preserve exact line breaks
+                                if is_numbered_list:
+                                    para = docx_doc.add_paragraph(style=list_style)
+                                else:
+                                    para = docx_doc.add_paragraph()
+                                
+                                # Add each span with preserved formatting and exact spacing
+                                for span_idx, span_data in enumerate(spans_data):
+                                    run = para.add_run(span_data['text'])  # Preserve exact text including spaces
+                                    
+                                    if span_data['bold']:
+                                        run.font.bold = True
+                                    if span_data['italic']:
+                                        run.font.italic = True
+                                    
+                                    try:
+                                        if span_data['size'] > 0:
+                                            run.font.size = Pt(span_data['size'])
+                                    except:
+                                        pass
+                                    
+                                    try:
+                                        color_int = span_data['color']
+                                        r = (color_int >> 16) & 0xFF
+                                        g = (color_int >> 8) & 0xFF
+                                        b = color_int & 0xFF
+                                        if not (r == 0 and g == 0 and b == 0):
+                                            run.font.color.rgb = RGBColor(r, g, b)
+                                    except:
+                                        pass
+                                    
+                                    try:
+                                        if span_data['font']:
+                                            font_map = {
+                                                'Arial': 'Arial',
+                                                'ArialMT': 'Arial',
+                                                'Arial-BoldMT': 'Arial',
+                                                'Arial-ItalicMT': 'Arial',
+                                                'Helvetica': 'Arial',
+                                                'Helvetica-Bold': 'Arial',
+                                                'Helvetica-Oblique': 'Arial',
+                                                'Times-Roman': 'Times New Roman',
+                                                'TimesNewRomanPSMT': 'Times New Roman',
+                                                'TimesNewRomanPS-BoldMT': 'Times New Roman',
+                                                'TimesNewRomanPS-ItalicMT': 'Times New Roman',
+                                                'Courier': 'Courier New',
+                                                'CourierNew': 'Courier New',
+                                                'CourierNewPSMT': 'Courier New',
+                                                'Calibri': 'Calibri',
+                                                'Calibri-Bold': 'Calibri',
+                                                'Calibri-Italic': 'Calibri',
+                                            }
+                                            if span_data['font'] not in ['Times-Roman']:
+                                                font_name = font_map.get(span_data['font'], span_data['font'])
+                                                try:
+                                                    run.font.name = font_name
+                                                except Exception as font_err:
+                                                    logger.debug(f"PDF_TO_DOCX: Could not set font {font_name}: {font_err}")
+                                                    pass
+                                    except Exception as font_error:
+                                        logger.debug(f"PDF_TO_DOCX: Font processing error: {font_error}")
+                                        pass
+                                
+                                # Each line becomes a separate paragraph - preserves exact line breaks
+                                # No need to add spaces between spans since we preserve exact text
+                except Exception as page_error:
+                    logger.warning(f"PDF_TO_DOCX: Error processing page {page_index + 1}: {page_error}")
+                    continue
             
-            # Process paragraphs from document (Google Document AI structure)
-            if hasattr(document, 'paragraphs') and document.paragraphs:
-                for paragraph in document.paragraphs:
-                    # Extract paragraph text using text anchor
-                    para_text = ""
-                    if hasattr(paragraph, 'layout') and hasattr(paragraph.layout, 'text_anchor'):
-                        for segment in paragraph.layout.text_anchor.text_segments:
-                            start_index = int(segment.start_index) if hasattr(segment, 'start_index') and segment.start_index else 0
-                            end_index = int(segment.end_index) if hasattr(segment, 'end_index') and segment.end_index else len(document.text)
-                            para_text += document.text[start_index:end_index]
-                    
-                    if para_text.strip():
-                        # Detect list patterns
-                        para_text_stripped = para_text.strip()
-                        is_numbered_list = False
-                        list_style = None
-                        
-                        if re.match(r'^\d+[a-z]\b', para_text_stripped, re.IGNORECASE):
-                            is_numbered_list = True
-                            list_style = 'List Number 2'
-                        elif re.match(r'^[\d]+[\.\)]', para_text_stripped):
-                            is_numbered_list = True
-                            list_style = 'List Number'
-                        elif re.match(r'^[a-z][\.\)]', para_text_stripped, re.IGNORECASE):
-                            is_numbered_list = True
-                            list_style = 'List Bullet 2'
-                        elif re.match(r'^\([a-z0-9]+\)', para_text_stripped, re.IGNORECASE):
-                            is_numbered_list = True
-                            list_style = 'List Bullet 2'
-                        
-                        if is_numbered_list:
-                            para = docx_doc.add_paragraph(style=list_style)
-                        else:
-                            para = docx_doc.add_paragraph()
-                        
-                        para.add_run(para_text)
-            
-            # Process tables from document
-            if hasattr(document, 'tables') and document.tables:
-                for table in document.tables:
-                    logger.info(f"PDF_TO_DOCX: Processing table from Google Document AI")
-                    
-                    # Get table structure
-                    header_rows = table.header_rows if hasattr(table, 'header_rows') else []
-                    body_rows = table.body_rows if hasattr(table, 'body_rows') else []
-                    
-                    total_rows = len(header_rows) + len(body_rows)
-                    if total_rows == 0:
-                        continue
-                    
-                    # Get column count
-                    first_row = header_rows[0] if header_rows else (body_rows[0] if body_rows else None)
-                    if not first_row:
-                        continue
-                    
-                    num_cols = len(first_row.cells) if hasattr(first_row, 'cells') and first_row.cells else 0
-                    if num_cols == 0:
-                        continue
-                    
-                    # Create DOCX table
-                    docx_table = docx_doc.add_table(rows=total_rows, cols=num_cols)
-                    docx_table.style = 'Light Grid Accent 1'
-                    
-                    row_idx = 0
-                    # Add header rows
-                    for header_row in header_rows:
-                        if row_idx >= len(docx_table.rows) or not hasattr(header_row, 'cells'):
-                            break
-                        for col_idx, cell in enumerate(header_row.cells):
-                            if col_idx < len(docx_table.rows[row_idx].cells):
-                                cell_text = ""
-                                if hasattr(cell, 'layout') and hasattr(cell.layout, 'text_anchor'):
-                                    for segment in cell.layout.text_anchor.text_segments:
-                                        start_index = int(segment.start_index) if hasattr(segment, 'start_index') and segment.start_index else 0
-                                        end_index = int(segment.end_index) if hasattr(segment, 'end_index') and segment.end_index else len(document.text)
-                                        cell_text += document.text[start_index:end_index]
-                                docx_table.rows[row_idx].cells[col_idx].text = cell_text.strip()
-                        row_idx += 1
-                    
-                    # Add body rows
-                    for body_row in body_rows:
-                        if row_idx >= len(docx_table.rows) or not hasattr(body_row, 'cells'):
-                            break
-                        for col_idx, cell in enumerate(body_row.cells):
-                            if col_idx < len(docx_table.rows[row_idx].cells):
-                                cell_text = ""
-                                if hasattr(cell, 'layout') and hasattr(cell.layout, 'text_anchor'):
-                                    for segment in cell.layout.text_anchor.text_segments:
-                                        start_index = int(segment.start_index) if hasattr(segment, 'start_index') and segment.start_index else 0
-                                        end_index = int(segment.end_index) if hasattr(segment, 'end_index') and segment.end_index else len(document.text)
-                                        cell_text += document.text[start_index:end_index]
-                                docx_table.rows[row_idx].cells[col_idx].text = cell_text.strip()
-                        row_idx += 1
-            
-            # If no structured content, fall back to full text
-            if len(docx_doc.paragraphs) == 0 and len(docx_doc.tables) == 0:
-                logger.warning("PDF_TO_DOCX: No structured content found, using full text extraction")
-                # Split text into paragraphs by double newlines or single newlines
-                if hasattr(document, 'text') and document.text:
-                    paragraphs = document.text.split('\n\n')
-                    if len(paragraphs) == 1:
-                        # Try single newline if double newline didn't work
-                        paragraphs = document.text.split('\n')
-                    for para_text in paragraphs:
-                        if para_text.strip():
-                            docx_doc.add_paragraph(para_text.strip())
+            pdf.close()
             
             # Save DOCX to memory
             docx_bytes_io = io.BytesIO()
@@ -2487,197 +2469,18 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
                 ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
             )
             
-            logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key} using Google Document AI")
+            logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key} (enhanced formatting: fonts, sizes, colors, styles, images, lists preserved)")
             return new_key
-            
-        except ImportError:
-            logger.warning("PDF_TO_DOCX: Google Document AI not available, falling back to PyMuPDF")
-            # Fallback to PyMuPDF if Google libraries not installed
-            # Use inline PyMuPDF conversion (backup code)
-            return _convert_pdf_to_docx_pymupdf_fallback(agent_bucket, pdf_s3_key, pdf_bytes)
-        except Exception as google_error:
-            # Check if it's a Google API error
-            error_str = str(google_error)
-            if 'google' in error_str.lower() or 'GOOGLE' in str(type(google_error)):
-                logger.error(f"PDF_TO_DOCX_GOOGLE_ERROR: {error_str}, falling back to PyMuPDF")
-            else:
-                logger.error(f"PDF_TO_DOCX_GOOGLE_FAILED: {error_str}, falling back to PyMuPDF")
-            # Fallback to PyMuPDF on any errors
-            try:
-                return _convert_pdf_to_docx_pymupdf_fallback(agent_bucket, pdf_s3_key, pdf_bytes)
-            except Exception as fallback_err:
-                raise Exception(f"PDF to DOCX conversion failed: {error_str}. PyMuPDF fallback also failed: {str(fallback_err)}")
+                
+        except Exception as fallback_error:
+            logger.error(f"PDF_TO_DOCX_FALLBACK_FAILED: {str(fallback_error)}")
+            raise Exception(f"PDF to DOCX conversion failed: {str(fallback_error)}")
             
     except Exception as e:
         logger.error(f"PDF_TO_DOCX_ERROR: Failed to convert PDF to DOCX: {str(e)}")
         raise Exception(f"Failed to convert PDF to DOCX: {str(e)}")
 
 
-def _convert_pdf_to_docx_pymupdf_fallback(agent_bucket: str, pdf_s3_key: str, pdf_bytes: bytes) -> str:
-    """
-    FALLBACK: PyMuPDF-based PDF to DOCX conversion
-    Used when Google Document AI is not available or fails
-    This is the original PyMuPDF implementation kept as fallback
-    """
-    try:
-        logger.info("PDF_TO_DOCX_FALLBACK: Using PyMuPDF conversion (fallback from Google Document AI)")
-        import fitz  # PyMuPDF
-        
-        docx_doc = Document()
-        pdf_file = io.BytesIO(pdf_bytes)
-        pdf = fitz.open(stream=pdf_file, filetype="pdf")
-        
-        for page_index in range(len(pdf)):
-            page = pdf[page_index]
-            try:
-                # Extract images
-                try:
-                    image_list = page.get_images()
-                    if image_list:
-                        for img_idx, img in enumerate(image_list):
-                            try:
-                                xref = img[0]
-                                base_image = pdf.extract_image(xref)
-                                image_bytes = base_image["image"]
-                                if image_bytes:
-                                    img_stream = io.BytesIO(image_bytes)
-                                    para_img = docx_doc.add_paragraph()
-                                    run_img = para_img.add_run()
-                                    run_img.add_picture(img_stream, width=Inches(6))
-                            except Exception:
-                                continue
-                except Exception:
-                    pass
-                
-                # Extract tables
-                try:
-                    tables = page.find_tables()
-                    if tables:
-                        for table in tables:
-                            try:
-                                table_data = table.extract()
-                                if table_data and len(table_data) > 0:
-                                    docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
-                                    docx_table.style = 'Light Grid Accent 1'
-                                    for row_idx, row_data in enumerate(table_data):
-                                        if row_idx < len(docx_table.rows):
-                                            for col_idx, cell_data in enumerate(row_data):
-                                                if col_idx < len(docx_table.rows[row_idx].cells):
-                                                    docx_table.rows[row_idx].cells[col_idx].text = str(cell_data) if cell_data else ""
-                            except Exception:
-                                continue
-                except Exception:
-                    pass
-                
-                # Extract text with line-by-line preservation
-                text_dict = page.get_text("dict")
-                for block in text_dict.get("blocks", []):
-                    if "lines" in block:
-                        for line in block["lines"]:
-                            line_text = ""
-                            spans_data = []
-                            for span in line.get("spans", []):
-                                text = span.get("text", "")
-                                if text:
-                                    flags = span.get("flags", 0)
-                                    font_size = span.get("size", 11)
-                                    font_color = span.get("color", 0)
-                                    font_name = span.get("font", "")
-                                    line_text += text
-                                    spans_data.append({
-                                        'text': text,
-                                        'bold': bool(flags & 16),
-                                        'italic': bool(flags & 2),
-                                        'size': font_size,
-                                        'color': font_color,
-                                        'font': font_name
-                                    })
-                            
-                            if not line_text.strip():
-                                continue
-                            
-                            # Detect list patterns
-                            line_text_stripped = line_text.strip()
-                            is_numbered_list = False
-                            list_style = None
-                            if re.match(r'^\d+[a-z]\b', line_text_stripped, re.IGNORECASE):
-                                is_numbered_list = True
-                                list_style = 'List Number 2'
-                            elif re.match(r'^[\d]+[\.\)]', line_text_stripped):
-                                is_numbered_list = True
-                                list_style = 'List Number'
-                            elif re.match(r'^[a-z][\.\)]', line_text_stripped, re.IGNORECASE):
-                                is_numbered_list = True
-                                list_style = 'List Bullet 2'
-                            elif re.match(r'^\([a-z0-9]+\)', line_text_stripped, re.IGNORECASE):
-                                is_numbered_list = True
-                                list_style = 'List Bullet 2'
-                            
-                            if is_numbered_list:
-                                para = docx_doc.add_paragraph(style=list_style)
-                            else:
-                                para = docx_doc.add_paragraph()
-                            
-                            for span_data in spans_data:
-                                run = para.add_run(span_data['text'])
-                                if span_data['bold']:
-                                    run.font.bold = True
-                                if span_data['italic']:
-                                    run.font.italic = True
-                                try:
-                                    if span_data['size'] > 0:
-                                        run.font.size = Pt(span_data['size'])
-                                except:
-                                    pass
-                                try:
-                                    color_int = span_data['color']
-                                    r = (color_int >> 16) & 0xFF
-                                    g = (color_int >> 8) & 0xFF
-                                    b = color_int & 0xFF
-                                    if not (r == 0 and g == 0 and b == 0):
-                                        run.font.color.rgb = RGBColor(r, g, b)
-                                except:
-                                    pass
-                                try:
-                                    if span_data['font']:
-                                        font_map = {
-                                            'Arial': 'Arial', 'ArialMT': 'Arial',
-                                            'Helvetica': 'Arial', 'TimesNewRomanPSMT': 'Times New Roman',
-                                            'Calibri': 'Calibri'
-                                        }
-                                        font_name = font_map.get(span_data['font'], span_data['font'])
-                                        try:
-                                            run.font.name = font_name
-                                        except:
-                                            pass
-                                except:
-                                    pass
-            except Exception as page_error:
-                logger.warning(f"PDF_TO_DOCX_FALLBACK: Error processing page {page_index + 1}: {page_error}")
-                continue
-        
-        pdf.close()
-        
-        # Save and upload DOCX
-        docx_bytes_io = io.BytesIO()
-        docx_doc.save(docx_bytes_io)
-        docx_bytes_io.seek(0)
-        docx_bytes = docx_bytes_io.read()
-        
-        new_key = pdf_s3_key.rsplit('.', 1)[0] + '.docx'
-        s3_client.put_object(
-            Bucket=agent_bucket,
-            Key=new_key,
-            Body=docx_bytes,
-            ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        )
-        
-        logger.info(f"PDF_TO_DOCX_FALLBACK_SUCCESS: Converted to {new_key} using PyMuPDF")
-        return new_key
-        
-    except Exception as e:
-        logger.error(f"PDF_TO_DOCX_FALLBACK_ERROR: {str(e)}")
-        raise Exception(f"PyMuPDF fallback conversion failed: {str(e)}")
 
 
 def save_analysis_to_dynamodb(
