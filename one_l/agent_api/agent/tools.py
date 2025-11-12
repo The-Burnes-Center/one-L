@@ -1285,7 +1285,7 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         
         return meaningful_words
     
-    def find_word_sequence_match(search_words, para_words, min_match_ratio=0.6):
+    def find_word_sequence_match(search_words, para_words, min_match_ratio=0.5):
         """Find if a significant portion of search words appear in sequence in paragraph."""
         if len(search_words) < 3:
             return False
@@ -1362,10 +1362,10 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             all_matches.append({'para_idx': para_idx, 'matched_text': 'word_sequence_match'})
             matched = True
         
-        # Try partial word matching (lowered threshold to 50% for more matches)
+        # Try partial word matching (lowered threshold to 40% for more matches)
         if not matched and len(search_words) >= 3:
             word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
-            if word_matches / len(search_words) >= 0.5:
+            if word_matches / len(search_words) >= 0.4:
                 logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}, page≈{para_idx // 20}")
                 _apply_redline_to_paragraph(paragraph, para_text, redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'word_partial_match'})
@@ -1483,10 +1483,10 @@ def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                     all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_sequence_match'})
                     matched = True
                 
-                # Try partial word matching (lowered threshold to 40% for more matches)
+                # Try partial word matching (lowered threshold to 35% for more matches)
                 if not matched and len(search_words) >= 3:
                     word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_cell)
-                    if word_matches / len(search_words) >= 0.4:
+                    if word_matches / len(search_words) >= 0.35:
                         logger.info(f"TIER0_TABLE_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in table {table_idx}, cell ({row_idx},{cell_idx})")
                         _apply_redline_to_table_cell(cell, cell_text, redline_item)
                         all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_partial_match'})
@@ -1636,7 +1636,7 @@ def _tier1_5_semantic_matching(doc, vendor_conflict_text: str, redline_item: Dic
         # Calculate similarity
         similarity = calculate_concept_similarity(conflict_concepts, para_concepts)
         
-        if similarity > best_similarity and similarity > 0.3:  # Threshold for semantic match
+        if similarity > best_similarity and similarity > 0.2:  # Lowered threshold for more aggressive semantic matching
             best_similarity = similarity
             best_match = {
                 'para_idx': para_idx,
@@ -1819,21 +1819,21 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             all_matches.append({'para_idx': para_idx, 'matched_text': 'normalized_match'})
             matched = True
         
-        # Try similarity matching with lowered threshold
+        # Try similarity matching with lowered threshold (more aggressive)
         if not matched and len(normalized_search) > 30:
             similarity = similarity_ratio(normalized_search, normalized_para)
-            if similarity > 0.75:
+            if similarity > 0.65:
                 logger.info(f"TIER2_SIMILARITY: Found similarity match (ratio: {similarity:.3f}) in paragraph {para_idx}, page≈{para_idx // 20}")
                 _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'similarity_match'})
                 matched = True
         
-        # Try partial phrase matching for longer texts
-        if not matched and len(normalized_search) > 100:
+        # Try partial phrase matching for longer texts (more aggressive)
+        if not matched and len(normalized_search) > 80:
             key_phrases = extract_key_phrases(normalized_search)
             for phrase in key_phrases:
                 normalized_phrase = enhanced_normalize_text(phrase)
-                if normalized_phrase in normalized_para and len(normalized_phrase) > 20:
+                if normalized_phrase in normalized_para and len(normalized_phrase) > 15:
                     logger.info(f"TIER2_PHRASE: Found phrase match '{phrase[:50]}...' in paragraph {para_idx}, page≈{para_idx // 20}")
                     _apply_redline_to_paragraph(paragraph, phrase[:100], redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'phrase_match'})
@@ -1901,8 +1901,8 @@ def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item:
         
         return key_phrases
     
-    # Only try partial matching for longer conflict texts
-    if len(vendor_conflict_text) < 80:
+    # Only try partial matching for longer conflict texts (lowered threshold)
+    if len(vendor_conflict_text) < 60:
         return None
     
     key_phrases = extract_key_phrases(vendor_conflict_text)
@@ -1912,9 +1912,9 @@ def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item:
         if not para_text or len(para_text) < 30:
             continue
         
-        # Check if any key phrase matches
+        # Check if any key phrase matches (more aggressive - lowered length threshold)
         for phrase in key_phrases:
-            if len(phrase) > 20 and phrase.lower() in para_text.lower():
+            if len(phrase) > 15 and phrase.lower() in para_text.lower():
 
                 # Apply redlining to the found phrase instead of full text
                 start_idx = para_text.lower().find(phrase.lower())
