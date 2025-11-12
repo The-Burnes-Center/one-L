@@ -192,6 +192,7 @@ def list_files(bucket_name: str, prefix: Optional[str], max_keys: int, continuat
             'bucket_name': bucket_name,
             'prefix': prefix,
             'files': files,
+            'key_count': response.get('KeyCount', len(files)),
             'next_continuation_token': response.get('NextContinuationToken'),
             'is_truncated': response.get('IsTruncated', False),
             'max_keys': max_keys

@@ -16,6 +16,13 @@ const KnowledgeUpload = () => {
   const [filesError, setFilesError] = useState('');
   const [listContinuationToken, setListContinuationToken] = useState(null);
   const [prefixFilter, setPrefixFilter] = useState('');
+  const [filesMeta, setFilesMeta] = useState({
+    bucketName: '',
+    prefix: '',
+    keyCount: 0
+  });
+  const [hasMore, setHasMore] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (event) => {
@@ -50,6 +57,7 @@ const KnowledgeUpload = () => {
     setFilesLoading(true);
     if (!append) {
       setFilesError('');
+      setListContinuationToken(null);
     }
 
     const effectivePrefix = prefixOverride !== undefined ? prefixOverride : prefixFilter;
@@ -66,7 +74,12 @@ const KnowledgeUpload = () => {
         setFilesError(errorMessage);
         if (!append) {
           setKnowledgeFiles([]);
-          setListContinuationToken(null);
+          setFilesMeta({
+            bucketName: '',
+            prefix: effectivePrefix || '',
+            keyCount: 0
+          });
+          setHasMore(false);
         }
         return;
       }
@@ -76,11 +89,23 @@ const KnowledgeUpload = () => {
         append ? [...prev, ...files] : files
       );
       setListContinuationToken(response.next_continuation_token || null);
+      setHasMore(Boolean(response.is_truncated));
+      setFilesMeta({
+        bucketName: response.bucket_name || '',
+        prefix: response.prefix || effectivePrefix || '',
+        keyCount: response.key_count ?? files.length
+      });
+      setLastRefreshed(new Date());
     } catch (error) {
       setFilesError(error?.message || 'Failed to retrieve knowledge base files.');
       if (!append) {
         setKnowledgeFiles([]);
-        setListContinuationToken(null);
+        setFilesMeta({
+          bucketName: '',
+          prefix: effectivePrefix || '',
+          keyCount: 0
+        });
+        setHasMore(false);
       }
     } finally {
       setFilesLoading(false);
@@ -146,7 +171,7 @@ const KnowledgeUpload = () => {
         }
 
         // Refresh knowledge files list
-        fetchKnowledgeFiles();
+        fetchKnowledgeFiles({ prefixOverride: prefixFilter });
       } else {
         setMessage(response.message || 'Upload failed. Please try again.');
         setMessageType('error');
@@ -196,6 +221,13 @@ const KnowledgeUpload = () => {
     } catch (error) {
       return timestamp;
     }
+  };
+
+  const renderMetaValue = (value, fallback = '—') => {
+    if (value === null || value === undefined || value === '') {
+      return fallback;
+    }
+    return value;
   };
 
   return (
@@ -263,25 +295,32 @@ const KnowledgeUpload = () => {
 
       <div className="knowledge-list-section">
         <div className="section-header">
-          <h3>Knowledge Base Contents</h3>
+          <div>
+            <h3>Knowledge Base Contents</h3>
+            <p className="section-subtitle">
+              Browse existing documents stored in the knowledge bucket.
+            </p>
+          </div>
           <div className="section-actions">
-            <label className="form-label" htmlFor="kb-prefix-filter">
-              Filter
-            </label>
-            <select
-              id="kb-prefix-filter"
-              className="form-control"
-              value={prefixFilter}
-              onChange={(event) => {
-                const newPrefix = event.target.value;
-                setListContinuationToken(null);
-                setPrefixFilter(newPrefix);
-              }}
-              disabled={filesLoading}
-            >
-              <option value="">All files</option>
-              <option value="admin-uploads/">Admin uploads</option>
-            </select>
+            <div className="filter-control">
+              <label className="form-label" htmlFor="kb-prefix-filter">
+                Filter
+              </label>
+              <select
+                id="kb-prefix-filter"
+                className="form-control"
+                value={prefixFilter}
+                onChange={(event) => {
+                  const newPrefix = event.target.value;
+                  setListContinuationToken(null);
+                  setPrefixFilter(newPrefix);
+                }}
+                disabled={filesLoading}
+              >
+                <option value="">All files</option>
+                <option value="admin-uploads/">Admin uploads</option>
+              </select>
+            </div>
             <button
               type="button"
               onClick={handleRefreshKnowledgeList}
@@ -293,6 +332,34 @@ const KnowledgeUpload = () => {
           </div>
         </div>
 
+        <div className="section-meta">
+          <div className="meta-item">
+            <span className="meta-label">Bucket</span>
+            <span className="meta-value">{renderMetaValue(filesMeta.bucketName)}</span>
+          </div>
+          <div className="meta-item">
+            <span className="meta-label">Showing</span>
+            <span className="meta-value">
+              {knowledgeFiles.length} file{knowledgeFiles.length === 1 ? '' : 's'}
+              {hasMore ? '+' : ''}
+            </span>
+          </div>
+          {filesMeta.prefix && (
+            <div className="meta-item">
+              <span className="meta-label">Prefix</span>
+              <span className="meta-badge">{filesMeta.prefix}</span>
+            </div>
+          )}
+          {lastRefreshed && (
+            <div className="meta-item">
+              <span className="meta-label">Updated</span>
+              <span className="meta-value">
+                {lastRefreshed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              </span>
+            </div>
+          )}
+        </div>
+
         {filesError && (
           <div className="alert alert-error">
             {filesError}
@@ -300,11 +367,14 @@ const KnowledgeUpload = () => {
         )}
 
         {!filesError && knowledgeFiles.length === 0 && !filesLoading && (
-          <p>No knowledge base documents found yet.</p>
+          <div className="knowledge-empty">
+            <strong>No knowledge base documents found.</strong>
+            <p>Upload files or adjust the filter to see existing documents.</p>
+          </div>
         )}
 
         {knowledgeFiles.length > 0 && (
-          <div className="knowledge-files-table">
+          <div className={`knowledge-files-table ${filesLoading ? 'is-loading' : ''}`}>
             <div className="table-header">
               <span>File Name</span>
               <span>Size</span>
@@ -322,6 +392,12 @@ const KnowledgeUpload = () => {
                 );
               })}
             </div>
+            {filesLoading && (
+              <div className="table-loading-overlay">
+                <div className="loading-spinner" />
+                <span>Loading documents...</span>
+              </div>
+            )}
           </div>
         )}
 

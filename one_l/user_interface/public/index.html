@@ -92,6 +92,27 @@
         cursor: not-allowed;
       }
       
+      .btn-secondary {
+        background: #e9ecef;
+        color: #212529;
+        border: 1px solid #ced4da;
+      }
+      
+      .btn-secondary:hover {
+        background: #dde1e5;
+      }
+      
+      .btn-outline {
+        background: transparent;
+        color: #007bff;
+        border: 1px solid #007bff;
+      }
+      
+      .btn-outline:hover {
+        background: #007bff;
+        color: #fff;
+      }
+      
       .form-group {
         margin-bottom: 16px;
       }
@@ -132,6 +153,169 @@
       .loading {
         opacity: 0.6;
         pointer-events: none;
+      }
+      
+      .knowledge-list-section {
+        margin-top: 32px;
+        padding-top: 24px;
+        border-top: 1px solid #edf1f5;
+      }
+      
+      .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      
+      .section-header h3 {
+        margin: 0 0 4px 0;
+        font-size: 20px;
+      }
+      
+      .section-subtitle {
+        margin: 0;
+        color: #6c757d;
+        font-size: 14px;
+      }
+      
+      .section-actions {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      
+      .filter-control {
+        min-width: 200px;
+      }
+      
+      .section-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin: 20px 0 16px;
+        font-size: 14px;
+      }
+      
+      .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #495057;
+      }
+      
+      .meta-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6c757d;
+        font-weight: 600;
+      }
+      
+      .meta-value {
+        font-weight: 600;
+        color: #212529;
+      }
+      
+      .meta-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #f1f5ff;
+        color: #3459e6;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      
+      .knowledge-files-table {
+        position: relative;
+        border: 1px solid #e9ecef;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #fff;
+        box-shadow: 0 4px 12px rgba(52, 58, 64, 0.05);
+      }
+      
+      .knowledge-files-table .table-header,
+      .knowledge-files-table .table-row {
+        display: grid;
+        grid-template-columns: 4fr 1fr 2fr;
+        gap: 16px;
+        align-items: center;
+        padding: 14px 20px;
+      }
+      
+      .knowledge-files-table .table-header {
+        background: linear-gradient(135deg, #f0f4ff 0%, #fefeff 100%);
+        font-weight: 700;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #4a5568;
+      }
+      
+      .knowledge-files-table .table-body {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      
+      .knowledge-files-table .table-row {
+        font-size: 15px;
+        color: #212529;
+        transition: background 0.2s ease, transform 0.2s ease;
+      }
+      
+      .knowledge-files-table .table-row:nth-child(even) {
+        background: #f9fbfd;
+      }
+      
+      .knowledge-files-table .table-row:hover {
+        background: #eef4ff;
+        transform: translateX(2px);
+      }
+      
+      .knowledge-files-table .table-row span:first-child {
+        font-weight: 600;
+      }
+      
+      .knowledge-empty {
+        background: #f8f9fa;
+        border: 1px dashed #ced4da;
+        border-radius: 8px;
+        padding: 20px;
+        color: #495057;
+        text-align: center;
+        margin-top: 20px;
+      }
+      
+      .knowledge-empty p {
+        margin: 8px 0 0;
+        color: #6c757d;
+      }
+      
+      .knowledge-files-table .table-loading-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.85);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        font-weight: 600;
+        color: #495057;
+      }
+      
+      .knowledge-files-table .loading-spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid #e2e6ea;
+        border-top-color: #007bff;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
       }
       
       /* Sidebar Styles */
