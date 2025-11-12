@@ -225,6 +225,47 @@ const knowledgeManagementAPI = {
       body: JSON.stringify(payload)
     });
   },
+
+  /**
+   * List files from S3
+   */
+  listFiles: async (bucketType = 'knowledge', options = {}) => {
+    const {
+      prefix,
+      maxKeys,
+      continuationToken
+    } = options;
+
+    const queryParams = new URLSearchParams({
+      action: 'list',
+      bucket_type: bucketType
+    });
+
+    if (prefix) {
+      queryParams.append('prefix', prefix);
+    }
+
+    if (maxKeys) {
+      queryParams.append('max_keys', String(maxKeys));
+    }
+
+    if (continuationToken) {
+      queryParams.append('continuation_token', continuationToken);
+    }
+
+    const response = await apiCall(`/knowledge_management/retrieve?${queryParams.toString()}`);
+
+    if (response?.body) {
+      try {
+        return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+      } catch (error) {
+        console.error('Error parsing listFiles response body:', error);
+        return response;
+      }
+    }
+
+    return response;
+  },
   
   /**
    * Delete files from S3

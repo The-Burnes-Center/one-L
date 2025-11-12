@@ -3,7 +3,7 @@
  * Handles file uploads to the knowledge bucket for admin users
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { knowledgeManagementAPI, fileUtils } from '../services/api';
 
 const KnowledgeUpload = () => {
@@ -11,6 +11,10 @@ const KnowledgeUpload = () => {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
+  const [knowledgeFiles, setKnowledgeFiles] = useState([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState('');
+  const [listContinuationToken, setListContinuationToken] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (event) => {
@@ -39,6 +43,50 @@ const KnowledgeUpload = () => {
     setMessage('');
     setMessageType('');
   };
+
+  const fetchKnowledgeFiles = useCallback(async ({ continuationToken = null, append = false } = {}) => {
+    // Avoid multiple parallel load-more calls
+    setFilesLoading(true);
+    if (!append) {
+      setFilesError('');
+    }
+
+    try {
+      const response = await knowledgeManagementAPI.listFiles('knowledge', {
+        prefix: 'admin-uploads/',
+        maxKeys: 100,
+        continuationToken
+      });
+
+      if (!response?.success) {
+        const errorMessage = response?.error || 'Failed to retrieve knowledge base files.';
+        setFilesError(errorMessage);
+        if (!append) {
+          setKnowledgeFiles([]);
+          setListContinuationToken(null);
+        }
+        return;
+      }
+
+      const files = response.files || [];
+      setKnowledgeFiles(prev =>
+        append ? [...prev, ...files] : files
+      );
+      setListContinuationToken(response.next_continuation_token || null);
+    } catch (error) {
+      setFilesError(error?.message || 'Failed to retrieve knowledge base files.');
+      if (!append) {
+        setKnowledgeFiles([]);
+        setListContinuationToken(null);
+      }
+    } finally {
+      setFilesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchKnowledgeFiles();
+  }, [fetchKnowledgeFiles]);
 
   const handleUpload = async () => {
     if (selectedFiles.length === 0) {
@@ -93,6 +141,9 @@ const KnowledgeUpload = () => {
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
         }
+
+        // Refresh knowledge files list
+        fetchKnowledgeFiles();
       } else {
         setMessage(response.message || 'Upload failed. Please try again.');
         setMessageType('error');
@@ -116,12 +167,31 @@ const KnowledgeUpload = () => {
     }
   };
 
+  const handleRefreshKnowledgeList = () => {
+    fetchKnowledgeFiles();
+  };
+
+  const handleLoadMoreFiles = () => {
+    if (listContinuationToken) {
+      fetchKnowledgeFiles({ continuationToken: listContinuationToken, append: true });
+    }
+  };
+
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return '—';
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch (error) {
+      return timestamp;
+    }
   };
 
   return (
@@ -186,6 +256,65 @@ const KnowledgeUpload = () => {
           {message}
         </div>
       )}
+
+      <div className="knowledge-list-section">
+        <div className="section-header">
+          <h3>Knowledge Base Contents</h3>
+          <button
+            type="button"
+            onClick={handleRefreshKnowledgeList}
+            className="btn btn-secondary"
+            disabled={filesLoading}
+          >
+            {filesLoading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+
+        {filesError && (
+          <div className="alert alert-error">
+            {filesError}
+          </div>
+        )}
+
+        {!filesError && knowledgeFiles.length === 0 && !filesLoading && (
+          <p>No knowledge base documents found yet.</p>
+        )}
+
+        {knowledgeFiles.length > 0 && (
+          <div className="knowledge-files-table">
+            <div className="table-header">
+              <span>File Name</span>
+              <span>Size</span>
+              <span>Last Modified</span>
+            </div>
+            <div className="table-body">
+              {knowledgeFiles.map((file) => {
+                const fileName = file?.s3_key ? file.s3_key.split('/').pop() : 'Unknown file';
+                return (
+                  <div key={file.s3_key} className="table-row">
+                    <span title={file.s3_key}>{fileName || file.s3_key}</span>
+                    <span>{typeof file.size === 'number' ? formatFileSize(file.size) : '—'}</span>
+                    <span>{formatTimestamp(file.last_modified)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {listContinuationToken && (
+          <div className="form-group">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={handleLoadMoreFiles}
+              disabled={filesLoading}
+            >
+              {filesLoading ? 'Loading...' : 'Load more'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
