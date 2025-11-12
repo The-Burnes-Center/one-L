@@ -207,6 +207,47 @@ jobs:
           echo "No session-management Lambda function found matching pattern"
         fi
         
+        # Update retrieve-from-s3 Lambda function (handles knowledge base file listing)
+        RETRIEVE_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`) && contains(FunctionName, `retrieve`)].FunctionName' --output text)
+        
+        if [ -n "$RETRIEVE_FUNCTION" ]; then
+          echo "Packaging retrieve-from-s3 Lambda function..."
+          cd one_l/agent_api/functions/knowledge_management/retrieve_from_s3
+          zip -r /tmp/retrieve-from-s3.zip . -x "*.pyc" "__pycache__/*" "*.pyc" ".git/*"
+          cd ../../../../../
+          
+          echo "Updating Lambda function code: $RETRIEVE_FUNCTION"
+          aws lambda update-function-code \
+            --function-name "$RETRIEVE_FUNCTION" \
+            --zip-file fileb:///tmp/retrieve-from-s3.zip
+          
+          echo "Waiting for Lambda code update to complete..."
+          aws lambda wait function-updated --function-name "$RETRIEVE_FUNCTION"
+          
+          # Update environment variables to ensure correct bucket names
+          echo "Updating environment variables for retrieve-from-s3 Lambda..."
+          CURRENT_ENV=$(aws lambda get-function-configuration --function-name "$RETRIEVE_FUNCTION" --query 'Environment.Variables' --output json)
+          
+          # Get bucket names from current environment or construct them
+          KNOWLEDGE_BUCKET=$(echo $CURRENT_ENV | jq -r '.KNOWLEDGE_BUCKET // "onel-v2-knowledge-source"')
+          USER_DOCS_BUCKET=$(echo $CURRENT_ENV | jq -r '.USER_DOCUMENTS_BUCKET // "onel-v2-user-documents"')
+          AGENT_PROCESSING_BUCKET=$(echo $CURRENT_ENV | jq -r '.AGENT_PROCESSING_BUCKET // "onel-v2-agent-processing"')
+          
+          echo "Setting environment variables:"
+          echo "  KNOWLEDGE_BUCKET=$KNOWLEDGE_BUCKET"
+          echo "  USER_DOCUMENTS_BUCKET=$USER_DOCS_BUCKET"
+          echo "  AGENT_PROCESSING_BUCKET=$AGENT_PROCESSING_BUCKET"
+          
+          aws lambda update-function-configuration \
+            --function-name "$RETRIEVE_FUNCTION" \
+            --environment "Variables={KNOWLEDGE_BUCKET=$KNOWLEDGE_BUCKET,USER_DOCUMENTS_BUCKET=$USER_DOCS_BUCKET,AGENT_PROCESSING_BUCKET=$AGENT_PROCESSING_BUCKET,LOG_LEVEL=INFO}" \
+            || echo "Warning: Failed to update environment variables, but code was updated"
+          
+          echo "Retrieve-from-s3 Lambda function updated successfully"
+        else
+          echo "No retrieve-from-s3 Lambda function found matching pattern"
+        fi
+        
         # List all OneL-v2 Lambda functions for verification
         echo "Listing all OneL-v2 Lambda functions:"
         aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`)].FunctionName' --output table
