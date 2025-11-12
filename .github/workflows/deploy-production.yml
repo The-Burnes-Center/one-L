@@ -91,23 +91,77 @@ jobs:
       run: |
         echo "Updating Lambda function code only (skipping infrastructure changes)..."
         
-        # Find and update the document-review Lambda function
-        LAMBDA_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`) && contains(FunctionName, `document-review`)].FunctionName' --output text)
+        # Update document-review Lambda function
+        DOC_REVIEW_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`) && contains(FunctionName, `document-review`)].FunctionName' --output text)
         
-        if [ -n "$LAMBDA_FUNCTION" ]; then
-          echo "Updating Lambda function: $LAMBDA_FUNCTION"
+        if [ -n "$DOC_REVIEW_FUNCTION" ]; then
+          echo "Updating Lambda function: $DOC_REVIEW_FUNCTION"
           aws lambda update-function-code \
-            --function-name "$LAMBDA_FUNCTION" \
+            --function-name "$DOC_REVIEW_FUNCTION" \
             --zip-file fileb://build/lambda-deployment.zip
           
           echo "Waiting for Lambda update to complete..."
-          aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION"
-          echo "Lambda function updated successfully"
+          aws lambda wait function-updated --function-name "$DOC_REVIEW_FUNCTION"
+          echo "Document-review Lambda function updated successfully"
         else
-          echo "No Lambda function found matching pattern"
-          echo "Listing all OneL-v2 Lambda functions:"
-          aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`)].FunctionName' --output table
+          echo "No document-review Lambda function found matching pattern"
         fi
+        
+        # Update session-management Lambda function
+        SESSION_MGMT_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`) && contains(FunctionName, `session-management`)].FunctionName' --output text)
+        
+        if [ -n "$SESSION_MGMT_FUNCTION" ]; then
+          echo "Packaging session-management Lambda function..."
+          cd one_l/agent_api/functions/knowledge_management/session_management
+          zip -r /tmp/session-management.zip . -x "*.pyc" "__pycache__/*" "*.pyc" ".git/*"
+          cd ../../../../../
+          
+          echo "Updating Lambda function code: $SESSION_MGMT_FUNCTION"
+          aws lambda update-function-code \
+            --function-name "$SESSION_MGMT_FUNCTION" \
+            --zip-file fileb:///tmp/session-management.zip
+          
+          echo "Waiting for Lambda code update to complete..."
+          aws lambda wait function-updated --function-name "$SESSION_MGMT_FUNCTION"
+          
+          # Update environment variables to ensure correct table names
+          echo "Updating environment variables for session-management Lambda..."
+          CURRENT_ENV=$(aws lambda get-function-configuration --function-name "$SESSION_MGMT_FUNCTION" --query 'Environment.Variables' --output json)
+          
+          # Get the correct table names from the stack
+          ANALYSIS_TABLE=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AgentApiFunctionsStorageAnalysisTableNameA1B2C3D4`].OutputValue' --output text 2>/dev/null || echo "")
+          SESSIONS_TABLE=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AgentApiFunctionsKnowledgeManagementSessionsTableNameE5F6G7H8`].OutputValue' --output text 2>/dev/null || echo "")
+          
+          # If we can't get from outputs, construct from stack name
+          if [ -z "$ANALYSIS_TABLE" ]; then
+            ANALYSIS_TABLE="OneL-v2-analysis-results"
+          fi
+          if [ -z "$SESSIONS_TABLE" ]; then
+            SESSIONS_TABLE="OneL-v2-sessions"
+          fi
+          
+          # Get bucket names from current environment or construct them
+          KNOWLEDGE_BUCKET=$(echo $CURRENT_ENV | jq -r '.KNOWLEDGE_BUCKET // "onel-v2-knowledge-source"')
+          USER_DOCS_BUCKET=$(echo $CURRENT_ENV | jq -r '.USER_DOCUMENTS_BUCKET // "onel-v2-user-documents"')
+          AGENT_PROCESSING_BUCKET=$(echo $CURRENT_ENV | jq -r '.AGENT_PROCESSING_BUCKET // "onel-v2-agent-processing"')
+          
+          echo "Setting environment variables:"
+          echo "  ANALYSIS_RESULTS_TABLE=$ANALYSIS_TABLE"
+          echo "  SESSIONS_TABLE=$SESSIONS_TABLE"
+          
+          aws lambda update-function-configuration \
+            --function-name "$SESSION_MGMT_FUNCTION" \
+            --environment "Variables={KNOWLEDGE_BUCKET=$KNOWLEDGE_BUCKET,USER_DOCUMENTS_BUCKET=$USER_DOCS_BUCKET,AGENT_PROCESSING_BUCKET=$AGENT_PROCESSING_BUCKET,SESSIONS_TABLE=$SESSIONS_TABLE,ANALYSIS_RESULTS_TABLE=$ANALYSIS_TABLE,LOG_LEVEL=INFO}" \
+            || echo "Warning: Failed to update environment variables, but code was updated"
+          
+          echo "Session-management Lambda function updated successfully"
+        else
+          echo "No session-management Lambda function found matching pattern"
+        fi
+        
+        # List all OneL-v2 Lambda functions for verification
+        echo "Listing all OneL-v2 Lambda functions:"
+        aws lambda list-functions --query 'Functions[?contains(FunctionName, `OneL-v2`)].FunctionName' --output table
 
     - name: Get stack outputs
       id: stack-outputs
