@@ -22,6 +22,9 @@ AGENT_PROCESSING_BUCKET = os.environ.get('AGENT_PROCESSING_BUCKET')
 SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE', 'one-l-sessions')
 ANALYSIS_RESULTS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
 
+# Log environment variables at module load time for debugging (logger already initialized above)
+logger.info(f"SESSION_MANAGEMENT_ENV: SESSIONS_TABLE='{SESSIONS_TABLE}', ANALYSIS_RESULTS_TABLE='{ANALYSIS_RESULTS_TABLE}'")
+
 def convert_decimals(obj):
     """Recursively convert Decimal types to int or float for JSON serialization"""
     if isinstance(obj, Decimal):
@@ -487,6 +490,9 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
                 'success': False,
                 'error': 'Configuration error: Analysis results table not configured'
             }
+        
+        # Log the table name being used for debugging
+        logger.info(f"SESSION_RESULTS: Using ANALYSIS_RESULTS_TABLE='{ANALYSIS_RESULTS_TABLE}' for session_id={session_id}")
         
         # Get analysis results from DynamoDB
         table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)

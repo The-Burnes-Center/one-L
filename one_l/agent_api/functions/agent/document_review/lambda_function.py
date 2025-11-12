@@ -38,12 +38,19 @@ s3_client = boto3.client('s3')
 
 # Initialize DynamoDB for job status tracking
 dynamodb = boto3.resource('dynamodb')
-JOB_STATUS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE', 'OneL-DV2-analysis-results')
+# ANALYSIS_RESULTS_TABLE should always be set by CDK - no fallback to avoid hardcoded stack names
+JOB_STATUS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
+if not JOB_STATUS_TABLE:
+    logger.warning("ANALYSIS_RESULTS_TABLE environment variable not set - job status tracking may fail")
 
 def save_job_status(job_id: str, document_s3_key: str, user_id: str, session_id: str, 
                    status: str, error: str = None, result: dict = None):
     """Save job status to DynamoDB for frontend polling"""
     try:
+        if not JOB_STATUS_TABLE:
+            logger.error("JOB_STATUS_TABLE (ANALYSIS_RESULTS_TABLE) not set - cannot save job status")
+            return
+        
         table = dynamodb.Table(JOB_STATUS_TABLE)
         
         item = {
