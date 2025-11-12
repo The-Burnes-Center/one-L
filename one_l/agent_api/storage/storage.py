@@ -35,6 +35,7 @@ class StorageConstruct(Construct):
         self.user_documents_bucket = None
         self.agent_processing_bucket = None
         self.analysis_table = None
+        self.sessions_table = None
         
         # Configuration - ensure all names start with stack name
         self._stack_name = Stack.of(self).stack_name
@@ -42,6 +43,7 @@ class StorageConstruct(Construct):
         self._user_documents_bucket_name = user_documents_bucket_name or f"{self._stack_name.lower()}-user-documents"
         self._agent_processing_bucket_name = f"{self._stack_name.lower()}-agent-processing"
         self._analysis_table_name = f"{self._stack_name}-analysis-results"
+        self._sessions_table_name = f"{self._stack_name}-sessions"
         self._additional_cors_origins = additional_cors_origins or []
         
         # Create the storage infrastructure
@@ -49,6 +51,7 @@ class StorageConstruct(Construct):
         self.create_user_documents_bucket()
         self.create_agent_processing_bucket()
         self.create_analysis_table()
+        self.create_sessions_table()
         self.create_outputs()
     
     def create_knowledge_bucket(self):
@@ -200,6 +203,37 @@ class StorageConstruct(Construct):
             )
         )
     
+    def create_sessions_table(self):
+        """Create DynamoDB table for storing user sessions."""
+        
+        self.sessions_table = dynamodb.Table(
+            self, "SessionsTable",
+            table_name=self._sessions_table_name,
+            partition_key=dynamodb.Attribute(
+                name="session_id",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="user_id",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
+        # Add GSI for querying by user_id
+        self.sessions_table.add_global_secondary_index(
+            index_name="user-index",
+            partition_key=dynamodb.Attribute(
+                name="user_id",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="created_at",
+                type=dynamodb.AttributeType.STRING
+            )
+        )
+    
     def create_outputs(self):
         """Create CloudFormation outputs."""
         pass
@@ -240,4 +274,7 @@ class StorageConstruct(Construct):
     def grant_dynamodb_access(self, principal, table_name: str = "analysis"):
         """Grant DynamoDB access to specified table(s)."""
         if table_name in ["analysis", "all"]:
-            self.analysis_table.grant_read_write_data(principal) 
+            self.analysis_table.grant_read_write_data(principal)
+        if table_name in ["sessions", "all"]:
+            if self.sessions_table:
+                self.sessions_table.grant_read_write_data(principal) 
