@@ -87,7 +87,7 @@ jobs:
 
     - name: CDK Deploy
       run: |
-        cdk deploy --require-approval never --context googleCredentialsJson="${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}"
+        cdk deploy --require-approval never
 
     - name: Get stack outputs
       id: stack-outputs
