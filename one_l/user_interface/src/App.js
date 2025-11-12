@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
 import SessionSidebar from './components/SessionSidebar';
@@ -1329,8 +1329,10 @@ const SessionWorkspace = ({ session }) => {
                 status: 'processing',
                 progress: 0,
                 message: 'Starting document analysis...',
-                processing: true
+                processing: true,
+                success: false
               };
+              redlineResults.push({ ...processingEntry });
 
               if (isCurrentSession()) {
                 setRedlinedDocuments(prev => {
@@ -1359,25 +1361,72 @@ const SessionWorkspace = ({ session }) => {
             }
             
             // Poll for completion (WebSocket is primary, polling is fallback)
-            const finalResult = await pollJobStatus(
-              reviewResponse.job_id, 
-              userIdAtStart, 
-              vendorFile.filename
-            );
-            
-            if (finalResult.success) {
-              redlineResults.push({
-                originalFile: vendorFile,
-                redlinedDocument: finalResult.redlined_document.redlined_document,
-                analysis: finalResult.analysis,
-                success: true
+            let finalResult = null;
+            try {
+              finalResult = await pollJobStatus(
+                reviewResponse.job_id,
+                userIdAtStart,
+                vendorFile.filename
+              );
+            } catch (pollError) {
+              console.warn('pollJobStatus fallback failed', {
+                jobId: reviewResponse.job_id,
+                filename: vendorFile.filename,
+                error: pollError?.message || pollError
               });
-            } else {
-              redlineResults.push({
-                originalFile: vendorFile,
-                error: finalResult.error,
-                success: false
-              });
+            }
+
+            if (finalResult?.processing === false) {
+              const transformedEntry = {
+                ...processingEntry,
+                processing: false,
+                status: finalResult.success ? 'completed' : 'failed',
+                progress: 100,
+                success: finalResult.success,
+                redlinedDocument: finalResult.success
+                  ? finalResult.redlined_document?.redlined_document
+                  : undefined,
+                analysis: finalResult.success ? finalResult.analysis : undefined,
+                error: finalResult.success ? undefined : finalResult.error,
+                message: finalResult.success
+                  ? 'Document processing completed'
+                  : (finalResult.error || 'Processing failed')
+              };
+
+              // Replace the last pushed processing entry with the final result
+              redlineResults[redlineResults.length - 1] = transformedEntry;
+
+              if (isCurrentSession()) {
+                setRedlinedDocuments(prev => {
+                  const nextDocs = prev.map(doc =>
+                    doc.jobId === processingEntry.jobId ? transformedEntry : doc
+                  );
+                  persistSessionState(sessionIdAtStart, {
+                    redlinedDocuments: nextDocs,
+                    generating: finalResult.success ? false : nextDocs.some(doc => doc.processing)
+                  });
+                  updateGlobalProcessingFlag(
+                    sessionIdAtStart,
+                    nextDocs.some(doc => doc.processing)
+                  );
+                  return nextDocs;
+                });
+              } else {
+                const existingDocs = cloneRedlinedDocuments(
+                  sessionDataRef.current?.[sessionIdAtStart]?.redlinedDocuments || []
+                );
+                const nextDocs = existingDocs.map(doc =>
+                  doc.jobId === processingEntry.jobId ? transformedEntry : doc
+                );
+                persistSessionState(sessionIdAtStart, {
+                  redlinedDocuments: nextDocs,
+                  generating: nextDocs.some(doc => doc.processing)
+                });
+                updateGlobalProcessingFlag(
+                  sessionIdAtStart,
+                  nextDocs.some(doc => doc.processing)
+                );
+              }
             }
           } else if (reviewResponse.processing === false && reviewResponse.redlined_document && reviewResponse.redlined_document.success) {
           if (isCurrentSession()) {
@@ -2233,6 +2282,7 @@ const AppContent = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(authService.isUserAdmin());
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -2263,7 +2313,13 @@ const AppContent = () => {
         if (authService.isUserAuthenticated()) {
           setIsAuthenticated(true);
           setCurrentUser(authService.getCurrentUser());
+          setIsAdmin(authService.isUserAdmin());
 
+        }
+        else {
+          setIsAuthenticated(false);
+          setCurrentUser(null);
+          setIsAdmin(false);
         }
         
         setAuthLoading(false);
@@ -2288,6 +2344,7 @@ const AppContent = () => {
     // Clear local state
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setIsAdmin(false);
     
     // Logout from Cognito (this will redirect)
     authService.logout();
@@ -2299,6 +2356,10 @@ const AppContent = () => {
   // Handle admin section navigation
   const handleAdminSectionChange = async (section) => {
     if (section === 'admin') {
+      if (!isAdmin) {
+        navigate('/');
+        return;
+      }
       navigate('/admin/knowledgebase');
     } else {
       // Go back to main page by creating a new session
@@ -2347,9 +2408,13 @@ const AppContent = () => {
     return (
       <Routes>
         <Route path="/admin/knowledgebase" element={
-          <div className="main-content">
-            <AdminDashboard activeTab={activeTab} onTabChange={setActiveTab} />
-          </div>
+          isAdmin ? (
+            <div className="main-content">
+              <AdminDashboard activeTab={activeTab} onTabChange={setActiveTab} />
+            </div>
+          ) : (
+            <Navigate to="/" replace />
+          )
         } />
         <Route path="/:sessionId" element={<SessionView />} />
         <Route path="/" element={<AutoSessionRedirect />} />
@@ -2473,6 +2538,7 @@ const AppContent = () => {
       <SessionSidebar
         currentUserId={authService.getUserId()}
         onAdminSectionChange={handleAdminSectionChange}
+        isAdmin={isAdmin}
         isVisible={true}
       />
       

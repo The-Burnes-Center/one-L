@@ -6,7 +6,8 @@ const SessionSidebar = ({
   currentUserId, 
   isVisible = true,
   onAdminSectionChange,
-  onRefreshRequest // Add callback to allow parent to trigger refresh
+  onRefreshRequest, // Add callback to allow parent to trigger refresh
+  isAdmin = false
 }) => {
   const navigate = useNavigate();
   const { sessionId } = useParams();
@@ -597,75 +598,77 @@ const SessionSidebar = ({
       </div>
 
       {/* Admin Section */}
-      <div style={{
-        borderTop: '1px solid #333'
-      }}>
-        <button
-          onClick={() => setAdminExpanded(!adminExpanded)}
-          style={{
-            width: '100%',
-            padding: '12px',
-            backgroundColor: 'transparent',
-            color: '#ffffff',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: '500',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'background-color 0.2s'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.backgroundColor = '#1f1f1f';
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.backgroundColor = 'transparent';
-          }}
-        >
-          <span>Admin</span>
-          <span style={{
-            fontSize: '12px',
-            transform: adminExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.2s'
-          }}>
-            ▼
-          </span>
-        </button>
-        
-        {/* Admin Submenu */}
-        {adminExpanded && (
-          <div style={{ paddingLeft: '12px', paddingBottom: '8px' }}>
-            <button
-              onClick={() => onAdminSectionChange && onAdminSectionChange('admin')}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                backgroundColor: 'transparent',
-                color: '#cccccc',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                borderRadius: '4px',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.backgroundColor = '#1f1f1f';
-                e.target.style.color = '#ffffff';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.backgroundColor = 'transparent';
-                e.target.style.color = '#cccccc';
-              }}
-            >
-              <span>Knowledge Base</span>
-            </button>
-          </div>
-        )}
-      </div>
+      {isAdmin && (
+        <div style={{
+          borderTop: '1px solid #333'
+        }}>
+          <button
+            onClick={() => setAdminExpanded(!adminExpanded)}
+            style={{
+              width: '100%',
+              padding: '12px',
+              backgroundColor: 'transparent',
+              color: '#ffffff',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.backgroundColor = '#1f1f1f';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.backgroundColor = 'transparent';
+            }}
+          >
+            <span>Admin</span>
+            <span style={{
+              fontSize: '12px',
+              transform: adminExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s'
+            }}>
+              ▼
+            </span>
+          </button>
+          
+          {/* Admin Submenu */}
+          {adminExpanded && (
+            <div style={{ paddingLeft: '12px', paddingBottom: '8px' }}>
+              <button
+                onClick={() => onAdminSectionChange && onAdminSectionChange('admin')}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  backgroundColor: 'transparent',
+                  color: '#cccccc',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '4px',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#1f1f1f';
+                  e.target.style.color = '#ffffff';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                  e.target.style.color = '#cccccc';
+                }}
+              >
+                <span>Knowledge Base</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div style={{
