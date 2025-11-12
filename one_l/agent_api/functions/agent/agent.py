@@ -16,20 +16,20 @@ from aws_cdk import (
     Stack
 )
 
-# Import constants for Google Document AI configuration
-try:
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../'))
-    from constants import (
-        GOOGLE_CLOUD_PROJECT_ID,
-        GOOGLE_DOCUMENT_AI_PROCESSOR_ID,
-        GOOGLE_DOCUMENT_AI_LOCATION
-    )
-except ImportError:
-    # Fallback if constants.py is not available
-    GOOGLE_CLOUD_PROJECT_ID = ""
-    GOOGLE_DOCUMENT_AI_PROCESSOR_ID = ""
-    GOOGLE_DOCUMENT_AI_LOCATION = "us"
+# Google Document AI configuration removed - reverted to PyMuPDF-based conversion
+# Google Document AI code saved in tools_pymupdf_conversion_backup.py for future reference
+# try:
+#     import sys
+#     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../'))
+#     from constants import (
+#         GOOGLE_CLOUD_PROJECT_ID,
+#         GOOGLE_DOCUMENT_AI_PROCESSOR_ID,
+#         GOOGLE_DOCUMENT_AI_LOCATION
+#     )
+# except ImportError:
+#     GOOGLE_CLOUD_PROJECT_ID = ""
+#     GOOGLE_DOCUMENT_AI_PROCESSOR_ID = ""
+#     GOOGLE_DOCUMENT_AI_LOCATION = "us"
 
 
 class AgentConstruct(Construct):
@@ -110,22 +110,8 @@ class AgentConstruct(Construct):
                 "LOG_LEVEL": "INFO",
                 # Enable OCR fallback for PDFs in dev to handle scanned/flattened documents
                 "ENABLE_TEXTRACT_OCR": "1",
-                # Google Document AI configuration (optional - falls back to PyMuPDF if not set)
-                # Priority: 1) CDK context, 2) constants.py, 3) environment variable, 4) default/empty
-                "GOOGLE_CLOUD_PROJECT_ID": (self.node.try_get_context("googleCloudProjectId") or 
-                                          GOOGLE_CLOUD_PROJECT_ID or 
-                                          os.environ.get("GOOGLE_CLOUD_PROJECT_ID", "")),
-                "GOOGLE_DOCUMENT_AI_PROCESSOR_ID": (self.node.try_get_context("googleDocumentAIProcessorId") or 
-                                                   GOOGLE_DOCUMENT_AI_PROCESSOR_ID or 
-                                                   os.environ.get("GOOGLE_DOCUMENT_AI_PROCESSOR_ID", "")),
-                "GOOGLE_DOCUMENT_AI_LOCATION": (self.node.try_get_context("googleDocumentAILocation") or 
-                                               GOOGLE_DOCUMENT_AI_LOCATION or 
-                                               os.environ.get("GOOGLE_DOCUMENT_AI_LOCATION", "us")),
-                # Google Cloud service account credentials (base64-encoded JSON)
-                # Set via CDK context: --context googleCredentialsJson="<base64-string>"
-                # Or via environment variable at CDK synth time
-                "GOOGLE_APPLICATION_CREDENTIALS_JSON": (self.node.try_get_context("googleCredentialsJson") or 
-                                                       os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON", ""))
+                # Google Document AI configuration removed - reverted to PyMuPDF-based conversion
+                # Google Document AI code saved in tools_pymupdf_conversion_backup.py for future reference
             }
         )
     
