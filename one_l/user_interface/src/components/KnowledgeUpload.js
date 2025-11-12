@@ -15,6 +15,7 @@ const KnowledgeUpload = () => {
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState('');
   const [listContinuationToken, setListContinuationToken] = useState(null);
+  const [prefixFilter, setPrefixFilter] = useState('');
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (event) => {
@@ -44,16 +45,18 @@ const KnowledgeUpload = () => {
     setMessageType('');
   };
 
-  const fetchKnowledgeFiles = useCallback(async ({ continuationToken = null, append = false } = {}) => {
+  const fetchKnowledgeFiles = useCallback(async ({ continuationToken = null, append = false, prefixOverride } = {}) => {
     // Avoid multiple parallel load-more calls
     setFilesLoading(true);
     if (!append) {
       setFilesError('');
     }
 
+    const effectivePrefix = prefixOverride !== undefined ? prefixOverride : prefixFilter;
+
     try {
       const response = await knowledgeManagementAPI.listFiles('knowledge', {
-        prefix: 'admin-uploads/',
+        prefix: effectivePrefix || undefined,
         maxKeys: 100,
         continuationToken
       });
@@ -82,11 +85,11 @@ const KnowledgeUpload = () => {
     } finally {
       setFilesLoading(false);
     }
-  }, []);
+  }, [prefixFilter]);
 
   useEffect(() => {
-    fetchKnowledgeFiles();
-  }, [fetchKnowledgeFiles]);
+    fetchKnowledgeFiles({ prefixOverride: prefixFilter });
+  }, [fetchKnowledgeFiles, prefixFilter]);
 
   const handleUpload = async () => {
     if (selectedFiles.length === 0) {
@@ -168,7 +171,8 @@ const KnowledgeUpload = () => {
   };
 
   const handleRefreshKnowledgeList = () => {
-    fetchKnowledgeFiles();
+    setListContinuationToken(null);
+    fetchKnowledgeFiles({ prefixOverride: prefixFilter });
   };
 
   const handleLoadMoreFiles = () => {
@@ -260,14 +264,33 @@ const KnowledgeUpload = () => {
       <div className="knowledge-list-section">
         <div className="section-header">
           <h3>Knowledge Base Contents</h3>
-          <button
-            type="button"
-            onClick={handleRefreshKnowledgeList}
-            className="btn btn-secondary"
-            disabled={filesLoading}
-          >
-            {filesLoading ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div className="section-actions">
+            <label className="form-label" htmlFor="kb-prefix-filter">
+              Filter
+            </label>
+            <select
+              id="kb-prefix-filter"
+              className="form-control"
+              value={prefixFilter}
+              onChange={(event) => {
+                const newPrefix = event.target.value;
+                setListContinuationToken(null);
+                setPrefixFilter(newPrefix);
+              }}
+              disabled={filesLoading}
+            >
+              <option value="">All files</option>
+              <option value="admin-uploads/">Admin uploads</option>
+            </select>
+            <button
+              type="button"
+              onClick={handleRefreshKnowledgeList}
+              className="btn btn-secondary"
+              disabled={filesLoading}
+            >
+              {filesLoading ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {filesError && (
