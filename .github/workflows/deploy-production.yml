@@ -93,6 +93,7 @@ jobs:
     - name: Ensure DynamoDB sessions table exists
       run: |
         echo "Checking if sessions table exists..."
+        # This step creates the sessions table if it doesn't exist
         SESSIONS_TABLE="OneL-v2-sessions"
         
         # Check if table exists
