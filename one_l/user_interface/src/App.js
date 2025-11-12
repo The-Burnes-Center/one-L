@@ -1300,6 +1300,8 @@ const SessionWorkspace = ({ session }) => {
           );
           
           // Check if processing is asynchronous
+          let processingEntry = null;
+
           if (reviewResponse.processing && reviewResponse.job_id) {
             if (isCurrentSession()) {
               setWorkflowMessage(`Processing ${vendorFile.filename} in background...`);
@@ -1323,7 +1325,7 @@ const SessionWorkspace = ({ session }) => {
               };
 
               // Add job to tracking with initial progress
-              const processingEntry = {
+              processingEntry = {
                 originalFile: vendorFile,
                 jobId: reviewResponse.job_id,
                 status: 'processing',
@@ -1398,9 +1400,12 @@ const SessionWorkspace = ({ session }) => {
 
               if (isCurrentSession()) {
                 setRedlinedDocuments(prev => {
-                  const nextDocs = prev.map(doc =>
-                    doc.jobId === processingEntry.jobId ? transformedEntry : doc
-                  );
+                  const nextDocs = prev.map(doc => {
+                    if (processingEntry && doc.jobId === processingEntry.jobId) {
+                      return transformedEntry;
+                    }
+                    return doc;
+                  });
                   persistSessionState(sessionIdAtStart, {
                     redlinedDocuments: nextDocs,
                     generating: finalResult.success ? false : nextDocs.some(doc => doc.processing)
@@ -1415,9 +1420,12 @@ const SessionWorkspace = ({ session }) => {
                 const existingDocs = cloneRedlinedDocuments(
                   sessionDataRef.current?.[sessionIdAtStart]?.redlinedDocuments || []
                 );
-                const nextDocs = existingDocs.map(doc =>
-                  doc.jobId === processingEntry.jobId ? transformedEntry : doc
-                );
+                const nextDocs = existingDocs.map(doc => {
+                  if (processingEntry && doc.jobId === processingEntry.jobId) {
+                    return transformedEntry;
+                  }
+                  return doc;
+                });
                 persistSessionState(sessionIdAtStart, {
                   redlinedDocuments: nextDocs,
                   generating: nextDocs.some(doc => doc.processing)
