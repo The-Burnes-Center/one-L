@@ -17,6 +17,10 @@ RUN dnf update -y && \
 # Set working directory
 WORKDIR /build
 
+# Accept build arg for cache-busting (ensures fresh builds when code changes)
+ARG CACHE_BUST
+RUN echo "Cache bust: ${CACHE_BUST}"
+
 # Copy requirements file first for better layer caching
 COPY one_l/agent_api/functions/agent/document_review/requirements.txt .
 

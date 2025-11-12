@@ -49,9 +49,14 @@ jobs:
         # Create output directory
         mkdir -p ${OUTPUT_DIR}
         
+        # Get commit hash for cache-busting to ensure fresh builds
+        COMMIT_HASH=$(git rev-parse HEAD)
+        echo "Building with commit hash: ${COMMIT_HASH} for cache-busting"
+        
         # Build Docker image (force x86_64 platform for Lambda compatibility)
+        # Use --build-arg with commit hash to bust cache and ensure code updates are included
         echo "Building Docker image with Lambda-compatible environment..."
-        docker build --platform linux/amd64 -t ${DOCKER_IMAGE} -f Dockerfile.lambda .
+        docker build --platform linux/amd64 --build-arg CACHE_BUST=${COMMIT_HASH} -t ${DOCKER_IMAGE} -f Dockerfile.lambda .
         
         # Run container to build deployment package
         echo "Creating deployment package in Lambda-compatible environment..."
