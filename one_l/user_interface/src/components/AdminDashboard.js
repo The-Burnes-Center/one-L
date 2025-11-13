@@ -5,6 +5,7 @@
 
 import React from 'react';
 import KnowledgeUpload from './KnowledgeUpload';
+import MetricsDashboard from './MetricsDashboard';
 
 const AdminDashboard = ({ activeTab, onTabChange }) => {
   // Remove local state since it's now managed by App component
@@ -14,6 +15,11 @@ const AdminDashboard = ({ activeTab, onTabChange }) => {
       id: 'data',
       label: 'Data',
       component: KnowledgeUpload
+    },
+    {
+      id: 'metrics',
+      label: 'Metrics',
+      component: MetricsDashboard
     }
   ];
 
