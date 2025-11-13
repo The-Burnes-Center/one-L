@@ -581,7 +581,10 @@ def get_admin_metrics() -> Dict[str, Any]:
         
         # Fetch user names from Cognito if USER_POOL_ID is available
         user_info_map = {}
+        if not USER_POOL_ID:
+            logger.warning("USER_POOL_ID not set - user names will not be fetched from Cognito")
         if USER_POOL_ID and top_users:
+            logger.info(f"Fetching user names from Cognito for {len(top_users)} users (USER_POOL_ID: {USER_POOL_ID})")
             try:
                 # Fetch user attributes for top users
                 for user_id, session_count in top_users:
@@ -606,6 +609,7 @@ def get_admin_metrics() -> Dict[str, Any]:
                         
                         # Use name if available, otherwise email, otherwise user_id
                         display_name = name or email or user_id
+                        logger.info(f"Fetched user info for {user_id}: name='{display_name}', email='{email}'")
                         user_info_map[user_id] = {
                             'name': display_name,
                             'email': email,
