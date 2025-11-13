@@ -8,6 +8,7 @@ import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
 import SessionSidebar from './components/SessionSidebar';
 import AdminDashboard from './components/AdminDashboard';
+import MetricsDashboard from './components/MetricsDashboard';
 import UserHeader from './components/UserHeader';
 import { isConfigValid, loadConfig } from './utils/config';
 import { agentAPI, sessionAPI } from './services/api';
@@ -2541,12 +2542,14 @@ const AppContent = () => {
 
   // Handle admin section navigation
   const handleAdminSectionChange = async (section) => {
+    if (!isAdmin) {
+      navigate('/');
+      return;
+    }
     if (section === 'admin') {
-      if (!isAdmin) {
-        navigate('/');
-        return;
-      }
       navigate('/admin/knowledgebase');
+    } else if (section === 'metrics') {
+      navigate('/admin/metrics');
     } else {
       // Go back to main page by creating a new session
       try {
@@ -2597,6 +2600,15 @@ const AppContent = () => {
           isAdmin ? (
             <div className="main-content">
               <AdminDashboard activeTab={activeTab} onTabChange={setActiveTab} />
+            </div>
+          ) : (
+            <Navigate to="/" replace />
+          )
+        } />
+        <Route path="/admin/metrics" element={
+          isAdmin ? (
+            <div className="main-content">
+              <MetricsDashboard />
             </div>
           ) : (
             <Navigate to="/" replace />
