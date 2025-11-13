@@ -109,26 +109,42 @@ After creating queries, verify:
 - ✓ Queries comprehensively check against Massachusetts ITS T&Cs, EOTSS policies, and all Exhibits
 - ✓ Adaptive to actual vendor document structure (not forced pattern)
 
-### STEP 3: COMPREHENSIVE CONFLICT DETECTION
+### STEP 3: MATERIAL CONFLICT DETECTION
 
-**CRITICAL: ERR ON THE SIDE OF DETECTING MORE CONFLICTS, NOT FEWER**
+**CRITICAL: FOCUS ON MATERIAL CONFLICTS WITH REAL BUSINESS/LEGAL IMPACT**
 
-Your goal is MAXIMUM conflict detection. When in doubt, flag it as a conflict. It's better to flag a borderline case than to miss a real conflict.
+Your goal is to identify conflicts that have meaningful consequences for the Commonwealth. Focus on issues that:
+- Create actual risk or liability exposure
+- Modify substantive rights or obligations
+- Change financial terms, payment obligations, or cost structures
+- Impact service delivery, performance standards, or operational requirements
+- Affect data security, privacy, or compliance obligations
+- Alter dispute resolution, jurisdiction, or legal framework
+- Limit Commonwealth rights or expand vendor rights inappropriately
 
-For EACH query result, identify:
+**DO NOT flag:**
+- Minor stylistic differences that don't change meaning
+- Synonym substitutions that preserve intent
+- Formatting or organizational differences
+- Trivial word choices that don't affect obligations
+- Differences that are purely cosmetic
 
-1. **Direct Conflicts**: Vendor language contradicting requirements
-2. **Modifications**: Vendor alterations to standard terms (even minor ones)
-3. **Additions**: New conditions/limitations vendor added (even if seemingly harmless)
-4. **Omissions**: Required provisions vendor didn't address or insufficiently addressed
-5. **Reversals**: Where vendor flips obligations or shifts responsibility
-6. **Ambiguities**: Where vendor weakens clear requirements or introduces uncertainty
-7. **Insufficient Commitments**: Where vendor language doesn't meet the full spirit of requirements
-8. **Conditional Acceptances**: Where vendor accepts requirements only under certain conditions
-9. **Scope Limitations**: Where vendor restricts the scope of their obligations
-10. **Temporal Deviations**: Any time-based differences from standard requirements
+**When in doubt, ask: "Does this difference create a real risk or change a substantive obligation?" If not, don't flag it.**
 
-**AGGRESSIVE Pattern Recognition - Always Check For:**
+For EACH query result, identify MATERIAL conflicts:
+
+1. **Direct Conflicts**: Vendor language that contradicts requirements and creates risk
+2. **Substantive Modifications**: Vendor alterations that change obligations or rights
+3. **Risk-Shifting Additions**: New conditions that limit Commonwealth rights or expand vendor protections
+4. **Material Omissions**: Required provisions that are missing and create exposure
+5. **Obligation Reversals**: Where vendor flips responsibilities in ways that harm the Commonwealth
+6. **Ambiguities with Impact**: Where vendor weakens clear requirements in ways that create uncertainty or risk
+7. **Insufficient Commitments**: Where vendor language falls short of required standards in meaningful ways
+8. **Conditional Acceptances**: Where vendor accepts requirements only under conditions that limit Commonwealth rights
+9. **Scope Limitations**: Where vendor restricts obligations in ways that affect service delivery or protection
+10. **Temporal Deviations**: Time-based differences that impact operations, deadlines, or service levels
+
+**Pattern Recognition - Check for Language That Often Indicates Material Conflicts:**
 - **Limiting language**: "only", "solely", "limited to", "maximum", "at most", "not exceeding", "cap", "ceiling"
 - **Discretionary terms**: "may", "reserves right", "at discretion", "will consider", "might", "could"
 - **Conditional language**: "subject to", "provided that", "unless", "if", "when", "as long as"
@@ -147,15 +163,15 @@ For EACH query result, identify:
 - **Intellectual property modifications**: Changes to IP ownership, licensing, or use rights
 - **Data handling deviations**: Any changes to data storage, retention, security, or access requirements
 
-**Subtle Conflict Detection:**
-- Compare vendor language WORD-BY-WORD with Massachusetts requirements
-- Look for synonyms or paraphrasing that changes meaning
-- Check for missing commitments that are implied in standard terms
-- Identify where vendor adds conditions that aren't in standards
-- Flag cases where vendor language is less specific than required
-- Detect when vendor shifts from "shall" to "may" or "will"
-- Note when vendor uses passive voice to obscure responsibility
-- Flag any hedging language that weakens commitments
+**Material Conflict Detection:**
+- Compare vendor language with Massachusetts requirements focusing on MEANING and OBLIGATIONS
+- Look for paraphrasing that changes substantive obligations or creates risk
+- Check for missing commitments that create actual exposure for the Commonwealth
+- Identify where vendor adds conditions that limit Commonwealth rights or expand vendor protections
+- Flag cases where reduced specificity creates operational or legal risk
+- Detect when vendor shifts from mandatory ("shall") to discretionary ("may") in ways that affect obligations
+- Note when language obscures responsibility in ways that create liability exposure
+- Flag hedging language that weakens commitments in material ways
 
 ### STEP 4: SYSTEMATIC VERIFICATION
 
@@ -197,12 +213,12 @@ Present ALL conflicts in this EXACT Markdown table:
 
 **Column Specifications:**
 - **Clarification ID**: Vendor's ID or "Additional-[#]" for other findings
-- **Vendor Quote**: Exact text verbatim OR "N/A - Missing provision" for omissions
-- **Summary**: 20-40 word context
-- **Source Doc**: KB document name
-- **Clause Ref**: Specific section
-- **Conflict Type**: adds/deletes/modifies/contradicts/omits required/reverses obligation
-- **Rationale**: ≤50 words on legal impact
+- **Vendor Quote**: Exact text verbatim from vendor document (the specific sentence/phrase that conflicts)
+- **Summary**: 20-40 word plain-language description of what the vendor is trying to change
+- **Source Doc**: KB document name (the Massachusetts requirement being violated)
+- **Clause Ref**: Specific section number or reference
+- **Conflict Type**: One of: contradicts requirement / limits obligation / adds condition / omits required term / shifts risk / modifies standard
+- **Rationale**: 30-50 words explaining the PRACTICAL BUSINESS IMPACT - what risk this creates, what it means for the Commonwealth, and why it matters. Write in plain business language, not legal jargon. Focus on consequences, not just technical differences.
 
 ## EXECUTION IMPERATIVES
 
@@ -211,9 +227,9 @@ Present ALL conflicts in this EXACT Markdown table:
 3. **NON-REPETITIVE COVERAGE**: Each query must be unique. Don't repeat major terms across queries.
 4. **CHECK AGAINST ALL MA DOCS**: Queries must comprehensively search Massachusetts T&Cs, EOTSS policies, ITS Terms, all Exhibits.
 5. **COMPLETE DOCUMENT SPAN**: Queries must collectively cover EVERY section where vendor provided input.
-6. **AGGRESSIVE DETECTION**: When analyzing results, be liberal about flagging conflicts. It's better to flag a borderline case than miss a real issue.
-7. **WORD-BY-WORD COMPARISON**: Compare vendor language precisely with Massachusetts requirements - even small differences matter.
-8. **DON'T ASSUME COMPLIANCE**: Don't assume vendor language is compliant just because it's close - verify it matches exactly or flag the difference.
+6. **MATERIAL IMPACT FOCUS**: Only flag conflicts that have real business or legal consequences. Don't flag minor language differences that don't change meaning or obligations.
+7. **SUBSTANTIVE COMPARISON**: Compare vendor language with Massachusetts requirements focusing on MEANING and OBLIGATIONS, not just word-for-word differences.
+8. **PRACTICAL RATIONALE**: For each conflict, explain the real-world impact - what risk it creates, what it means operationally, and why the Commonwealth should care.
 
-Remember: Your job is to adapt to ANY vendor document structure while ensuring comprehensive coverage. Check every vendor exception against ALL relevant Massachusetts requirements through distinct, strategic queries that maximize unique coverage. When in doubt about whether something is a conflict, FLAG IT. Maximum detection is the priority.
+Remember: Your job is to identify MATERIAL conflicts that have real business or legal impact. Focus on issues that create actual risk, change obligations, or affect the Commonwealth's rights. Write clear, practical rationales that explain why each conflict matters in business terms, not just technical legal differences. Quality over quantity - meaningful conflicts with clear impact are more valuable than flagging every minor language difference.
 """

@@ -735,16 +735,29 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     
                     # Create redline item using exact vendor quote for matching
                     if vendor_quote_clean.strip():  # Only add if we have actual text
+                        # Create user-friendly comment that explains the issue clearly
+                        # Use summary if available, otherwise use rationale
+                        comment_text = summary if summary and len(summary.strip()) > 10 else rationale
+                        
+                        # Format comment to be clear and actionable
+                        if source_doc and source_doc.strip() and source_doc.lower() not in ['n/a', 'na', 'none']:
+                            comment = f"Issue: {comment_text.strip()}\n\nReference: {source_doc}"
+                            if clause_ref and clause_ref.strip() and clause_ref.lower() not in ['n/a', 'na', 'none']:
+                                comment += f" ({clause_ref.strip()})"
+                        else:
+                            comment = comment_text.strip()
+                        
                         redline_items.append({
                             'text': vendor_quote_clean.strip(),  # Exact sentence from vendor document
-                            'comment': f"CONFLICT {clarification_id} ({conflict_type}): {rationale}",
-                            'author': 'Legal-AI',
-                            'initials': 'LAI',
+                            'comment': comment,
+                            'author': 'One L',
+                            'initials': '1L',
                             'clarification_id': clarification_id,
                             'conflict_type': conflict_type,
                             'source_doc': source_doc,
                             'clause_ref': clause_ref,
-                            'summary': summary
+                            'summary': summary,
+                            'rationale': rationale
                         })
                         
         # Deduplicate conflicts by clarification_id (keep first occurrence)
@@ -2244,13 +2257,390 @@ def _create_redlined_filename(original_s3_key: str, session_id: str = None, user
     return redlined_s3_key
 
 
+def _get_google_credentials_from_secrets_manager(secret_name: str) -> dict:
+    """
+    Retrieve Google Cloud service account credentials from AWS Secrets Manager.
+    Credentials are stored as JSON string in the secret.
+    
+    Args:
+        secret_name: Name of the secret in AWS Secrets Manager
+        
+    Returns:
+        Dictionary containing Google Cloud credentials, or None if not available
+    """
+    try:
+        secrets_client = boto3.client('secretsmanager')
+        response = secrets_client.get_secret_value(SecretId=secret_name)
+        secret_string = response['SecretString']
+        
+        # Parse JSON credentials
+        import json
+        credentials = json.loads(secret_string)
+        
+        logger.info(f"Successfully retrieved Google credentials from Secrets Manager: {secret_name}")
+        return credentials
+    except secrets_client.exceptions.ResourceNotFoundException:
+        logger.warning(f"Secret {secret_name} not found in Secrets Manager - Google Document AI will not be available")
+        return None
+    except Exception as e:
+        logger.warning(f"Error retrieving Google credentials from Secrets Manager: {e}")
+        return None
+
+
+def _convert_pdf_to_docx_with_google_docai(pdf_bytes: bytes, project_id: str, processor_id: str, location: str, credentials: dict) -> Document:
+    """
+    Convert PDF to DOCX using Google Document AI for exact formatting preservation.
+    
+    Args:
+        pdf_bytes: PDF file content as bytes
+        project_id: Google Cloud project ID
+        processor_id: Google Document AI processor ID
+        location: Google Document AI location (e.g., 'us')
+        credentials: Google Cloud service account credentials dictionary
+        
+    Returns:
+        python-docx Document object
+    """
+    try:
+        from google.cloud import documentai
+        from google.oauth2 import service_account
+        import json
+        
+        # Create credentials object from dictionary
+        creds = service_account.Credentials.from_service_account_info(credentials)
+        
+        # Initialize Document AI client
+        client = documentai.DocumentProcessorServiceClient(credentials=creds)
+        
+        # Construct processor name
+        processor_name = client.processor_path(project_id, location, processor_id)
+        
+        # Process the document
+        logger.info(f"Processing PDF with Google Document AI (processor: {processor_name})")
+        raw_document = documentai.RawDocument(
+            content=pdf_bytes,
+            mime_type="application/pdf"
+        )
+        
+        request = documentai.ProcessRequest(
+            name=processor_name,
+            raw_document=raw_document
+        )
+        
+        result = client.process_document(request=request)
+        document = result.document
+        
+        logger.info(f"Google Document AI processed {len(document.pages)} pages")
+        
+        # Convert Document AI output to DOCX with exact formatting
+        docx_doc = Document()
+        
+        # Google Document AI provides structured text with layout information
+        # Process pages to preserve exact formatting
+        for page_idx, page in enumerate(document.pages):
+            logger.info(f"Processing page {page_idx + 1} from Google Document AI")
+            
+            # Process paragraphs from the page
+            if hasattr(page, 'paragraphs') and page.paragraphs:
+                for para_idx, para_layout in enumerate(page.paragraphs):
+                    if hasattr(para_layout, 'layout') and para_layout.layout:
+                        # Extract text segments with formatting
+                        text_anchor = para_layout.layout.text_anchor
+                        if text_anchor and text_anchor.text_segments:
+                            para = docx_doc.add_paragraph()
+                            
+                            for segment in text_anchor.text_segments:
+                                start_idx = int(segment.start_index) if segment.start_index else 0
+                                end_idx = int(segment.end_index) if segment.end_index else len(document.text)
+                                text = document.text[start_idx:end_idx]
+                                
+                                if text:
+                                    run = para.add_run(text)
+                                    
+                                    # Apply font size if available
+                                    if hasattr(para_layout.layout, 'font_size'):
+                                        try:
+                                            font_size_value = para_layout.layout.font_size
+                                            if hasattr(font_size_value, 'value'):
+                                                run.font.size = Pt(float(font_size_value.value))
+                                        except:
+                                            pass
+                                    
+                                    # Apply bold if available
+                                    if hasattr(para_layout.layout, 'font_weight'):
+                                        if para_layout.layout.font_weight == 'bold' or para_layout.layout.font_weight == 700:
+                                            run.font.bold = True
+                                    
+                                    # Apply italic if available
+                                    if hasattr(para_layout.layout, 'font_style'):
+                                        if 'italic' in para_layout.layout.font_style.lower():
+                                            run.font.italic = True
+            
+            # Process tables if available
+            if hasattr(page, 'tables') and page.tables:
+                for table_layout in page.tables:
+                    if hasattr(table_layout, 'header_rows') and hasattr(table_layout, 'body_rows'):
+                        # Extract table data
+                        table_data = []
+                        # Process header rows
+                        for row in table_layout.header_rows:
+                            row_data = []
+                            for cell in row.cells:
+                                if hasattr(cell, 'layout') and cell.layout and hasattr(cell.layout, 'text_anchor'):
+                                    text_anchor = cell.layout.text_anchor
+                                    if text_anchor and text_anchor.text_segments:
+                                        cell_text = ""
+                                        for segment in text_anchor.text_segments:
+                                            start_idx = int(segment.start_index) if segment.start_index else 0
+                                            end_idx = int(segment.end_index) if segment.end_index else len(document.text)
+                                            cell_text += document.text[start_idx:end_idx]
+                                        row_data.append(cell_text)
+                                    else:
+                                        row_data.append("")
+                                else:
+                                    row_data.append("")
+                            if row_data:
+                                table_data.append(row_data)
+                        
+                        # Process body rows
+                        for row in table_layout.body_rows:
+                            row_data = []
+                            for cell in row.cells:
+                                if hasattr(cell, 'layout') and cell.layout and hasattr(cell.layout, 'text_anchor'):
+                                    text_anchor = cell.layout.text_anchor
+                                    if text_anchor and text_anchor.text_segments:
+                                        cell_text = ""
+                                        for segment in text_anchor.text_segments:
+                                            start_idx = int(segment.start_index) if segment.start_index else 0
+                                            end_idx = int(segment.end_index) if segment.end_index else len(document.text)
+                                            cell_text += document.text[start_idx:end_idx]
+                                        row_data.append(cell_text)
+                                    else:
+                                        row_data.append("")
+                                else:
+                                    row_data.append("")
+                            if row_data:
+                                table_data.append(row_data)
+                        
+                        # Create DOCX table
+                        if table_data:
+                            docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
+                            docx_table.style = 'Light Grid Accent 1'
+                            for row_idx, row_data in enumerate(table_data):
+                                if row_idx < len(docx_table.rows):
+                                    for col_idx, cell_data in enumerate(row_data):
+                                        if col_idx < len(docx_table.rows[row_idx].cells):
+                                            docx_table.rows[row_idx].cells[col_idx].text = str(cell_data) if cell_data else ""
+        
+        # Fallback: If no structured content, use full text with line breaks preserved
+        if len(docx_doc.paragraphs) == 0 and document.text:
+            # Split by line breaks to preserve exact structure
+            lines = document.text.split('\n')
+            for line in lines:
+                if line.strip():
+                    para = docx_doc.add_paragraph(line.strip())
+        
+        logger.info(f"Converted PDF to DOCX using Google Document AI - {len(docx_doc.paragraphs)} paragraphs, {len(docx_doc.tables)} tables")
+        return docx_doc
+        
+    except Exception as e:
+        logger.error(f"Google Document AI conversion failed: {e}")
+        raise
+
+
+def _convert_pdf_to_docx_pymupdf_fallback(pdf_bytes: bytes) -> Document:
+    """
+    Fallback PDF to DOCX conversion using PyMuPDF (original implementation).
+    Preserves formatting, fonts, colors, images, lists, and line breaks.
+    
+    Args:
+        pdf_bytes: PDF file content as bytes
+        
+    Returns:
+        python-docx Document object
+    """
+    import fitz  # PyMuPDF
+    
+    docx_doc = Document()
+    pdf_file = io.BytesIO(pdf_bytes)
+    pdf = fitz.open(stream=pdf_file, filetype="pdf")
+    
+    for page_index in range(len(pdf)):
+        page = pdf[page_index]
+        try:
+            # Extract images from page first
+            try:
+                image_list = page.get_images()
+                if image_list:
+                    logger.info(f"PDF_TO_DOCX: Found {len(image_list)} images on page {page_index + 1}")
+                    for img_idx, img in enumerate(image_list):
+                        try:
+                            xref = img[0]
+                            base_image = pdf.extract_image(xref)
+                            image_bytes = base_image["image"]
+                            
+                            if image_bytes:
+                                img_stream = io.BytesIO(image_bytes)
+                                para_img = docx_doc.add_paragraph()
+                                run_img = para_img.add_run()
+                                run_img.add_picture(img_stream, width=Inches(6))
+                                logger.info(f"PDF_TO_DOCX: Added image {img_idx + 1} to page {page_index + 1}")
+                        except Exception as img_error:
+                            logger.warning(f"PDF_TO_DOCX: Error extracting image {img_idx + 1}: {img_error}")
+                            continue
+            except Exception as img_extract_error:
+                logger.debug(f"PDF_TO_DOCX: Image extraction error: {img_extract_error}")
+            
+            # Try to extract tables first
+            try:
+                tables = page.find_tables()
+                if tables:
+                    logger.info(f"PDF_TO_DOCX: Found {len(tables)} tables on page {page_index + 1}")
+                    for table_idx, table in enumerate(tables):
+                        try:
+                            table_data = table.extract()
+                            if table_data and len(table_data) > 0:
+                                docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
+                                docx_table.style = 'Light Grid Accent 1'
+                                
+                                for row_idx, row_data in enumerate(table_data):
+                                    if row_idx < len(docx_table.rows):
+                                        for col_idx, cell_data in enumerate(row_data):
+                                            if col_idx < len(docx_table.rows[row_idx].cells):
+                                                cell = docx_table.rows[row_idx].cells[col_idx]
+                                                cell.text = str(cell_data) if cell_data else ""
+                                logger.info(f"PDF_TO_DOCX: Added table {table_idx + 1} with {len(table_data)} rows")
+                        except Exception as table_error:
+                            logger.warning(f"PDF_TO_DOCX: Error extracting table {table_idx + 1}: {table_error}")
+                            continue
+            except (AttributeError, Exception) as table_extract_error:
+                logger.debug(f"PDF_TO_DOCX: Table extraction not available: {table_extract_error}")
+            
+            # Extract text blocks with EXACT line-by-line preservation
+            text_dict = page.get_text("dict")
+            
+            for block in text_dict.get("blocks", []):
+                if "lines" in block:
+                    for line_idx, line in enumerate(block["lines"]):
+                        line_text = ""
+                        spans_data = []
+                        
+                        for span in line.get("spans", []):
+                            text = span.get("text", "")
+                            if text:
+                                flags = span.get("flags", 0)
+                                font_size = span.get("size", 11)
+                                font_color = span.get("color", 0)
+                                font_name = span.get("font", "")
+                                
+                                line_text += text
+                                spans_data.append({
+                                    'text': text,
+                                    'bold': bool(flags & 16),
+                                    'italic': bool(flags & 2),
+                                    'size': font_size,
+                                    'color': font_color,
+                                    'font': font_name
+                                })
+                        
+                        if not line_text.strip():
+                            continue
+                        
+                        # Detect numbered list patterns
+                        line_text_stripped = line_text.strip()
+                        is_numbered_list = False
+                        list_style = None
+                        
+                        if re.match(r'^\d+[a-z]\b', line_text_stripped, re.IGNORECASE):
+                            is_numbered_list = True
+                            list_style = 'List Number 2'
+                        elif re.match(r'^[\d]+[\.\)]', line_text_stripped):
+                            is_numbered_list = True
+                            list_style = 'List Number'
+                        elif re.match(r'^[a-z][\.\)]', line_text_stripped, re.IGNORECASE):
+                            is_numbered_list = True
+                            list_style = 'List Bullet 2'
+                        elif re.match(r'^\([a-z0-9]+\)', line_text_stripped, re.IGNORECASE):
+                            is_numbered_list = True
+                            list_style = 'List Bullet 2'
+                        elif re.search(r'\b\d+[a-z]\b', line_text_stripped, re.IGNORECASE) and len(line_text_stripped) < 100:
+                            is_numbered_list = True
+                            list_style = 'List Number 2'
+                        
+                        if is_numbered_list:
+                            para = docx_doc.add_paragraph(style=list_style)
+                        else:
+                            para = docx_doc.add_paragraph()
+                        
+                        for span_data in spans_data:
+                            run = para.add_run(span_data['text'])
+                            
+                            if span_data['bold']:
+                                run.font.bold = True
+                            if span_data['italic']:
+                                run.font.italic = True
+                            
+                            try:
+                                if span_data['size'] > 0:
+                                    run.font.size = Pt(span_data['size'])
+                            except:
+                                pass
+                            
+                            try:
+                                color_int = span_data['color']
+                                r = (color_int >> 16) & 0xFF
+                                g = (color_int >> 8) & 0xFF
+                                b = color_int & 0xFF
+                                if not (r == 0 and g == 0 and b == 0):
+                                    run.font.color.rgb = RGBColor(r, g, b)
+                            except:
+                                pass
+                            
+                            try:
+                                if span_data['font']:
+                                    font_map = {
+                                        'Arial': 'Arial',
+                                        'ArialMT': 'Arial',
+                                        'Arial-BoldMT': 'Arial',
+                                        'Arial-ItalicMT': 'Arial',
+                                        'Helvetica': 'Arial',
+                                        'Helvetica-Bold': 'Arial',
+                                        'Helvetica-Oblique': 'Arial',
+                                        'Times-Roman': 'Times New Roman',
+                                        'TimesNewRomanPSMT': 'Times New Roman',
+                                        'TimesNewRomanPS-BoldMT': 'Times New Roman',
+                                        'TimesNewRomanPS-ItalicMT': 'Times New Roman',
+                                        'Courier': 'Courier New',
+                                        'CourierNew': 'Courier New',
+                                        'CourierNewPSMT': 'Courier New',
+                                        'Calibri': 'Calibri',
+                                        'Calibri-Bold': 'Calibri',
+                                        'Calibri-Italic': 'Calibri',
+                                    }
+                                    if span_data['font'] not in ['Times-Roman']:
+                                        font_name = font_map.get(span_data['font'], span_data['font'])
+                                        try:
+                                            run.font.name = font_name
+                                        except Exception as font_err:
+                                            logger.debug(f"PDF_TO_DOCX: Could not set font {font_name}: {font_err}")
+                                            pass
+                            except Exception as font_error:
+                                logger.debug(f"PDF_TO_DOCX: Font processing error: {font_error}")
+                                pass
+        except Exception as page_error:
+            logger.warning(f"PDF_TO_DOCX: Error processing page {page_index + 1}: {page_error}")
+            continue
+    
+    pdf.close()
+    return docx_doc
+
+
 def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str) -> str:
     """
-    Convert a PDF stored in the processing bucket into a DOCX file with formatting preservation.
-    Uses PyMuPDF + python-docx for conversion with enhanced formatting preservation.
+    Convert a PDF stored in the processing bucket into a DOCX file with EXACT formatting preservation.
     
-    This is the RESTORED PyMuPDF implementation (reverted from Google Document AI).
-    Google Document AI code is saved in tools_pymupdf_conversion_backup.py for future reference.
+    Uses Google Document AI for best formatting accuracy, with PyMuPDF as fallback.
+    Credentials are retrieved securely from AWS Secrets Manager (no hardcoded secrets).
     
     Args:
         agent_bucket: S3 bucket name where PDF is stored
@@ -2260,221 +2650,72 @@ def _convert_pdf_to_docx_in_processing_bucket(agent_bucket: str, pdf_s3_key: str
         S3 key of the converted DOCX file
     """
     try:
-        logger.info(f"PDF_TO_DOCX_START: Converting {pdf_s3_key} to DOCX with formatting preservation")
+        logger.info(f"PDF_TO_DOCX_START: Converting {pdf_s3_key} to DOCX with exact formatting preservation")
         
         # Download PDF from S3
         response = s3_client.get_object(Bucket=agent_bucket, Key=pdf_s3_key)
         pdf_bytes = response['Body'].read()
         logger.info(f"PDF_TO_DOCX: Downloaded PDF, size: {len(pdf_bytes)} bytes")
         
-        # Use PyMuPDF + python-docx for conversion (enhanced with formatting preservation)
-        logger.info("PDF_TO_DOCX: Using PyMuPDF + python-docx with enhanced formatting preservation")
-        try:
-            import fitz  # PyMuPDF
-            
-            docx_doc = Document()
-            pdf_file = io.BytesIO(pdf_bytes)
-            pdf = fitz.open(stream=pdf_file, filetype="pdf")
-            
-            for page_index in range(len(pdf)):
-                page = pdf[page_index]
-                try:
-                    # Extract images from page first
-                    try:
-                        image_list = page.get_images()
-                        if image_list:
-                            logger.info(f"PDF_TO_DOCX: Found {len(image_list)} images on page {page_index + 1}")
-                            for img_idx, img in enumerate(image_list):
-                                try:
-                                    xref = img[0]
-                                    base_image = pdf.extract_image(xref)
-                                    image_bytes = base_image["image"]
-                                    
-                                    if image_bytes:
-                                        img_stream = io.BytesIO(image_bytes)
-                                        para_img = docx_doc.add_paragraph()
-                                        run_img = para_img.add_run()
-                                        run_img.add_picture(img_stream, width=Inches(6))
-                                        logger.info(f"PDF_TO_DOCX: Added image {img_idx + 1} to page {page_index + 1}")
-                                except Exception as img_error:
-                                    logger.warning(f"PDF_TO_DOCX: Error extracting image {img_idx + 1}: {img_error}")
-                                    continue
-                    except Exception as img_extract_error:
-                        logger.debug(f"PDF_TO_DOCX: Image extraction error: {img_extract_error}")
-                    
-                    # Try to extract tables first (no page markers to preserve exact PDF structure)
-                    try:
-                        tables = page.find_tables()
-                        if tables:
-                            logger.info(f"PDF_TO_DOCX: Found {len(tables)} tables on page {page_index + 1}")
-                            for table_idx, table in enumerate(tables):
-                                try:
-                                    table_data = table.extract()
-                                    if table_data and len(table_data) > 0:
-                                        docx_table = docx_doc.add_table(rows=len(table_data), cols=len(table_data[0]) if table_data else 0)
-                                        docx_table.style = 'Light Grid Accent 1'
-                                        
-                                        for row_idx, row_data in enumerate(table_data):
-                                            if row_idx < len(docx_table.rows):
-                                                for col_idx, cell_data in enumerate(row_data):
-                                                    if col_idx < len(docx_table.rows[row_idx].cells):
-                                                        cell = docx_table.rows[row_idx].cells[col_idx]
-                                                        cell.text = str(cell_data) if cell_data else ""
-                                        logger.info(f"PDF_TO_DOCX: Added table {table_idx + 1} with {len(table_data)} rows")
-                                except Exception as table_error:
-                                    logger.warning(f"PDF_TO_DOCX: Error extracting table {table_idx + 1}: {table_error}")
-                                    continue
-                    except (AttributeError, Exception) as table_extract_error:
-                        logger.debug(f"PDF_TO_DOCX: Table extraction not available: {table_extract_error}")
-                    
-                    # Extract text blocks with EXACT line-by-line preservation
-                    # This ensures line breaks, alignment, and sentence boundaries match PDF exactly
-                    text_dict = page.get_text("dict")
-                    
-                    for block in text_dict.get("blocks", []):
-                        if "lines" in block:
-                            # Process each line separately to preserve exact line breaks
-                            for line_idx, line in enumerate(block["lines"]):
-                                # Collect text from this line only (preserve line boundaries)
-                                line_text = ""
-                                spans_data = []
-                                
-                                for span in line.get("spans", []):
-                                    # Preserve exact text including spaces (don't strip)
-                                    text = span.get("text", "")
-                                    if text:
-                                        flags = span.get("flags", 0)
-                                        font_size = span.get("size", 11)
-                                        font_color = span.get("color", 0)
-                                        font_name = span.get("font", "")
-                                        
-                                        line_text += text  # Preserve exact text with spaces
-                                        spans_data.append({
-                                            'text': text,
-                                            'bold': bool(flags & 16),
-                                            'italic': bool(flags & 2),
-                                            'size': font_size,
-                                            'color': font_color,
-                                            'font': font_name
-                                        })
-                                
-                                # Skip empty lines
-                                if not line_text.strip():
-                                    continue
-                                
-                                # Detect numbered list patterns on this line
-                                line_text_stripped = line_text.strip()
-                                is_numbered_list = False
-                                list_style = None
-                                
-                                if re.match(r'^\d+[a-z]\b', line_text_stripped, re.IGNORECASE):
-                                    is_numbered_list = True
-                                    list_style = 'List Number 2'
-                                elif re.match(r'^[\d]+[\.\)]', line_text_stripped):
-                                    is_numbered_list = True
-                                    list_style = 'List Number'
-                                elif re.match(r'^[a-z][\.\)]', line_text_stripped, re.IGNORECASE):
-                                    is_numbered_list = True
-                                    list_style = 'List Bullet 2'
-                                elif re.match(r'^\([a-z0-9]+\)', line_text_stripped, re.IGNORECASE):
-                                    is_numbered_list = True
-                                    list_style = 'List Bullet 2'
-                                elif re.search(r'\b\d+[a-z]\b', line_text_stripped, re.IGNORECASE) and len(line_text_stripped) < 100:
-                                    is_numbered_list = True
-                                    list_style = 'List Number 2'
-                                
-                                # Create ONE paragraph per line to preserve exact line breaks
-                                if is_numbered_list:
-                                    para = docx_doc.add_paragraph(style=list_style)
-                                else:
-                                    para = docx_doc.add_paragraph()
-                                
-                                # Add each span with preserved formatting and exact spacing
-                                for span_idx, span_data in enumerate(spans_data):
-                                    run = para.add_run(span_data['text'])  # Preserve exact text including spaces
-                                    
-                                    if span_data['bold']:
-                                        run.font.bold = True
-                                    if span_data['italic']:
-                                        run.font.italic = True
-                                    
-                                    try:
-                                        if span_data['size'] > 0:
-                                            run.font.size = Pt(span_data['size'])
-                                    except:
-                                        pass
-                                    
-                                    try:
-                                        color_int = span_data['color']
-                                        r = (color_int >> 16) & 0xFF
-                                        g = (color_int >> 8) & 0xFF
-                                        b = color_int & 0xFF
-                                        if not (r == 0 and g == 0 and b == 0):
-                                            run.font.color.rgb = RGBColor(r, g, b)
-                                    except:
-                                        pass
-                                    
-                                    try:
-                                        if span_data['font']:
-                                            font_map = {
-                                                'Arial': 'Arial',
-                                                'ArialMT': 'Arial',
-                                                'Arial-BoldMT': 'Arial',
-                                                'Arial-ItalicMT': 'Arial',
-                                                'Helvetica': 'Arial',
-                                                'Helvetica-Bold': 'Arial',
-                                                'Helvetica-Oblique': 'Arial',
-                                                'Times-Roman': 'Times New Roman',
-                                                'TimesNewRomanPSMT': 'Times New Roman',
-                                                'TimesNewRomanPS-BoldMT': 'Times New Roman',
-                                                'TimesNewRomanPS-ItalicMT': 'Times New Roman',
-                                                'Courier': 'Courier New',
-                                                'CourierNew': 'Courier New',
-                                                'CourierNewPSMT': 'Courier New',
-                                                'Calibri': 'Calibri',
-                                                'Calibri-Bold': 'Calibri',
-                                                'Calibri-Italic': 'Calibri',
-                                            }
-                                            if span_data['font'] not in ['Times-Roman']:
-                                                font_name = font_map.get(span_data['font'], span_data['font'])
-                                                try:
-                                                    run.font.name = font_name
-                                                except Exception as font_err:
-                                                    logger.debug(f"PDF_TO_DOCX: Could not set font {font_name}: {font_err}")
-                                                    pass
-                                    except Exception as font_error:
-                                        logger.debug(f"PDF_TO_DOCX: Font processing error: {font_error}")
-                                        pass
-                                
-                                # Each line becomes a separate paragraph - preserves exact line breaks
-                                # No need to add spaces between spans since we preserve exact text
-                except Exception as page_error:
-                    logger.warning(f"PDF_TO_DOCX: Error processing page {page_index + 1}: {page_error}")
-                    continue
-            
-            pdf.close()
-            
-            # Save DOCX to memory
-            docx_bytes_io = io.BytesIO()
-            docx_doc.save(docx_bytes_io)
-            docx_bytes_io.seek(0)
-            docx_bytes = docx_bytes_io.read()
-            
-            # Upload DOCX to S3
-            new_key = pdf_s3_key.rsplit('.', 1)[0] + '.docx'
-            s3_client.put_object(
-                Bucket=agent_bucket,
-                Key=new_key,
-                Body=docx_bytes,
-                ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-            )
-            
-            logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key} (enhanced formatting: fonts, sizes, colors, styles, images, lists preserved)")
-            return new_key
+        # Try Google Document AI first (if configured) for best formatting accuracy
+        docx_doc = None
+        google_docai_enabled = (
+            os.environ.get('GOOGLE_CLOUD_PROJECT_ID') and
+            os.environ.get('GOOGLE_DOCUMENT_AI_PROCESSOR_ID') and
+            os.environ.get('GOOGLE_DOCUMENT_AI_LOCATION') and
+            os.environ.get('GOOGLE_CREDENTIALS_SECRET_NAME')
+        )
+        
+        if google_docai_enabled:
+            try:
+                logger.info("PDF_TO_DOCX: Attempting conversion with Google Document AI for exact formatting")
                 
-        except Exception as fallback_error:
-            logger.error(f"PDF_TO_DOCX_FALLBACK_FAILED: {str(fallback_error)}")
-            raise Exception(f"PDF to DOCX conversion failed: {str(fallback_error)}")
+                # Retrieve credentials from AWS Secrets Manager (secure, no hardcoded secrets)
+                secret_name = os.environ.get('GOOGLE_CREDENTIALS_SECRET_NAME')
+                credentials = _get_google_credentials_from_secrets_manager(secret_name)
+                
+                if credentials:
+                    project_id = os.environ.get('GOOGLE_CLOUD_PROJECT_ID')
+                    processor_id = os.environ.get('GOOGLE_DOCUMENT_AI_PROCESSOR_ID')
+                    location = os.environ.get('GOOGLE_DOCUMENT_AI_LOCATION')
+                    
+                    docx_doc = _convert_pdf_to_docx_with_google_docai(
+                        pdf_bytes, project_id, processor_id, location, credentials
+                    )
+                    logger.info("PDF_TO_DOCX: Successfully converted using Google Document AI")
+                else:
+                    logger.warning("PDF_TO_DOCX: Google credentials not available, falling back to PyMuPDF")
+            except Exception as google_error:
+                logger.warning(f"PDF_TO_DOCX: Google Document AI conversion failed: {google_error}, falling back to PyMuPDF")
+                docx_doc = None
+        
+        # Fallback to PyMuPDF if Google Document AI not available or failed
+        if docx_doc is None:
+            logger.info("PDF_TO_DOCX: Using PyMuPDF + python-docx fallback with enhanced formatting preservation")
+            try:
+                docx_doc = _convert_pdf_to_docx_pymupdf_fallback(pdf_bytes)
+            except Exception as pymupdf_error:
+                logger.error(f"PDF_TO_DOCX_PYMUPDF_FAILED: {str(pymupdf_error)}")
+                raise Exception(f"PDF to DOCX conversion failed with both Google Document AI and PyMuPDF: {str(pymupdf_error)}")
+        
+        # Save DOCX to memory
+        docx_bytes_io = io.BytesIO()
+        docx_doc.save(docx_bytes_io)
+        docx_bytes_io.seek(0)
+        docx_bytes = docx_bytes_io.read()
+        
+        # Upload DOCX to S3
+        new_key = pdf_s3_key.rsplit('.', 1)[0] + '.docx'
+        s3_client.put_object(
+            Bucket=agent_bucket,
+            Key=new_key,
+            Body=docx_bytes,
+            ContentType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
+        
+        conversion_method = "Google Document AI" if google_docai_enabled and docx_doc else "PyMuPDF"
+        logger.info(f"PDF_TO_DOCX_SUCCESS: Converted to {new_key} using {conversion_method} (exact formatting preserved)")
+        return new_key
             
     except Exception as e:
         logger.error(f"PDF_TO_DOCX_ERROR: Failed to convert PDF to DOCX: {str(e)}")

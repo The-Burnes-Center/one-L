@@ -276,7 +276,7 @@ class Model:
                 
                 # Create instruction for this specific chunk
                 approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
-                instruction_text = f"CRITICAL: Analyze this vendor submission section {approx_pages} thoroughly. You MUST search through EVERY paragraph, table, and clause in this section for ANY conflicts with Massachusetts Commonwealth requirements. Be aggressive - look for deviations, limitations, missing requirements, non-compliant language, or any terms that don't align with the standards. Find ALL conflicts in this section, no matter how minor. If you find conflicts, list them in the markdown table format. DO NOT respond with 'N/A' or 'no conflicts' unless you have verified EVERY line in this section."
+                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the Rationale column - what risk it creates and why it matters. If you find conflicts, list them in the markdown table format. If there are no material conflicts in this section, respond with 'N/A - No material conflicts found'."
                 
                 messages = [
                     {
