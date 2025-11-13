@@ -372,14 +372,15 @@ const SessionWorkspace = ({ session }) => {
     {
       value: 'general',
       label: 'General Terms & Conditions',
-      description: 'Use statewide general contract terms.'
+      description: 'Statewide contract standards for broad procurement needs.',
     },
     {
       value: 'it',
       label: 'IT Terms & Conditions',
-      description: 'Use technology-specific terms from the knowledge base.'
+      description: 'Technology-focused standards for software and systems.',
     }
   ];
+  const activeTermsProfileOption = termsProfileOptions.find(option => option.value === normalizedTermsProfile) || termsProfileOptions[0];
 
   const handleTermsProfileSelection = (nextValue) => {
     const normalized = (nextValue || '').toLowerCase();
@@ -1987,17 +1988,54 @@ const SessionWorkspace = ({ session }) => {
       <div className="card" style={{ marginTop: '20px' }}>
           <h2>AI Document Review Workflow</h2>
           <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
-        <div style={{
-          margin: '16px 0',
-          padding: '12px',
-          background: '#f8f9fa',
-          borderRadius: '6px',
-          border: '1px solid #e2e6ea'
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: '8px', color: '#333' }}>
-            Select Terms &amp; Conditions Profile
+        <div
+          style={{
+            margin: '16px 0',
+            padding: '18px 20px',
+            background: '#eef2f7',
+            borderRadius: '12px',
+            border: '1px solid #d1dae7',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              gap: '12px',
+              marginBottom: '16px'
+            }}
+          >
+            <div style={{ maxWidth: '520px' }}>
+              <div style={{ fontWeight: 600, fontSize: '16px', color: '#0b1f33' }}>
+                Select Terms &amp; Conditions Profile
+              </div>
+              <div style={{ fontSize: '13px', color: '#4b5a6b', marginTop: '4px', lineHeight: 1.5 }}>
+                Choose the contract standard the AI should follow before generating redlines.
+              </div>
+            </div>
+            <div
+              style={{
+                fontSize: '12px',
+                color: '#37518f',
+                background: '#dce7ff',
+                padding: '6px 10px',
+                borderRadius: '20px',
+                fontWeight: 600,
+                alignSelf: 'flex-start'
+              }}
+            >
+              Current selection: {activeTermsProfileOption.label}
+            </div>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          <div
+            style={{
+              display: 'grid',
+              gap: '12px',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))'
+            }}
+          >
             {termsProfileOptions.map(option => {
               const isActive = normalizedTermsProfile === option.value;
               return (
@@ -2006,51 +2044,71 @@ const SessionWorkspace = ({ session }) => {
                   type="button"
                   onClick={() => handleTermsProfileSelection(option.value)}
                   disabled={generating}
+                  aria-pressed={isActive}
                   style={{
-                    flex: '1 1 220px',
-                    minWidth: '200px',
-                    padding: '10px 12px',
-                    borderRadius: '4px',
-                    border: isActive ? '1px solid #0056b3' : '1px solid #ced4da',
-                    backgroundColor: isActive ? '#007bff' : '#ffffff',
-                    color: isActive ? '#ffffff' : '#333333',
+                    position: 'relative',
+                    padding: '16px 18px',
+                    borderRadius: '10px',
+                    border: isActive ? '2px solid #2563eb' : '1px solid #ccd6e3',
+                    background: isActive ? '#2563eb' : '#ffffff',
+                    color: isActive ? '#f8fafc' : '#1a2c44',
                     textAlign: 'left',
                     cursor: generating ? 'not-allowed' : 'pointer',
                     transition: 'all 0.2s ease',
-                    boxShadow: isActive ? '0 0 0 3px rgba(0, 123, 255, 0.2)' : 'none',
-                    opacity: generating ? 0.7 : 1
+                    boxShadow: isActive
+                      ? '0 10px 25px -12px rgba(37, 99, 235, 0.65)'
+                      : '0 1px 3px rgba(15, 23, 42, 0.08)',
+                    opacity: generating ? 0.72 : 1
                   }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: '14px' }}>{option.label}</div>
-                  <div style={{
-                    fontSize: '12px',
-                    marginTop: '4px',
-                    color: isActive ? 'rgba(255, 255, 255, 0.85)' : '#6c757d',
-                    lineHeight: 1.4
-                  }}>
-                    {option.description}
-                  </div>
-                  {isActive && (
-                    <div style={{
-                      marginTop: '8px',
-                      fontSize: '11px',
-                      fontWeight: 500,
-                      letterSpacing: '0.02em',
-                      textTransform: 'uppercase',
-                      color: 'rgba(255, 255, 255, 0.85)'
-                    }}>
-                      Selected
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: '12px'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 600, lineHeight: 1.3 }}>
+                        {option.label}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '13px',
+                          marginTop: '6px',
+                          color: isActive ? 'rgba(241,245,249,0.9)' : '#4b5a6b',
+                          lineHeight: 1.5
+                        }}
+                      >
+                        {option.description}
+                      </div>
                     </div>
-                  )}
+                    {isActive && (
+                      <div
+                        style={{
+                          flexShrink: 0,
+                          background: '#1d4ed8',
+                          color: '#f1f5f9',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          padding: '4px 8px',
+                          borderRadius: '999px',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.08em',
+                          boxShadow: '0 2px 0 rgba(15,23,42,0.18)'
+                        }}
+                      >
+                        Selected
+                      </div>
+                    )}
+                  </div>
                 </button>
               );
             })}
           </div>
-          <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '8px' }}>
-            Choose the contract standard you want the AI to use for comparisons before generating redlines.
-          </div>
           {termsProfileError && (
-            <div className="alert alert-error" style={{ marginTop: '12px' }}>
+            <div className="alert alert-error" style={{ marginTop: '14px' }}>
               {termsProfileError}
             </div>
           )}
