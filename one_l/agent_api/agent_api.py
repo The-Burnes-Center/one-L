@@ -21,6 +21,7 @@ class AgentApiConstruct(Construct):
         self, 
         scope: Construct, 
         construct_id: str,
+        authorization=None,  # Optional: Authorization construct for Cognito access
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -31,6 +32,7 @@ class AgentApiConstruct(Construct):
         self.knowledge_base = None
         self.functions = None
         self.knowledge_base_role = None
+        self.authorization = authorization  # Store authorization construct
         
         # Instance variable for agent business logic
         self.agent = None
@@ -94,7 +96,8 @@ class AgentApiConstruct(Construct):
             user_documents_bucket=self.storage.user_documents_bucket,
             agent_processing_bucket=self.storage.agent_processing_bucket,  # Pass agent processing bucket directly
             knowledge_base_id="placeholder",  # Will be updated after knowledge base creation
-            opensearch_collection=self.opensearch.collection
+            opensearch_collection=self.opensearch.collection,
+            authorization=self.authorization  # Pass authorization construct for Cognito access
         )
         
         # Setup agent functions with complete storage references

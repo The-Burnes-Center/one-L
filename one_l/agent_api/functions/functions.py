@@ -29,6 +29,7 @@ class FunctionsConstruct(Construct):
         agent_processing_bucket: s3.Bucket,  # Add agent_processing_bucket parameter
         knowledge_base_id: str,
         opensearch_collection: aoss.CfnCollection,
+        authorization=None,  # Optional: Authorization construct for Cognito access
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -57,7 +58,8 @@ class FunctionsConstruct(Construct):
             agent_processing_bucket=agent_processing_bucket,  # Pass agent processing bucket
             knowledge_base_id=knowledge_base_id,
             opensearch_collection=opensearch_collection,
-            iam_roles=self.iam_roles
+            iam_roles=self.iam_roles,
+            authorization=authorization  # Pass authorization construct for Cognito access
         )
         
         # Create WebSocket functions for real-time communication

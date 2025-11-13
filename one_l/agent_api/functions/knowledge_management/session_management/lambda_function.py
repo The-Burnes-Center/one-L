@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any
 from decimal import Decimal
+from botocore.exceptions import ClientError
 
 # Set up logging
 logger = logging.getLogger()
@@ -14,6 +15,7 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
+cognito_client = boto3.client('cognito-idp')
 
 # Environment variables
 KNOWLEDGE_BUCKET = os.environ.get('KNOWLEDGE_BUCKET')
@@ -21,6 +23,7 @@ USER_DOCUMENTS_BUCKET = os.environ.get('USER_DOCUMENTS_BUCKET')
 AGENT_PROCESSING_BUCKET = os.environ.get('AGENT_PROCESSING_BUCKET')
 SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE', 'one-l-sessions')
 ANALYSIS_RESULTS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
+USER_POOL_ID = os.environ.get('USER_POOL_ID')  # Optional: for fetching user names
 
 def convert_decimals(obj):
     """Recursively convert Decimal types to int or float for JSON serialization"""
@@ -576,6 +579,79 @@ def get_admin_metrics() -> Dict[str, Any]:
         
         top_users = sorted(user_session_counts.items(), key=lambda x: x[1], reverse=True)[:10]
         
+        # Fetch user names from Cognito if USER_POOL_ID is available
+        user_info_map = {}
+        if USER_POOL_ID and top_users:
+            try:
+                # Fetch user attributes for top users
+                for user_id, session_count in top_users:
+                    try:
+                        response = cognito_client.admin_get_user(
+                            UserPoolId=USER_POOL_ID,
+                            Username=user_id
+                        )
+                        # Extract name and email from attributes
+                        name = None
+                        email = None
+                        for attr in response.get('UserAttributes', []):
+                            if attr['Name'] == 'given_name':
+                                name = attr.get('Value', '')
+                            elif attr['Name'] == 'family_name':
+                                if name:
+                                    name = f"{name} {attr.get('Value', '')}"
+                                else:
+                                    name = attr.get('Value', '')
+                            elif attr['Name'] == 'email':
+                                email = attr.get('Value', '')
+                        
+                        # Use name if available, otherwise email, otherwise user_id
+                        display_name = name or email or user_id
+                        user_info_map[user_id] = {
+                            'name': display_name,
+                            'email': email,
+                            'session_count': session_count
+                        }
+                    except ClientError as e:
+                        error_code = e.response.get('Error', {}).get('Code', '')
+                        if error_code == 'UserNotFoundException':
+                            # User not found in Cognito, use user_id
+                            user_info_map[user_id] = {
+                                'name': user_id,
+                                'email': None,
+                                'session_count': session_count
+                            }
+                        else:
+                            logger.warning(f"Error fetching user info for {user_id}: {e}")
+                            user_info_map[user_id] = {
+                                'name': user_id,
+                                'email': None,
+                                'session_count': session_count
+                            }
+                    except Exception as e:
+                        logger.warning(f"Error fetching user info for {user_id}: {e}")
+                        user_info_map[user_id] = {
+                            'name': user_id,
+                            'email': None,
+                            'session_count': session_count
+                        }
+            except Exception as e:
+                logger.warning(f"Error fetching user names from Cognito: {e}")
+                # Fallback: use user_ids if Cognito lookup fails
+                for user_id, session_count in top_users:
+                    if user_id not in user_info_map:
+                        user_info_map[user_id] = {
+                            'name': user_id,
+                            'email': None,
+                            'session_count': session_count
+                        }
+        
+        # Build top_users list with names
+        if user_info_map:
+            top_users_list = [user_info_map[uid] for uid, _ in top_users if uid in user_info_map]
+        else:
+            # Fallback if Cognito lookup not available or failed
+            top_users_list = [{'user_id': uid, 'name': uid, 'session_count': count} for uid, count in top_users]
+        
         # Recent activity (last 7 days)
         recent_sessions = 0
         recent_analyses = 0
@@ -613,7 +689,7 @@ def get_admin_metrics() -> Dict[str, Any]:
                 },
                 'users': {
                     'total': unique_users,
-                    'top_users': [{'user_id': uid, 'session_count': count} for uid, count in top_users]
+                    'top_users': top_users_list
                 },
                 'documents': {
                     'total_processed': total_documents_processed,

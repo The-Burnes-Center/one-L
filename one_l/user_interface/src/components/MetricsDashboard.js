@@ -147,7 +147,10 @@ const MetricsDashboard = () => {
                 <div className="top-users-list">
                   {metrics.users.top_users.slice(0, 5).map((user, index) => (
                     <div key={index} className="top-user-item">
-                      <span className="user-id">{user.user_id.substring(0, 20)}...</span>
+                      <span className="user-name">{user.name || user.user_id || 'Unknown User'}</span>
+                      {user.email && user.email !== user.name && (
+                        <span className="user-email">({user.email})</span>
+                      )}
                       <span className="user-count">{user.session_count} sessions</span>
                     </div>
                   ))}

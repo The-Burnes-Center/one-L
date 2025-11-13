@@ -34,6 +34,7 @@ class KnowledgeManagementConstruct(Construct):
         knowledge_base_id: str,
         opensearch_collection: aoss.CfnCollection,
         iam_roles,
+        authorization=None,  # Optional: Authorization construct for Cognito User Pool ID
         **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -44,6 +45,7 @@ class KnowledgeManagementConstruct(Construct):
         self.agent_processing_bucket = agent_processing_bucket
         self.knowledge_base_id = knowledge_base_id
         self.opensearch_collection = opensearch_collection
+        self.authorization = authorization  # Store authorization construct for Cognito access
         
         # Create buckets list for IAM permissions (include all buckets)
         self.buckets = [knowledge_bucket, user_documents_bucket, agent_processing_bucket]
@@ -256,6 +258,19 @@ class KnowledgeManagementConstruct(Construct):
             )
         )
         
+        # Add Cognito permissions for fetching user names (if authorization construct is provided)
+        if self.authorization and self.authorization.user_pool:
+            session_role.add_to_policy(
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    actions=[
+                        "cognito-idp:AdminGetUser",
+                        "cognito-idp:ListUsers"
+                    ],
+                    resources=[self.authorization.user_pool.user_pool_arn]
+                )
+            )
+        
         # Prepare environment variables
         env_vars = {
             "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
@@ -265,6 +280,10 @@ class KnowledgeManagementConstruct(Construct):
             "ANALYSIS_RESULTS_TABLE": f"{self._stack_name}-analysis-results",
             "LOG_LEVEL": "INFO"
         }
+        
+        # Add USER_POOL_ID if authorization construct is provided
+        if self.authorization and self.authorization.user_pool:
+            env_vars["USER_POOL_ID"] = self.authorization.user_pool.user_pool_id
         
         # Create Lambda function
         self.session_management_function = _lambda.Function(

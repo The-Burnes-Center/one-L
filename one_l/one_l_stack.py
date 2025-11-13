@@ -16,9 +16,10 @@ class OneLStack(Stack):
             self, "Authorization"
         )
         
-        # Create agent API construct
+        # Create agent API construct with authorization reference
         self.agent_api = AgentApiConstruct(
-            self, "AgentApi"
+            self, "AgentApi",
+            authorization=self.authorization
         )
 
         # Create API Gateway construct with reference to functions
