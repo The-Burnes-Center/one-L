@@ -270,7 +270,8 @@ const SessionWorkspace = ({ session }) => {
         processingStage: '',
         completedStages: [],
         workflowMessage: '',
-        workflowMessageType: ''
+        workflowMessageType: '',
+        termsProfile: 'it'
       };
     }
 
@@ -299,7 +300,8 @@ const SessionWorkspace = ({ session }) => {
       'workflowMessage',
       'workflowMessageType',
       'hasWebSocketUpdates',
-      'lastWebSocketUpdate'
+      'lastWebSocketUpdate',
+      'termsProfile'
     ];
 
     scalarKeys.forEach(key => {
@@ -340,6 +342,8 @@ const SessionWorkspace = ({ session }) => {
   const [redlinedDocuments, setRedlinedDocuments] = useState([]);
   const [sessionResults, setSessionResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
+  const [termsProfile, setTermsProfile] = useState('it');
+  const [termsProfileError, setTermsProfileError] = useState('');
   
   // ← NEW KB SYNC STATE
   // eslint-disable-next-line no-unused-vars
@@ -363,6 +367,28 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   // Use ref to persist the initial state, as location.state can be cleared
   const isNewSession = initialIsNewSessionRef.current ?? false;
+  const normalizedTermsProfile = (termsProfile || 'it').toLowerCase();
+  const termsProfileOptions = [
+    {
+      value: 'general',
+      label: 'General Terms & Conditions',
+      description: 'Use statewide general contract terms.'
+    },
+    {
+      value: 'it',
+      label: 'IT Terms & Conditions',
+      description: 'Use technology-specific terms from the knowledge base.'
+    }
+  ];
+
+  const handleTermsProfileSelection = (nextValue) => {
+    const normalized = (nextValue || '').toLowerCase();
+    if (normalized === normalizedTermsProfile) {
+      return;
+    }
+    setTermsProfile(normalized === 'general' ? 'general' : 'it');
+    setTermsProfileError('');
+  };
 
   // Keep session data ref in sync with current state (for current session)
   // Only sync if we're not in the middle of switching sessions
@@ -381,10 +407,11 @@ const SessionWorkspace = ({ session }) => {
         processingStage,
         completedStages,
         workflowMessage,
-        workflowMessageType
+        workflowMessageType,
+        termsProfile
       });
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, persistSessionState]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, termsProfile, persistSessionState]);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
@@ -423,7 +450,8 @@ const SessionWorkspace = ({ session }) => {
         processingStage: '',
         completedStages: [],
         workflowMessage: '',
-        workflowMessageType: ''
+        workflowMessageType: '',
+        termsProfile: 'it'
       };
       
       // If this is a new session, explicitly initialize it as empty in the ref and set state to empty FIRST
@@ -436,7 +464,8 @@ const SessionWorkspace = ({ session }) => {
           processingStage: '',
           completedStages: [],
           workflowMessage: '',
-          workflowMessageType: ''
+          workflowMessageType: '',
+          termsProfile: 'it'
         };
         // Save to localStorage for new session initialization
         saveSessionDataToStorage(sessionDataRef.current);
@@ -448,6 +477,8 @@ const SessionWorkspace = ({ session }) => {
         setCompletedStages([]);
         setWorkflowMessage('');
         setWorkflowMessageType('');
+        setTermsProfile('it');
+        setTermsProfileError('');
         // Update ref AFTER clearing state to prevent sync from running with old data
         previousSessionIdRef.current = currentSessionId;
       } else {
@@ -511,6 +542,8 @@ const SessionWorkspace = ({ session }) => {
         setCompletedStages(restoredCompletedStages);
         setWorkflowMessage(restoredMessage || '');
         setWorkflowMessageType(restoredMessageType || '');
+        setTermsProfile(sessionData.termsProfile || 'it');
+        setTermsProfileError('');
         // Update ref AFTER restoring state for existing sessions
         previousSessionIdRef.current = currentSessionId;
       }
@@ -1247,6 +1280,7 @@ const SessionWorkspace = ({ session }) => {
   const handleGenerateRedline = async () => {
     const sessionIdAtStart = session?.session_id;
     const userIdAtStart = session?.user_id || authService.getUserId();
+    const termsProfileForRun = normalizedTermsProfile;
     if (!sessionIdAtStart || !userIdAtStart) {
       setWorkflowMessage('Unable to start processing because the session or user could not be identified. Please refresh and try again.');
       setWorkflowMessageType('error');
@@ -1269,6 +1303,7 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
     
+    setTermsProfileError('');
     setGenerating(true);
     resetProcessingStages({ keepGeneratingState: true, skipWorkflowReset: true });
     setProcessingPhase('kb_sync', stageMessages.kb_sync);
@@ -1278,7 +1313,8 @@ const SessionWorkspace = ({ session }) => {
       processingStage: 'kb_sync',
       completedStages: [],
       workflowMessage: stageMessages.kb_sync,
-      workflowMessageType: 'progress'
+      workflowMessageType: 'progress',
+      termsProfile: termsProfileForRun
     });
     updateGlobalProcessingFlag(sessionIdAtStart, true);
     let hasProcessingResults = false;
@@ -1296,7 +1332,8 @@ const SessionWorkspace = ({ session }) => {
             vendorFile.s3_key, 
             'agent_processing',
             sessionIdAtStart,
-            userIdAtStart
+            userIdAtStart,
+            { termsProfile: termsProfileForRun }
           );
           
           // Check if processing is asynchronous
@@ -1332,7 +1369,8 @@ const SessionWorkspace = ({ session }) => {
                 progress: 0,
                 message: 'Starting document analysis...',
                 processing: true,
-                success: false
+                  success: false,
+                  termsProfile: termsProfileForRun
               };
               redlineResults.push({ ...processingEntry });
 
@@ -1341,7 +1379,8 @@ const SessionWorkspace = ({ session }) => {
                   const nextDocs = [...prev, processingEntry];
                   persistSessionState(sessionIdAtStart, {
                     redlinedDocuments: nextDocs,
-                    generating: true
+                    generating: true,
+                    termsProfile: termsProfileForRun
                   });
                   updateGlobalProcessingFlag(sessionIdAtStart, true);
                   return nextDocs;
@@ -1353,7 +1392,8 @@ const SessionWorkspace = ({ session }) => {
                 const nextDocs = [...existingDocs, processingEntry];
                 persistSessionState(sessionIdAtStart, {
                   redlinedDocuments: nextDocs,
-                  generating: true
+                  generating: true,
+                  termsProfile: termsProfileForRun
                 });
                 updateGlobalProcessingFlag(sessionIdAtStart, true);
               }
@@ -1392,7 +1432,8 @@ const SessionWorkspace = ({ session }) => {
                 error: finalResult.success ? undefined : finalResult.error,
                 message: finalResult.success
                   ? 'Document processing completed'
-                  : (finalResult.error || 'Processing failed')
+                  : (finalResult.error || 'Processing failed'),
+                termsProfile: termsProfileForRun
               };
 
               // Replace the last pushed processing entry with the final result
@@ -1428,7 +1469,8 @@ const SessionWorkspace = ({ session }) => {
                 });
                 persistSessionState(sessionIdAtStart, {
                   redlinedDocuments: nextDocs,
-                  generating: nextDocs.some(doc => doc.processing)
+                  generating: nextDocs.some(doc => doc.processing),
+                  termsProfile: termsProfileForRun
                 });
                 updateGlobalProcessingFlag(
                   sessionIdAtStart,
@@ -1444,7 +1486,8 @@ const SessionWorkspace = ({ session }) => {
               originalFile: vendorFile,
               redlinedDocument: reviewResponse.redlined_document.redlined_document,
               analysis: reviewResponse.analysis,
-              success: true
+              success: true,
+              termsProfile: termsProfileForRun
             });
           } else if (reviewResponse.processing) {
             redlineResults.push({
@@ -1452,13 +1495,15 @@ const SessionWorkspace = ({ session }) => {
               processing: true,
               jobId: `job_${vendorFile.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
               success: false,
-              message: reviewResponse.message || 'Processing in background...'
+              message: reviewResponse.message || 'Processing in background...',
+              termsProfile: termsProfileForRun
             });
           } else {
             redlineResults.push({
               originalFile: vendorFile,
               error: reviewResponse.redlined_document?.error || reviewResponse.error || 'Unknown error',
-              success: false
+              success: false,
+              termsProfile: termsProfileForRun
             });
           }
         } catch (error) {
@@ -1511,7 +1556,8 @@ const SessionWorkspace = ({ session }) => {
 
       persistSessionState(sessionIdAtStart, {
         redlinedDocuments: redlineResults,
-        generating: hasProcessingResults
+        generating: hasProcessingResults,
+        termsProfile: termsProfileForRun
       });
       updateGlobalProcessingFlag(sessionIdAtStart, hasProcessingResults);
       
@@ -1560,6 +1606,9 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
+      if (typeof error?.message === 'string' && error.message.toLowerCase().includes('knowledge base')) {
+        setTermsProfileError(error.message);
+      }
       if (isCurrentSession()) {
         setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
         setWorkflowMessageType('error');
@@ -1570,7 +1619,8 @@ const SessionWorkspace = ({ session }) => {
           workflowMessageType: 'error',
           processingStage: '',
           completedStages: [],
-          generating: false
+          generating: false,
+          termsProfile: termsProfileForRun
         });
         updateGlobalProcessingFlag(sessionIdAtStart, false);
       }
@@ -1590,13 +1640,15 @@ const SessionWorkspace = ({ session }) => {
           processingStage: sessionEntry?.processingStage || 'document_review',
           completedStages: Array.isArray(sessionEntry?.completedStages)
             ? sessionEntry.completedStages
-            : []
+            : [],
+          termsProfile: termsProfileForRun
         });
       } else {
         persistSessionState(sessionIdAtStart, {
           generating: false,
           processingStage: '',
-          completedStages: stageOrder.map(item => item.key)
+          completedStages: stageOrder.map(item => item.key),
+          termsProfile: termsProfileForRun
         });
       }
       updateGlobalProcessingFlag(sessionIdAtStart, stillProcessing);
@@ -1935,6 +1987,74 @@ const SessionWorkspace = ({ session }) => {
       <div className="card" style={{ marginTop: '20px' }}>
           <h2>AI Document Review Workflow</h2>
           <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
+        <div style={{
+          margin: '16px 0',
+          padding: '12px',
+          background: '#f8f9fa',
+          borderRadius: '6px',
+          border: '1px solid #e2e6ea'
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: '8px', color: '#333' }}>
+            Select Terms &amp; Conditions Profile
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {termsProfileOptions.map(option => {
+              const isActive = normalizedTermsProfile === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleTermsProfileSelection(option.value)}
+                  disabled={generating}
+                  style={{
+                    flex: '1 1 220px',
+                    minWidth: '200px',
+                    padding: '10px 12px',
+                    borderRadius: '4px',
+                    border: isActive ? '1px solid #0056b3' : '1px solid #ced4da',
+                    backgroundColor: isActive ? '#007bff' : '#ffffff',
+                    color: isActive ? '#ffffff' : '#333333',
+                    textAlign: 'left',
+                    cursor: generating ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: isActive ? '0 0 0 3px rgba(0, 123, 255, 0.2)' : 'none',
+                    opacity: generating ? 0.7 : 1
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: '14px' }}>{option.label}</div>
+                  <div style={{
+                    fontSize: '12px',
+                    marginTop: '4px',
+                    color: isActive ? 'rgba(255, 255, 255, 0.85)' : '#6c757d',
+                    lineHeight: 1.4
+                  }}>
+                    {option.description}
+                  </div>
+                  {isActive && (
+                    <div style={{
+                      marginTop: '8px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      letterSpacing: '0.02em',
+                      textTransform: 'uppercase',
+                      color: 'rgba(255, 255, 255, 0.85)'
+                    }}>
+                      Selected
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '8px' }}>
+            Choose the contract standard you want the AI to use for comparisons before generating redlines.
+          </div>
+          {termsProfileError && (
+            <div className="alert alert-error" style={{ marginTop: '12px' }}>
+              {termsProfileError}
+            </div>
+          )}
+        </div>
         
 
         

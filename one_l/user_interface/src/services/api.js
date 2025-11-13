@@ -335,13 +335,17 @@ const agentAPI = {
   /**
    * Review a document for conflicts using AI analysis
    */
-  reviewDocument: async (documentS3Key, bucketType = 'user_documents', sessionId = null, userId = null) => {
+  reviewDocument: async (documentS3Key, bucketType = 'user_documents', sessionId = null, userId = null, options = {}) => {
     const payload = {
       document_s3_key: documentS3Key,
       bucket_type: bucketType,
       session_id: sessionId,
       user_id: userId
     };
+    
+    if (options?.termsProfile) {
+      payload.terms_profile = options.termsProfile;
+    }
     
     return await apiCall('/agent/review', {
       method: 'POST',

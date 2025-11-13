@@ -8,7 +8,7 @@ import boto3
 import os
 import logging
 import sys
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from docx import Document
 import io
 import uuid
@@ -40,8 +40,56 @@ s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 JOB_STATUS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE', 'OneL-DV2-analysis-results')
 
+DEFAULT_TERMS_PROFILE_RAW = os.environ.get('DEFAULT_TERMS_PROFILE', 'it')
+
+def normalize_terms_profile(value: Optional[str]) -> str:
+    """Normalize requested terms profile to supported values."""
+    if not value:
+        value = DEFAULT_TERMS_PROFILE_RAW
+    normalized = (value or 'it').strip().lower()
+    if normalized.startswith('gen'):
+        return 'general'
+    if normalized in ('it', 'its', 'technical', 'technology', 'tech'):
+        return 'it'
+    if normalized == 'general':
+        return 'general'
+    return 'it'
+
+
+def resolve_terms_profile(requested_profile: Optional[str]) -> Tuple[Optional[str], str, Optional[str], List[str]]:
+    """
+    Resolve the requested terms profile to a concrete knowledge base ID.
+    
+    Returns:
+        Tuple of (knowledge_base_id, resolved_profile, error_message, available_profiles)
+    """
+    normalized = normalize_terms_profile(requested_profile)
+    general_kb = os.environ.get('KNOWLEDGE_BASE_ID_GENERAL') or os.environ.get('GENERAL_TERMS_KNOWLEDGE_BASE_ID')
+    it_kb = os.environ.get('KNOWLEDGE_BASE_ID_IT') or os.environ.get('IT_TERMS_KNOWLEDGE_BASE_ID') or os.environ.get('KNOWLEDGE_BASE_ID')
+    
+    available_profiles = []
+    if general_kb:
+        available_profiles.append('general')
+    if it_kb:
+        available_profiles.append('it')
+    
+    if not available_profiles:
+        return None, normalized, 'Knowledge base IDs are not configured', available_profiles
+    
+    if normalized == 'general':
+        if general_kb:
+            return general_kb, 'general', None, available_profiles
+        return None, 'general', 'General terms knowledge base not configured', available_profiles
+    
+    # Default to IT terms profile
+    if it_kb:
+        return it_kb, 'it', None, available_profiles
+    
+    return None, 'it', 'IT terms knowledge base not configured', available_profiles
+
 def save_job_status(job_id: str, document_s3_key: str, user_id: str, session_id: str, 
-                   status: str, error: str = None, result: dict = None):
+                   status: str, error: str = None, result: dict = None,
+                   terms_profile: Optional[str] = None, knowledge_base_id: Optional[str] = None):
     """Save job status to DynamoDB for frontend polling"""
     try:
         table = dynamodb.Table(JOB_STATUS_TABLE)
@@ -56,6 +104,11 @@ def save_job_status(job_id: str, document_s3_key: str, user_id: str, session_id:
             'status': status,
             'updated_at': datetime.now().isoformat()
         }
+        
+        if terms_profile:
+            item['terms_profile'] = terms_profile
+        if knowledge_base_id:
+            item['knowledge_base_id'] = knowledge_base_id
         
         if error:
             item['error'] = error
@@ -109,19 +162,30 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         bucket_type = body_data.get('bucket_type', 'user_documents')
         session_id = body_data.get('session_id')
         user_id = body_data.get('user_id')
-        
-
+        requested_terms_profile = body_data.get('terms_profile')
         
         # Validate required parameters
         if not document_s3_key:
             return create_error_response(400, "document_s3_key is required")
         
         # Get agent configuration
-        knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
+        knowledge_base_id, resolved_terms_profile, profile_error, available_profiles = resolve_terms_profile(requested_terms_profile)
         region = os.environ.get('REGION')
+        
+        if profile_error:
+            status_code = 400 if requested_terms_profile else 500
+            error_payload = {
+                "requested_terms_profile": requested_terms_profile,
+                "resolved_terms_profile": resolved_terms_profile,
+                "available_terms_profiles": available_profiles
+            }
+            logger.error(f"Terms profile resolution error: {profile_error} | requested={requested_terms_profile} | available={available_profiles}")
+            return create_error_response(status_code, profile_error, error_payload)
         
         if not knowledge_base_id:
             return create_error_response(500, "Knowledge base ID not configured")
+        
+        logger.info(f"Using terms profile '{resolved_terms_profile}' with knowledge base '{knowledge_base_id}' for document '{document_s3_key}'")
         
         # Check if this is invoked from API Gateway (has API Gateway timeout constraint)
         is_api_gateway_request = 'httpMethod' in event and 'headers' in event
@@ -139,7 +203,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "document_s3_key": document_s3_key,
                 "bucket_type": bucket_type,
                 "processing": True,
-                "estimated_completion_time": "2-5 minutes"
+                "estimated_completion_time": "2-5 minutes",
+                "terms_profile": resolved_terms_profile
             }
             
             # For API Gateway, return immediately and process in background
@@ -147,7 +212,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             job_id = str(uuid.uuid4())
             
             # Save initial job status to DynamoDB
-            save_job_status(job_id, document_s3_key, user_id, session_id, "processing")
+            save_job_status(
+                job_id,
+                document_s3_key,
+                user_id,
+                session_id,
+                "processing",
+                terms_profile=resolved_terms_profile,
+                knowledge_base_id=knowledge_base_id
+            )
             
             # Return immediate response to frontend
             immediate_response = {
@@ -157,7 +230,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "message": "Document review started successfully",
                 "document_s3_key": document_s3_key,
                 "estimated_completion_time": "2-5 minutes",
-                "status_check_interval": 10  # seconds
+                "status_check_interval": 10,  # seconds
+                "terms_profile": resolved_terms_profile
             }
             
             # Start background processing after responding
@@ -173,7 +247,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 agent = Agent(knowledge_base_id, region)
                 
                 # Update job status
-                save_job_status(job_id, document_s3_key, user_id, session_id, "analyzing")
+                save_job_status(
+                    job_id,
+                    document_s3_key,
+                    user_id,
+                    session_id,
+                    "analyzing",
+                    terms_profile=resolved_terms_profile,
+                    knowledge_base_id=knowledge_base_id
+                )
                 
                 # Send WebSocket progress notification
                 try:
@@ -202,12 +284,28 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 review_result = agent.review_document(bucket_type, document_s3_key)
                 
                 if not review_result.get('success', False):
-                    save_job_status(job_id, document_s3_key, user_id, session_id, "failed", 
-                                  error=review_result.get('error', 'Unknown error'))
+                    save_job_status(
+                        job_id,
+                        document_s3_key,
+                        user_id,
+                        session_id,
+                        "failed",
+                        error=review_result.get('error', 'Unknown error'),
+                        terms_profile=resolved_terms_profile,
+                        knowledge_base_id=knowledge_base_id
+                    )
                     return create_success_response(immediate_response)
                 
                 # Update job status
-                save_job_status(job_id, document_s3_key, user_id, session_id, "generating_redline")
+                save_job_status(
+                    job_id,
+                    document_s3_key,
+                    user_id,
+                    session_id,
+                    "generating_redline",
+                    terms_profile=resolved_terms_profile,
+                    knowledge_base_id=knowledge_base_id
+                )
                 
                 # Send WebSocket progress notification
                 try:
@@ -265,10 +363,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "analysis_id": analysis_id,
                     "analysis": review_result.get('analysis', ''),
                     "redlined_document": redlined_result,
-                    "saved_to_database": save_result.get('success', False)
+                    "saved_to_database": save_result.get('success', False),
+                    "terms_profile": resolved_terms_profile
                 }
-                save_job_status(job_id, document_s3_key, user_id, session_id, "completed", 
-                              result=completion_data)
+                save_job_status(
+                    job_id,
+                    document_s3_key,
+                    user_id,
+                    session_id,
+                    "completed",
+                    result=completion_data,
+                    terms_profile=resolved_terms_profile,
+                    knowledge_base_id=knowledge_base_id
+                )
                 
                 # Mark session as having results (processed documents)
                 if session_id and user_id:
@@ -303,7 +410,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                 'status': 'completed',
                                 'analysis_id': analysis_id,
                                 'redlined_document': redlined_result,
-                                'message': 'Document analysis completed successfully'
+                                'message': 'Document analysis completed successfully',
+                                'terms_profile': resolved_terms_profile
                             }
                         }
                         
@@ -323,8 +431,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 
             except Exception as e:
                 logger.error(f"Error during background processing: {str(e)}", exc_info=True)
-                save_job_status(job_id, document_s3_key, user_id, session_id, "failed", 
-                              error=str(e))
+                save_job_status(
+                    job_id,
+                    document_s3_key,
+                    user_id,
+                    session_id,
+                    "failed",
+                    error=str(e),
+                    terms_profile=resolved_terms_profile,
+                    knowledge_base_id=knowledge_base_id
+                )
                 return create_success_response(immediate_response)
             
         else:
@@ -379,7 +495,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "citations": review_result.get('citations', []),
                 "usage": review_result.get('usage', {}),
                 "redlined_document": redlined_result,
-                "saved_to_database": save_result.get('success', False)
+                "saved_to_database": save_result.get('success', False),
+                "terms_profile": resolved_terms_profile
             }
             
             if not save_result.get('success', False):
