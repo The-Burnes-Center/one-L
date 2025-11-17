@@ -41,8 +41,8 @@ s3_client = boto3.client('s3')
 
 # Knowledge base optimization constants - TUNED FOR MAXIMUM CONFLICT DETECTION
 MAX_CHUNK_SIZE = 3000  # Increased tokens per chunk for more context
-MIN_RELEVANCE_SCORE = 0.3  # Lowered threshold even further to capture more potentially relevant content and edge cases
-OPTIMAL_RESULTS_PER_QUERY = 75  # Increased results per query for more comprehensive coverage
+MIN_RELEVANCE_SCORE = 0.5  # Lowered threshold to capture more potentially relevant content
+OPTIMAL_RESULTS_PER_QUERY = 50  # Increased results per query for comprehensive coverage
 DEDUPLICATION_THRESHOLD = 0.90  # Slightly higher threshold to allow more similar content variations
 
 # Exponential backoff configuration for throttling resilience
@@ -125,7 +125,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
         {
             "toolSpec": {
                 "name": "retrieve_from_knowledge_base",
-                "description": "Exhaustively retrieve ALL relevant reference documents for conflict detection. Optimized for MAXIMUM conflict detection with aggressive relevance threshold (0.3), deduplication, and smart chunking. Use 10-15+ targeted queries for complex documents to ensure no conflicts are missed. Lower relevance threshold captures edge cases and subtle conflicts.",
+                "description": "Exhaustively retrieve ALL relevant reference documents for conflict detection. Optimized for maximum coverage with deduplication, relevance filtering, and smart chunking. Use 8-12+ targeted queries to ensure no conflicts are missed. Lowered relevance threshold captures edge cases.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -136,8 +136,8 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
                             },
                             "max_results": {
                                 "type": "integer",
-                                "description": "Maximum number of results to retrieve (auto-optimized for comprehensive coverage, default: 75 for maximum conflict detection)",
-                                "default": 75
+                                "description": "Maximum number of results to retrieve (auto-optimized for comprehensive coverage, default: 50)",
+                                "default": 50
                             }
                         },
                         "required": ["query"]
