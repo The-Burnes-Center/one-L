@@ -954,15 +954,12 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     else:
                         remaining_conflicts.append(redline_item)
                         logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
-<<<<<<< HEAD
-=======
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
             pass
         else:
             pass
->>>>>>> parent of 9be2b75 (Enhance redlining: lower matching thresholds to 50%, add table matching to all tiers, improve PDF fuzzy search for more comprehensive conflict detection)
             
             # TIER 2: Fuzzy matching (only for unmatched conflicts)
             logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
@@ -980,31 +977,6 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                     if found_match['para_idx'] not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(found_match['para_idx'])
                     logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
-<<<<<<< HEAD
-            else:
-                # Try table matching if paragraph matching failed in Tier 2
-                table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
-                if table_match:
-                    table_idx = table_match['table_idx']
-                    # Check if this table was already redlined
-                    if table_idx in already_redlined_tables:
-                        if base_conflict_id not in already_redlined_tables[table_idx]:
-                            already_redlined_tables[table_idx].append(base_conflict_id)
-                            matches_found += 1
-                            if table_idx not in tables_with_redlines:
-                                tables_with_redlines.append(table_idx)
-                            logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
-                        else:
-                            logger.info(f"TIER2_TABLE_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
-                    else:
-                        already_redlined_tables[table_idx] = [base_conflict_id]
-                        matches_found += 1
-                        if table_idx not in tables_with_redlines:
-                            tables_with_redlines.append(table_idx)
-                        logger.info(f"TIER2_TABLE_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
-                    remaining_conflicts.append(redline_item)  # Continue to next tier for additional matches
-=======
->>>>>>> parent of 9be2b75 (Enhance redlining: lower matching thresholds to 50%, add table matching to all tiers, improve PDF fuzzy search for more comprehensive conflict detection)
                 else:
                     remaining_conflicts.append(redline_item)
                     logger.info(f"TIER2_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
