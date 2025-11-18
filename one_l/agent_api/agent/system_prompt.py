@@ -164,10 +164,17 @@ Present ALL conflicts in this EXACT Markdown table:
 - **Clarification ID**: Vendor's ID or "Additional-[#]" for other findings
 - **Vendor Quote**: Exact text verbatim OR "N/A - Missing provision" for omissions
 - **Summary**: 20-40 word context
-- **Source Doc**: KB document name
-- **Clause Ref**: Specific section
+- **Source Doc**: KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)
+- **Clause Ref**: Specific section or "N/A" if not applicable
 - **Conflict Type**: adds/deletes/modifies/contradicts/omits required/reverses obligation
 - **Rationale**: ≤50 words on legal impact
+
+**CRITICAL: Source Doc Requirement**
+- You MUST provide a valid Source Doc name for EVERY conflict
+- The Source Doc must be an actual document retrieved from the knowledge base
+- DO NOT create conflicts without a valid source document reference
+- If you cannot find a source document in the knowledge base, DO NOT flag it as a conflict
+- Only flag conflicts that you can directly reference to a specific document in the knowledge base
 
 ## EXECUTION IMPERATIVES
 
