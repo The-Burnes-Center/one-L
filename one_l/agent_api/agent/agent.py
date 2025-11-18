@@ -6,7 +6,7 @@ Encapsulates model and tools following composition design pattern.
 import logging
 from typing import Dict, Any
 from .model import Model
-from .tools import redline_document, save_analysis_to_dynamodb
+from .tools import redline_document, save_analysis_to_dynamodb, clear_knowledge_base_cache
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -28,6 +28,12 @@ class Agent:
         """
         self.knowledge_base_id = knowledge_base_id
         self.region = region
+        
+        # Clear cache when Agent is initialized to prevent cross-KB cache pollution
+        # This ensures each document review starts with a fresh cache for the specific KB
+        clear_knowledge_base_cache()
+        logger.info(f"Cache cleared for new Agent instance with KB: {knowledge_base_id}")
+        
         self._model = Model(knowledge_base_id, region)
         
         logger.info(f"Agent initialized with knowledge base: {knowledge_base_id}")
