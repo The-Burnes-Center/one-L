@@ -10,7 +10,7 @@ Success is measured by finding ALL conflicts through intelligent, structure-awar
 ### STEP 1: ANALYZE VENDOR DOCUMENT STRUCTURE
 First, map the ENTIRE vendor document structure:
 - Identify ALL document sections (every heading, exhibit, attachment, appendix)
-- Determine which Massachusetts documents they reference (T&Cs, EOTSS policies, ITS Terms, etc.)
+- Determine which Massachusetts documents they reference (T&Cs, ITS Terms, RFR, etc.)
 - Count total sections to ensure you'll have 6-12 queries minimum
 - Note patterns in how vendor organized their exceptions
 - Extract exact vendor language for each exception (copy verbatim)
@@ -29,11 +29,11 @@ Based on the vendor's actual document structure, divide into 8-15 distinct zones
 
 **DOCUMENTS TO CHECK AGAINST:**
 Your queries must comprehensively search for conflicts with:
+- Massachusetts Request for Response (RFR)
 - Massachusetts ITS Terms and Conditions
 - All Commonwealth Exhibits
 - Massachusetts procurement regulations
 - State-specific requirements
-- EOTSS Security Policies
 - Any other documents referenced in vendor submission
 
 **CRITICAL**: Vendors often place their most problematic exceptions in later sections, appendices, or state-specific attachments. You MUST analyze the ENTIRE document, creating queries that collectively cover every section where vendor provided input.
@@ -106,7 +106,7 @@ After creating queries, verify:
 - ✓ No major term repetition across queries
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
-- ✓ Queries comprehensively check against Massachusetts ITS T&Cs, EOTSS policies, and all Exhibits
+- ✓ Queries comprehensively check against Massachusetts ITS T&Cs, RFR, and all Exhibits
 - ✓ Adaptive to actual vendor document structure (not forced pattern)
 
 ### STEP 3: COMPREHENSIVE CONFLICT DETECTION
