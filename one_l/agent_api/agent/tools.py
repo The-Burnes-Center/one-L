@@ -404,6 +404,12 @@ def _redline_pdf_document(
         # Get PDF processor
         pdf_processor = get_pdf_processor()
         if not pdf_processor:
+            # Cleanup on failure
+            if session_id and user_id:
+                try:
+                    _cleanup_session_documents(session_id, user_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Session cleanup error during PDF processor failure: {cleanup_error}")
             return {
                 "success": False,
                 "error": "PDF processor not available"
@@ -473,11 +479,17 @@ def _redline_pdf_document(
         
     except Exception as e:
         logger.error(f"Error in PDF redlining: {str(e)}")
+        # Cleanup on failure
+        if session_id and user_id:
+            try:
+                _cleanup_session_documents(session_id, user_id)
+            except Exception as cleanup_error:
+                logger.error(f"Session cleanup error during PDF redlining exception: {cleanup_error}")
         return {
             "success": False,
             "error": str(e),
             "original_document": document_s3_key
-    }
+        }
 
 
 def redline_document(
@@ -514,6 +526,12 @@ def redline_document(
         agent_processing_bucket = os.environ.get('AGENT_PROCESSING_BUCKET')
         
         if not agent_processing_bucket or not source_bucket:
+            # Cleanup on failure
+            if session_id and user_id:
+                try:
+                    _cleanup_session_documents(session_id, user_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Session cleanup error during bucket config check: {cleanup_error}")
             return {
                 "success": False,
                 "error": "Required buckets not configured"
@@ -531,6 +549,12 @@ def redline_document(
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         if not redline_items:
+            # Cleanup on failure
+            if session_id and user_id:
+                try:
+                    _cleanup_session_documents(session_id, user_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Session cleanup error during no conflicts check: {cleanup_error}")
             return {
                 "success": False,
                 "error": "No conflicts found in analysis data for redlining"
@@ -579,7 +603,12 @@ def redline_document(
         logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         if not redline_items:
-
+            # Cleanup on failure
+            if session_id and user_id:
+                try:
+                    _cleanup_session_documents(session_id, user_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Session cleanup error during second no conflicts check: {cleanup_error}")
             return {
                 "success": False,
                 "error": "No conflicts found in analysis data for redlining"
@@ -604,6 +633,12 @@ def redline_document(
         })
         
         if not upload_success:
+            # Cleanup on failure
+            if session_id and user_id:
+                try:
+                    _cleanup_session_documents(session_id, user_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Session cleanup error during upload failure: {cleanup_error}")
             return {
                 "success": False,
                 "error": "Failed to upload redlined document"
@@ -653,6 +688,12 @@ def redline_document(
         
     except Exception as e:
         logger.error(f"Error in redlining workflow: {str(e)}")
+        # Cleanup on failure
+        if session_id and user_id:
+            try:
+                _cleanup_session_documents(session_id, user_id)
+            except Exception as cleanup_error:
+                logger.error(f"Session cleanup error during redlining workflow exception: {cleanup_error}")
         return {
             "success": False,
             "error": str(e),
