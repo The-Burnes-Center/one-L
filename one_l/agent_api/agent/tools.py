@@ -722,10 +722,10 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             logger.warning(f"PARSE_REJECT_NO_SOURCE: Rejecting conflict {clarification_id} - missing or invalid source_doc: '{source_doc}'. Conflicts must have a valid reference document from the knowledge base.")
                             continue  # Skip conflicts without valid source documents
                         
-                        # Revert to main branch comment format: CONFLICT ID (type): rationale
+                        # Use Ritik's comment format from main branch: CONFLICT ID (type): rationale
                         comment = f"CONFLICT {clarification_id} ({conflict_type}): {rationale}"
                         
-                        # Add reference section at the end if source_doc is available
+                        # Add reference section using earlier format (before 1453265) - more accurate reference
                         if source_doc and source_doc.strip() and source_doc.lower() not in ['n/a', 'na', 'none', 'unknown']:
                             comment += f"\n\nReference: {source_doc.strip()}"
                             if clause_ref and clause_ref.strip() and clause_ref.lower() not in ['n/a', 'na', 'none']:
