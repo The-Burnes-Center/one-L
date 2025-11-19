@@ -716,25 +716,26 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     
                     # Create redline item using exact vendor quote for matching
                     if vendor_quote_clean.strip():  # Only add if we have actual text
-                        # VALIDATION: Require source document for all conflicts
+                        # VALIDATION: Require source document for all conflicts (but allow RFR documents)
+                        # Only reject if source_doc is truly missing/invalid, not if it's a valid document name
                         if not source_doc or not source_doc.strip() or source_doc.lower() in ['n/a', 'na', 'none', 'unknown']:
                             logger.warning(f"PARSE_REJECT_NO_SOURCE: Rejecting conflict {clarification_id} - missing or invalid source_doc: '{source_doc}'. Conflicts must have a valid reference document from the knowledge base.")
                             continue  # Skip conflicts without valid source documents
                         
-                        # Create user-friendly comment that explains the issue clearly
-                        # Use summary if available, otherwise use rationale
-                        comment_text = summary if summary and len(summary.strip()) > 10 else rationale
+                        # Revert to main branch comment format: CONFLICT ID (type): rationale
+                        comment = f"CONFLICT {clarification_id} ({conflict_type}): {rationale}"
                         
-                        # Format comment to be clear and actionable - source_doc is now guaranteed to exist
-                        comment = f"Issue: {comment_text.strip()}\n\nReference: {source_doc.strip()}"
-                        if clause_ref and clause_ref.strip() and clause_ref.lower() not in ['n/a', 'na', 'none']:
-                            comment += f" ({clause_ref.strip()})"
+                        # Add reference section at the end if source_doc is available
+                        if source_doc and source_doc.strip() and source_doc.lower() not in ['n/a', 'na', 'none', 'unknown']:
+                            comment += f"\n\nReference: {source_doc.strip()}"
+                            if clause_ref and clause_ref.strip() and clause_ref.lower() not in ['n/a', 'na', 'none']:
+                                comment += f" ({clause_ref.strip()})"
                         
                         redline_items.append({
                             'text': vendor_quote_clean.strip(),  # Exact sentence from vendor document
                             'comment': comment,
-                            'author': 'One L',
-                            'initials': '1L',
+                            'author': 'Legal-AI',
+                            'initials': 'LAI',
                             'clarification_id': clarification_id,
                             'conflict_type': conflict_type,
                             'source_doc': source_doc,
