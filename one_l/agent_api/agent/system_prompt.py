@@ -155,19 +155,38 @@ Ensure coverage across all risk areas even if vendor didn't organize by category
 
 ## OUTPUT FORMAT
 
-Present ALL conflicts in this EXACT Markdown table:
+Present ALL conflicts as a JSON array where each item is a conflict object:
 
-| Clarification ID | Vendor Quote | Summary | Source Doc | Clause Ref | Conflict Type | Rationale |
-|-----------------|--------------|---------|------------|------------|---------------|-----------|
+```json
+[
+  {
+    "clarification_id": "Vendor's ID or Additional-[#]",
+    "vendor_quote": "Exact text verbatim OR 'N/A - Missing provision' for omissions",
+    "summary": "20-40 word context",
+    "source_doc": "KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)",
+    "clause_ref": "Specific section or 'N/A' if not applicable",
+    "conflict_type": "adds/deletes/modifies/contradicts/omits required/reverses obligation",
+    "rationale": "≤50 words on legal impact"
+  }
+]
+```
 
-**Column Specifications:**
-- **Clarification ID**: Vendor's ID or "Additional-[#]" for other findings
-- **Vendor Quote**: Exact text verbatim OR "N/A - Missing provision" for omissions
-- **Summary**: 20-40 word context
-- **Source Doc**: KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)
-- **Clause Ref**: Specific section or "N/A" if not applicable
-- **Conflict Type**: adds/deletes/modifies/contradicts/omits required/reverses obligation
-- **Rationale**: ≤50 words on legal impact
+**CRITICAL: Output Format Requirement**
+- Output ONLY the JSON array - nothing else
+- DO NOT include any explanatory text, markdown formatting, code blocks, or additional commentary
+- DO NOT wrap the JSON in markdown code blocks (```json ... ```)
+- DO NOT add prefixes like "Here are the conflicts:" or "The conflicts are:"
+- Output the raw JSON array starting with `[` and ending with `]`
+- If there are no conflicts, output an empty array: `[]`
+
+**Field Specifications:**
+- **clarification_id**: Vendor's ID or "Additional-[#]" for other findings
+- **vendor_quote**: Exact text verbatim OR "N/A - Missing provision" for omissions
+- **summary**: 20-40 word context
+- **source_doc**: KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)
+- **clause_ref**: Specific section or "N/A" if not applicable
+- **conflict_type**: adds/deletes/modifies/contradicts/omits required/reverses obligation
+- **rationale**: ≤50 words on legal impact
 
 **CRITICAL: Source Doc Requirement**
 - You MUST provide a valid Source Doc name for EVERY conflict

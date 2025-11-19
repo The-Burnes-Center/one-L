@@ -11,11 +11,22 @@ import logging
 import re
 import time
 import hashlib
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from collections import defaultdict
 from docx import Document
 from docx.shared import RGBColor, Pt, Inches
 import io
+
+# Pydantic models for output validation
+try:
+    from pydantic import BaseModel, Field, field_validator, ConfigDict
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    BaseModel = None
+    Field = None
+    field_validator = None
+    ConfigDict = None
 
 # Import PDF processor
 try:
@@ -29,6 +40,43 @@ except ImportError:
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# Pydantic model for conflict validation
+if PYDANTIC_AVAILABLE:
+    class ConflictModel(BaseModel):
+        """Pydantic model for validating conflict data from LLM output."""
+        clarification_id: str = Field(..., description="Vendor's ID or Additional-[#] for other findings")
+        vendor_quote: str = Field(..., description="Exact text verbatim OR 'N/A - Missing provision' for omissions")
+        summary: str = Field(..., description="20-40 word context")
+        source_doc: str = Field(..., description="KB document name (REQUIRED - must be an actual document from knowledge base)")
+        clause_ref: str = Field(default="N/A", description="Specific section or 'N/A' if not applicable")
+        conflict_type: str = Field(..., description="adds/deletes/modifies/contradicts/omits required/reverses obligation")
+        rationale: str = Field(..., description="≤50 words on legal impact")
+        
+        @field_validator('source_doc')
+        @classmethod
+        def validate_source_doc(cls, v: str) -> str:
+            """Ensure source_doc is not empty or invalid."""
+            v_str = str(v).strip()
+            if not v_str or v_str.lower() in ['n/a', 'na', 'none', 'unknown']:
+                raise ValueError(f"source_doc must be a valid document name, got: '{v}'")
+            return v_str
+        
+        @field_validator('vendor_quote')
+        @classmethod
+        def validate_vendor_quote(cls, v: str) -> str:
+            """Clean up vendor quote by removing surrounding quotes."""
+            v_str = str(v).strip()
+            if v_str.startswith('"') and v_str.endswith('"'):
+                v_str = v_str[1:-1]
+            if not v_str or v_str.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available'] or len(v_str) < 5:
+                raise ValueError(f"vendor_quote must be meaningful text (at least 5 chars), got: '{v_str}'")
+            return v_str
+        
+        model_config = ConfigDict(
+            extra='forbid',  # Reject extra fields
+            str_strip_whitespace=True  # Auto-strip strings
+        )
 
 # Initialize AWS clients with optimized timeout for knowledge base retrieval
 # Knowledge base queries are typically fast (under 30 seconds)
@@ -703,11 +751,11 @@ def redline_document(
 
 def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     """
-    Parse the markdown table format conflicts data for redlining.
-    Extracts exact sentences from Summary column that should be present in vendor document.
+    Parse conflicts data for redlining. Supports both JSON array format and markdown table format.
+    Extracts exact sentences from vendor_quote field that should be present in vendor document.
     
     Args:
-        analysis_data: Analysis string containing markdown table
+        analysis_data: Analysis string containing JSON array or markdown table
         
     Returns:
         List of redline items with exact text to match and comments
@@ -718,6 +766,135 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     redline_items = []
     
     try:
+        # Try to parse as JSON first (new format)
+        import json
+        import re
+        
+        # Look for JSON array pattern in the content
+        json_match = re.search(r'\[[\s\S]*\]', analysis_data)
+        if json_match:
+            try:
+                json_str = json_match.group(0)
+                conflicts_json = json.loads(json_str)
+                
+                if isinstance(conflicts_json, list):
+                    logger.info(f"PARSE_JSON: Found JSON array with {len(conflicts_json)} conflicts")
+                    
+                    validated_count = 0
+                    validation_errors = []
+                    
+                    for idx, conflict in enumerate(conflicts_json):
+                        if not isinstance(conflict, dict):
+                            logger.warning(f"PARSE_SKIP: Conflict {idx} is not a dict, skipping")
+                            continue
+                        
+                        # Use Pydantic validation if available
+                        if PYDANTIC_AVAILABLE and ConflictModel:
+                            try:
+                                validated_conflict = ConflictModel(**conflict)
+                                
+                                # Use comment format: CONFLICT ID (type): rationale
+                                comment = f"CONFLICT {validated_conflict.clarification_id} ({validated_conflict.conflict_type}): {validated_conflict.rationale}"
+                                
+                                # Add reference section
+                                if validated_conflict.source_doc and validated_conflict.source_doc.strip():
+                                    comment += f"\n\nReference: {validated_conflict.source_doc.strip()}"
+                                    if validated_conflict.clause_ref and validated_conflict.clause_ref.strip() and validated_conflict.clause_ref.lower() not in ['n/a', 'na', 'none']:
+                                        comment += f" ({validated_conflict.clause_ref.strip()})"
+                                
+                                redline_items.append({
+                                    'text': validated_conflict.vendor_quote.strip(),
+                                    'comment': comment,
+                                    'author': 'Legal-AI',
+                                    'initials': 'LAI',
+                                    'clarification_id': validated_conflict.clarification_id,
+                                    'conflict_type': validated_conflict.conflict_type,
+                                    'source_doc': validated_conflict.source_doc,
+                                    'clause_ref': validated_conflict.clause_ref,
+                                    'summary': validated_conflict.summary,
+                                    'rationale': validated_conflict.rationale
+                                })
+                                validated_count += 1
+                                
+                            except Exception as e:
+                                error_msg = f"Conflict {idx} validation failed: {str(e)}"
+                                validation_errors.append(error_msg)
+                                logger.warning(f"PARSE_VALIDATION_ERROR: {error_msg}")
+                                # Fall through to manual validation for backwards compatibility
+                                pass
+                        
+                        # Fallback to manual validation if Pydantic not available or validation failed
+                        if not (PYDANTIC_AVAILABLE and ConflictModel):
+                            clarification_id = conflict.get('clarification_id', '')
+                            vendor_quote = conflict.get('vendor_quote', '')
+                            summary = conflict.get('summary', '')
+                            source_doc = conflict.get('source_doc', '')
+                            clause_ref = conflict.get('clause_ref', '')
+                            conflict_type = conflict.get('conflict_type', '')
+                            rationale = conflict.get('rationale', '')
+                            
+                            # Clean up vendor quote - remove surrounding quotes if present
+                            vendor_quote_clean = str(vendor_quote).strip()
+                            if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
+                                vendor_quote_clean = vendor_quote_clean[1:-1]
+                            
+                            # Create redline item using exact vendor quote for matching
+                            if vendor_quote_clean.strip():  # Only add if we have actual text
+                                # VALIDATION: Require source document for all conflicts
+                                if not source_doc or not str(source_doc).strip() or str(source_doc).lower() in ['n/a', 'na', 'none', 'unknown']:
+                                    logger.warning(f"PARSE_REJECT_NO_SOURCE: Rejecting conflict {clarification_id} - missing or invalid source_doc: '{source_doc}'. Conflicts must have a valid reference document from the knowledge base.")
+                                    continue
+                                
+                                # Use comment format: CONFLICT ID (type): rationale
+                                comment = f"CONFLICT {clarification_id} ({conflict_type}): {rationale}"
+                                
+                                # Add reference section
+                                if source_doc and str(source_doc).strip() and str(source_doc).lower() not in ['n/a', 'na', 'none', 'unknown']:
+                                    comment += f"\n\nReference: {str(source_doc).strip()}"
+                                    if clause_ref and str(clause_ref).strip() and str(clause_ref).lower() not in ['n/a', 'na', 'none']:
+                                        comment += f" ({str(clause_ref).strip()})"
+                                
+                                redline_items.append({
+                                    'text': vendor_quote_clean.strip(),
+                                    'comment': comment,
+                                    'author': 'Legal-AI',
+                                    'initials': 'LAI',
+                                    'clarification_id': str(clarification_id),
+                                    'conflict_type': str(conflict_type),
+                                    'source_doc': str(source_doc),
+                                    'clause_ref': str(clause_ref),
+                                    'summary': str(summary),
+                                    'rationale': str(rationale)
+                                })
+                    
+                    if PYDANTIC_AVAILABLE and ConflictModel:
+                        logger.info(f"PARSE_VALIDATION: Validated {validated_count}/{len(conflicts_json)} conflicts using Pydantic")
+                        if validation_errors:
+                            logger.warning(f"PARSE_VALIDATION: {len(validation_errors)} validation errors occurred")
+                    
+                    # Deduplicate and filter (same logic as markdown parsing)
+                    seen_ids = {}
+                    deduplicated_items = []
+                    for item in redline_items:
+                        clarification_id = item.get('clarification_id')
+                        text_val = (item.get('text') or '').strip()
+                        # Filter placeholders/empty like 'N/A' or too short strings
+                        if not text_val or text_val.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available'] or len(text_val) < 5:
+                            logger.warning(f"PARSE_FILTER: Skipping placeholder/empty conflict for ID={clarification_id} text='{text_val}'")
+                            continue
+                        if clarification_id not in seen_ids:
+                            seen_ids[clarification_id] = True
+                            deduplicated_items.append(item)
+                        else:
+                            logger.warning(f"PARSE_DEDUP: Duplicate clarification_id found: {clarification_id}, skipping")
+                    
+                    logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from JSON, {len(deduplicated_items)} unique conflicts after deduplication")
+                    return deduplicated_items
+                    
+            except json.JSONDecodeError as e:
+                logger.warning(f"PARSE_JSON_FAILED: Could not parse as JSON, falling back to markdown table parsing: {e}")
+        
+        # Fallback to markdown table parsing (backwards compatibility)
         lines = analysis_data.strip().split('\n')
         
         # Find the table header and data rows
@@ -2780,14 +2957,54 @@ def save_analysis_to_dynamodb(
         # Convert redline format to DynamoDB format with better naming
         conflicts = []
         for item in redline_items:
+            # Extract rationale - prefer direct field, fallback to parsing comment
+            rationale = item.get('rationale', '')
+            if not rationale and 'comment' in item:
+                # Parse rationale from comment format: "CONFLICT ID (type): rationale\n\nReference: ..."
+                comment = item['comment']
+                if '): ' in comment:
+                    # Extract everything after "): " and before "\n\nReference:" if present
+                    rationale_part = comment.split('): ', 1)[-1]
+                    if '\n\nReference:' in rationale_part:
+                        rationale = rationale_part.split('\n\nReference:')[0].strip()
+                    else:
+                        rationale = rationale_part.strip()
+                else:
+                    rationale = comment
+            
             conflicts.append({
-                'clarification_id': item['clarification_id'],
-                'vendor_conflict': item['text'],  # Exact text from vendor document (better naming)
-                'source_doc': item['source_doc'],
-                'clause_ref': item['clause_ref'],
-                'conflict_type': item['conflict_type'],
-                'rationale': item['comment'].split('): ', 1)[-1] if '): ' in item['comment'] else item['comment']
+                'clarification_id': item.get('clarification_id', ''),
+                'vendor_conflict': item.get('text', ''),  # Exact text from vendor document (better naming)
+                'summary': item.get('summary', ''),  # 20-40 word context from JSON
+                'source_doc': item.get('source_doc', ''),
+                'clause_ref': item.get('clause_ref', 'N/A'),
+                'conflict_type': item.get('conflict_type', ''),
+                'rationale': rationale or item.get('comment', '')  # Fallback to full comment if no rationale
             })
+        
+        # Validate and normalize JSON analysis_data before storing
+        normalized_analysis_data = None
+        if analysis_data:
+            import json
+            import re
+            
+            # Try to extract and validate JSON from analysis_data
+            json_match = re.search(r'\[[\s\S]*\]', analysis_data)
+            if json_match:
+                try:
+                    json_str = json_match.group(0)
+                    # Validate JSON by parsing it
+                    parsed_json = json.loads(json_str)
+                    # Re-serialize to ensure clean, normalized JSON
+                    normalized_analysis_data = json.dumps(parsed_json, indent=2, ensure_ascii=False)
+                    logger.info(f"DynamoDB: Storing validated JSON with {len(parsed_json)} conflicts")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"DynamoDB: Invalid JSON in analysis_data, storing as-is: {e}")
+                    normalized_analysis_data = analysis_data
+            else:
+                # No JSON found, store as-is (backwards compatibility with markdown)
+                normalized_analysis_data = analysis_data
+                logger.info("DynamoDB: No JSON found in analysis_data, storing as text")
         
         # Prepare streamlined item for DynamoDB - focusing only on conflicts data
         item = {
@@ -2799,8 +3016,8 @@ def save_analysis_to_dynamodb(
             'conflicts': conflicts
         }
 
-        if analysis_data:
-            item['analysis_data'] = analysis_data
+        if normalized_analysis_data:
+            item['analysis_data'] = normalized_analysis_data
 
         if usage_data:
             item['usage'] = usage_data

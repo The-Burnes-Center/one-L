@@ -276,7 +276,7 @@ class Model:
                 
                 # Create instruction for this specific chunk
                 approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
-                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the Rationale column - what risk it creates and why it matters. If you find conflicts, list them in the markdown table format. If there are no material conflicts in this section, respond with 'N/A - No material conflicts found'."
+                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters. Output ONLY a JSON array of conflicts (empty array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
                 
                 messages = [
                     {
@@ -323,8 +323,41 @@ class Model:
                 except Exception as e:
                     logger.warning(f"Error parsing conflicts from chunk {chunk_num + 1}: {str(e)}")
             
-            # Merge all content
-            merged_content = "\n\n--- ANALYSIS CONTINUED FROM NEXT SECTION ---\n\n".join(all_content)
+            # Merge all content - combine JSON arrays from all chunks into a single valid JSON array
+            import json
+            import re
+            
+            merged_json_conflicts = []
+            
+            # Try to extract and combine JSON arrays from each chunk
+            chunks_with_json = 0
+            for chunk_content in all_content:
+                # Look for JSON array pattern in the chunk content
+                json_match = re.search(r'\[[\s\S]*\]', chunk_content)
+                if json_match:
+                    try:
+                        json_str = json_match.group(0)
+                        chunk_conflicts = json.loads(json_str)
+                        if isinstance(chunk_conflicts, list):
+                            # Handle empty arrays (valid JSON response when no conflicts)
+                            if len(chunk_conflicts) == 0:
+                                logger.info(f"Chunk returned empty JSON array (no conflicts found)")
+                            else:
+                                merged_json_conflicts.extend(chunk_conflicts)
+                                logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk JSON")
+                            chunks_with_json += 1
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse JSON from chunk, falling back to text merge: {e}")
+            
+            # If we successfully found and merged JSON arrays, create a single valid JSON string
+            if chunks_with_json > 0:
+                # Always output valid JSON array, even if empty
+                merged_content = json.dumps(merged_json_conflicts, indent=2, ensure_ascii=False)
+                logger.info(f"Successfully merged {len(merged_json_conflicts)} total conflicts from {chunks_with_json} chunks into single JSON array")
+            else:
+                # Fallback: if no JSON found, merge as text (backwards compatibility)
+                merged_content = "\n\n--- ANALYSIS CONTINUED FROM NEXT SECTION ---\n\n".join(all_content)
+                logger.warning("No JSON arrays found in chunks, using text merge fallback")
             
             # Log final summary
             total_conflicts = len(all_conflicts)
