@@ -597,15 +597,19 @@ def redline_document(
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         if not redline_items:
-            # Cleanup on failure
+            # Cleanup reference documents when no conflicts detected
+            cleanup_result = None
             if session_id and user_id:
                 try:
-                    _cleanup_session_documents(session_id, user_id)
+                    cleanup_result = _cleanup_session_documents(session_id, user_id)
+                    logger.info(f"Cleanup completed for 0 conflicts case: {cleanup_result}")
                 except Exception as cleanup_error:
                     logger.error(f"Session cleanup error during no conflicts check: {cleanup_error}")
             return {
                 "success": False,
-                "error": "No conflicts found in analysis data for redlining"
+                "error": "No conflicts found in analysis data for redlining",
+                "cleanup_performed": cleanup_result is not None,
+                "cleanup_result": cleanup_result
             }
         
         # Route to appropriate processor based on file type
@@ -645,22 +649,29 @@ def redline_document(
             if para.text.strip():
                 logger.info(f"DOCUMENT_DEBUG: Para {i}: '{para.text[:100]}...'")
         
-        # Step 3: Parse conflicts and create redline items from analysis data
-        redline_items = parse_conflicts_for_redlining(analysis_data)
-        logger.info(f"REDLINE_PARSE: Found {len(redline_items)} conflicts to redline")
-        logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
-        
+        # Note: redline_items was already parsed above, no need to parse again
+        # If we reach here, redline_items should not be empty (checked earlier)
+        # But add a safety check to prevent crashes
         if not redline_items:
-            # Cleanup on failure
+            # This should not happen since we checked earlier, but handle gracefully
+            logger.warning("REDLINE_WARNING: redline_items is empty after document load, this should not happen")
+            cleanup_result = None
             if session_id and user_id:
                 try:
-                    _cleanup_session_documents(session_id, user_id)
+                    cleanup_result = _cleanup_session_documents(session_id, user_id)
+                    logger.info(f"Cleanup completed for unexpected 0 conflicts case: {cleanup_result}")
                 except Exception as cleanup_error:
-                    logger.error(f"Session cleanup error during second no conflicts check: {cleanup_error}")
+                    logger.error(f"Session cleanup error during unexpected no conflicts check: {cleanup_error}")
             return {
                 "success": False,
-                "error": "No conflicts found in analysis data for redlining"
+                "error": "No conflicts found in analysis data for redlining",
+                "cleanup_performed": cleanup_result is not None,
+                "cleanup_result": cleanup_result
             }
+        
+        # Log first conflict preview safely
+        if redline_items:
+            logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
         # Step 4: Apply redlining with exact sentence matching
         logger.info(f"REDLINE_APPLY: Starting redlining - {len(redline_items)} conflicts, {len(doc.paragraphs)} paragraphs")
