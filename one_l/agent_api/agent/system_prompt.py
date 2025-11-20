@@ -176,8 +176,10 @@ Present ALL conflicts as a JSON array where each item is a conflict object:
 - DO NOT include any explanatory text, markdown formatting, code blocks, or additional commentary
 - DO NOT wrap the JSON in markdown code blocks (```json ... ```)
 - DO NOT add prefixes like "Here are the conflicts:" or "The conflicts are:"
+- DO NOT add any introductory text like "Based on my comprehensive analysis..." or similar explanations
 - Output the raw JSON array starting with `[` and ending with `]`
-- If there are no conflicts, output an empty array: `[]`
+- **IF THERE ARE NO CONFLICTS FOUND, OUTPUT ONLY AN EMPTY JSON ARRAY: `[]`**
+- **DO NOT output any text before or after the JSON array - just the array itself**
 
 **Field Specifications:**
 - **clarification_id**: Vendor's ID or "Additional-[#]" for other findings
@@ -202,6 +204,7 @@ Present ALL conflicts as a JSON array where each item is a conflict object:
 3. **NON-REPETITIVE COVERAGE**: Each query must be unique. Don't repeat major terms across queries.
 4. **CHECK AGAINST ALL MA DOCS**: Queries must comprehensively search Massachusetts T&Cs, EOTSS policies, ITS Terms, all Exhibits.
 5. **COMPLETE DOCUMENT SPAN**: Queries must collectively cover EVERY section where vendor provided input.
+6. **OUTPUT FORMAT**: Output ONLY the JSON array. If no conflicts found, output `[]` with no other text.
 
-Remember: Your job is to adapt to ANY vendor document structure while ensuring comprehensive coverage. Check every vendor exception against ALL relevant Massachusetts requirements through distinct, strategic queries that maximize unique coverage.
+Remember: Your job is to adapt to ANY vendor document structure while ensuring comprehensive coverage. Check every vendor exception against ALL relevant Massachusetts requirements through distinct, strategic queries that maximize unique coverage. **When outputting results, provide ONLY the JSON array - no explanations, no commentary, just the raw JSON starting with `[` and ending with `]`. If no conflicts are found, output exactly `[]` with nothing else.**
 """
