@@ -77,6 +77,16 @@ if PYDANTIC_AVAILABLE:
             extra='forbid',  # Reject extra fields
             str_strip_whitespace=True  # Auto-strip strings
         )
+    
+    class RedliningResponseModel(BaseModel):
+        """Pydantic model for validating the redlining response structure with explanation and conflicts."""
+        explanation: str = Field(..., description="Justification/explanation in the form of text so the model can give more context")
+        conflicts: List[ConflictModel] = Field(default_factory=list, description="Array of conflicts")
+        
+        model_config = ConfigDict(
+            extra='forbid',  # Reject extra fields
+            str_strip_whitespace=True  # Auto-strip strings
+        )
 
 # Initialize AWS clients with optimized timeout for knowledge base retrieval
 # Knowledge base queries are typically fast (under 30 seconds)
@@ -762,11 +772,12 @@ def redline_document(
 
 def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     """
-    Parse conflicts data for redlining. Supports both JSON array format and markdown table format.
+    Parse conflicts data for redlining. Supports both JSON object format (with explanation and conflicts),
+    JSON array format, and markdown table format.
     Extracts exact sentences from vendor_quote field that should be present in vendor document.
     
     Args:
-        analysis_data: Analysis string containing JSON array or markdown table
+        analysis_data: Analysis string containing JSON object/array or markdown table
         
     Returns:
         List of redline items with exact text to match and comments
@@ -775,21 +786,63 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     logger.info(f"PARSE_START: Analysis preview: {analysis_data[:150]}...")
 
     redline_items = []
+    explanation = ""
     
     try:
         # Try to parse as JSON first (new format)
         import json
         import re
         
-        # Look for JSON array pattern in the content
-        json_match = re.search(r'\[[\s\S]*\]', analysis_data)
-        if json_match:
+        # First, try to find JSON object pattern (new format with explanation and conflicts)
+        json_object_match = re.search(r'\{[\s\S]*"conflicts"[\s\S]*\}', analysis_data)
+        if json_object_match:
             try:
-                json_str = json_match.group(0)
-                conflicts_json = json.loads(json_str)
+                json_str = json_object_match.group(0)
+                parsed_json = json.loads(json_str)
                 
-                if isinstance(conflicts_json, list):
-                    logger.info(f"PARSE_JSON: Found JSON array with {len(conflicts_json)} conflicts")
+                # Check if it's the new structure with explanation and conflicts
+                if isinstance(parsed_json, dict) and "conflicts" in parsed_json:
+                    explanation = parsed_json.get("explanation", "")
+                    conflicts_json = parsed_json.get("conflicts", [])
+                    
+                    # Log the explanation
+                    if explanation:
+                        logger.info(f"PARSE_EXPLANATION: {explanation}")
+                    else:
+                        logger.info("PARSE_EXPLANATION: No explanation provided")
+                    
+                    if isinstance(conflicts_json, list):
+                        logger.info(f"PARSE_JSON: Found JSON object with explanation and {len(conflicts_json)} conflicts")
+                    else:
+                        logger.warning(f"PARSE_JSON: Expected conflicts to be a list, got {type(conflicts_json)}")
+                        conflicts_json = []
+                else:
+                    # Not the expected structure, fall through to array parsing
+                    conflicts_json = None
+            except json.JSONDecodeError as e:
+                logger.warning(f"PARSE_JSON_OBJECT_FAILED: Could not parse as JSON object, trying array format: {e}")
+                conflicts_json = None
+        else:
+            conflicts_json = None
+        
+        # If we didn't find the new structure, try to find JSON array pattern (backwards compatibility)
+        if conflicts_json is None:
+            json_match = re.search(r'\[[\s\S]*\]', analysis_data)
+            if json_match:
+                try:
+                    json_str = json_match.group(0)
+                    conflicts_json = json.loads(json_str)
+                    
+                    if isinstance(conflicts_json, list):
+                        logger.info(f"PARSE_JSON: Found JSON array with {len(conflicts_json)} conflicts (backwards compatibility mode)")
+                    else:
+                        conflicts_json = None
+                except json.JSONDecodeError as e:
+                    logger.warning(f"PARSE_JSON_ARRAY_FAILED: Could not parse as JSON array: {e}")
+                    conflicts_json = None
+        
+        # Process conflicts if we found them
+        if conflicts_json is not None and isinstance(conflicts_json, list):
                     
                     validated_count = 0
                     validation_errors = []
@@ -909,10 +962,10 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     if len(redline_items) != len(deduplicated_items):
                         dropped = len(redline_items) - len(deduplicated_items)
                         logger.info(f"PARSE_DEDUP_SUMMARY: Dropped {dropped} duplicate conflicts (same ID + text combination)")
-                    return deduplicated_items
                     
-            except json.JSONDecodeError as e:
-                logger.warning(f"PARSE_JSON_FAILED: Could not parse as JSON, falling back to markdown table parsing: {e}")
+                    # Store explanation in a way that can be accessed later if needed
+                    # For now, we just log it - conflicts are what we return
+                    return deduplicated_items
         
         # Fallback to markdown table parsing (backwards compatibility)
         lines = analysis_data.strip().split('\n')
