@@ -214,7 +214,7 @@ class Model:
             
             # Check document size and decide whether to chunk
             # Only try to parse DOCX files for chunking (PDFs are handled differently)
-            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON array format."
             
             if not is_pdf_file(document_s3_key):
                 try:
@@ -222,14 +222,14 @@ class Model:
                     import io
                     doc = Document(io.BytesIO(document_data))
                     total_paragraphs = len(doc.paragraphs)
-                    logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
+                    logger.info(f"Document has {total_paragraphs} paragraphs ")
                     
                     # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
                     if total_paragraphs > 100:
                         logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
                         return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
                     else:
-                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON array format."
                 except Exception as e:
                     logger.warning(f"Could not pre-analyze document structure: {e}")
             else:
