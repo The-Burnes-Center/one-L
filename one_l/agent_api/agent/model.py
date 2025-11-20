@@ -1,6 +1,16 @@
 """
 Model integration for Claude 4 Sonnet thinking with AWS Bedrock.
 Handles tool calling for comprehensive document review.
+
+Features:
+- Detailed logging of LLM thinking process during all inference calls
+- Thinking logs are captured and logged for:
+  * Initial document review calls
+  * Tool call initiation and completion
+  * Chunked document analysis (per chunk)
+  * All agent inference operations during redlining workflow
+- Thinking content is automatically extracted from various response structures
+  and logged in detail with context identifiers for easy tracking
 """
 
 import json
@@ -52,6 +62,98 @@ _call_tracker = {
     'total_conflicts_detected': 0,
     'last_call_time': 0
 }
+
+def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> str:
+    """
+    Extract thinking content from Claude API response and log it in detail.
+    Handles various response structures from AWS Bedrock Converse API.
+    
+    Args:
+        response: Claude API response dictionary
+        context: Context string to identify where this thinking occurred (e.g., "initial_review", "chunk_1", "tool_call")
+        
+    Returns:
+        Thinking content as string (empty if not found)
+    """
+    thinking_content = ""
+    
+    # Extract thinking from response - check multiple possible locations
+    # AWS Bedrock Converse API may structure thinking in different ways
+    
+    # Method 1: Direct thinking field (string)
+    if isinstance(response.get("thinking"), str) and response.get("thinking"):
+        thinking_content = response.get("thinking", "")
+    
+    # Method 2: Thinking in output.thinking (string)
+    elif isinstance(response.get("output", {}).get("thinking"), str):
+        thinking_content = response.get("output", {}).get("thinking", "")
+    
+    # Method 3: Structured thinking object with content/text fields
+    elif isinstance(response.get("thinking"), dict):
+        thinking_obj = response.get("thinking", {})
+        if isinstance(thinking_obj.get("content"), str):
+            thinking_content = thinking_obj.get("content", "")
+        elif isinstance(thinking_obj.get("text"), str):
+            thinking_content = thinking_obj.get("text", "")
+        elif isinstance(thinking_obj.get("thinking"), str):
+            thinking_content = thinking_obj.get("thinking", "")
+    
+    # Method 4: Thinking in output.thinking as object
+    elif isinstance(response.get("output", {}).get("thinking"), dict):
+        thinking_obj = response.get("output", {}).get("thinking", {})
+        if isinstance(thinking_obj.get("content"), str):
+            thinking_content = thinking_obj.get("content", "")
+        elif isinstance(thinking_obj.get("text"), str):
+            thinking_content = thinking_obj.get("text", "")
+        elif isinstance(thinking_obj.get("thinking"), str):
+            thinking_content = thinking_obj.get("thinking", "")
+    
+    # Method 5: Check if thinking is in content blocks (some API versions)
+    elif response.get("output", {}).get("message", {}).get("content"):
+        for content_block in response.get("output", {}).get("message", {}).get("content", []):
+            if content_block.get("thinking"):
+                if isinstance(content_block.get("thinking"), str):
+                    thinking_content = content_block.get("thinking", "")
+                elif isinstance(content_block.get("thinking"), dict):
+                    thinking_obj = content_block.get("thinking", {})
+                    if isinstance(thinking_obj.get("content"), str):
+                        thinking_content = thinking_obj.get("content", "")
+                    elif isinstance(thinking_obj.get("text"), str):
+                        thinking_content = thinking_obj.get("text", "")
+                break
+    
+    # Log thinking content in detail
+    if thinking_content:
+        thinking_length = len(thinking_content)
+        thinking_preview = thinking_content[:500] if thinking_length > 500 else thinking_content
+        
+        logger.info(f"=== LLM THINKING [{context}] ===")
+        logger.info(f"Thinking content length: {thinking_length} characters")
+        logger.info(f"Thinking preview (first 500 chars):\n{thinking_preview}")
+        
+        # Log full thinking content (split into chunks if too long for single log entry)
+        if thinking_length > 5000:
+            # Split into chunks for better log readability
+            chunk_size = 5000
+            num_chunks = (thinking_length // chunk_size) + (1 if thinking_length % chunk_size > 0 else 0)
+            logger.info(f"Thinking content is large ({thinking_length} chars), logging in {num_chunks} chunks:")
+            
+            for i in range(0, thinking_length, chunk_size):
+                chunk_num = (i // chunk_size) + 1
+                chunk_end = min(i + chunk_size, thinking_length)
+                chunk = thinking_content[i:chunk_end]
+                logger.info(f"--- Thinking chunk {chunk_num}/{num_chunks} [{context}] ---\n{chunk}")
+        else:
+            logger.info(f"--- Full thinking content [{context}] ---\n{thinking_content}")
+        
+        logger.info(f"=== END LLM THINKING [{context}] ===")
+    else:
+        logger.warning(f"No thinking content found in response for context: {context}")
+        logger.debug(f"Response keys: {list(response.keys())}")
+        if response.get("output"):
+            logger.debug(f"Output keys: {list(response.get('output', {}).keys())}")
+    
+    return thinking_content if thinking_content else ""
 
 def _extract_json_only(content: str) -> str:
     """
@@ -256,7 +358,12 @@ class Model:
             ]
             
             # Make the initial request to Claude with tools
+            logger.info("=== STARTING DOCUMENT REVIEW INFERENCE ===")
             response = self._call_claude_with_tools(messages)
+            
+            # Log thinking from document review response
+            logger.info("=== LOGGING THINKING FROM DOCUMENT REVIEW ===")
+            thinking_content = _extract_and_log_thinking(response, f"document_review_{document_s3_key}")
             
             # Extract content from Converse API response
             content = ""
@@ -280,12 +387,17 @@ class Model:
             # Log final summary with all metrics
             logger.info(f"DOCUMENT REVIEW COMPLETE - Total Tool Calls: {_call_tracker['total_tool_calls']}, Total Model Calls: {_call_tracker['total_model_calls']}, Total Conflicts Detected: {_call_tracker['total_conflicts_detected']} (this document: {conflicts_count})")
             
+            # Extract thinking for return value
+            thinking_for_return = _extract_and_log_thinking(response, f"final_review_{document_s3_key}")
+            if not thinking_for_return:
+                thinking_for_return = response.get("thinking", "")
+            
             return {
                 "success": True,
                 "analysis": content,
                 "tool_results": response.get("tool_results", []),
                 "usage": response.get("usage", {}),
-                "thinking": response.get("thinking", ""),
+                "thinking": thinking_for_return,
                 "conflicts_count": conflicts_count
             }
             
@@ -368,7 +480,12 @@ class Model:
                 ]
                 
                 # Analyze this chunk
+                logger.info(f"=== STARTING CHUNK {chunk_num + 1} INFERENCE ===")
                 response = self._call_claude_with_tools(messages)
+                
+                # Log thinking from chunk analysis response
+                logger.info(f"=== LOGGING THINKING FROM CHUNK {chunk_num + 1} ANALYSIS ===")
+                thinking_content = _extract_and_log_thinking(response, f"chunk_{chunk_num + 1}_of_{len(chunks)}")
                 
                 # Extract content
                 content = ""
@@ -462,12 +579,16 @@ class Model:
             
             logger.info(f"CHUNKED DOCUMENT REVIEW COMPLETE - Total Chunks: {len(chunks)}, Total Conflicts: {total_conflicts}, Total Tokens Used: {total_tokens_used}")
             
+            # Collect all thinking from chunks for return (if available)
+            # Note: Individual chunk thinking was already logged above
+            logger.info("=== CHUNKED REVIEW SUMMARY: All chunk thinking has been logged above ===")
+            
             return {
                 "success": True,
                 "analysis": merged_content,
                 "tool_results": all_tool_results,
                 "usage": {"totalTokens": total_tokens_used},
-                "thinking": "",
+                "thinking": "",  # Chunked reviews have thinking logged per chunk above
                 "conflicts_count": total_conflicts
             }
             
@@ -585,6 +706,12 @@ class Model:
             
             logger.info(f"Claude API call successful! Total successful model calls: {_call_tracker['total_model_calls']}")
             
+            # Extract and log thinking content
+            thinking_context = f"inference_call_{_call_tracker['total_model_calls']}"
+            if response.get("stopReason") == "tool_use":
+                thinking_context += "_before_tool_use"
+            _extract_and_log_thinking(response, thinking_context)
+            
             # Handle tool calls if present
             if response.get("stopReason") == "tool_use":
                 return self._handle_tool_calls(messages, response)
@@ -616,6 +743,10 @@ class Model:
         """
         Handle tool calls from Claude and continue the conversation.
         """
+        
+        # Log thinking from the initial tool use response
+        logger.info("=== TOOL CALL DETECTED - Logging thinking before tool execution ===")
+        _extract_and_log_thinking(claude_response, f"tool_call_initiation_{_call_tracker['total_tool_calls'] + 1}")
         
         # Add Claude's response to messages (Converse API format)
         messages.append({
@@ -694,7 +825,13 @@ class Model:
                     })
         
         # Continue the conversation with tool results
+        logger.info("=== CONTINUING CONVERSATION AFTER TOOL EXECUTION ===")
         final_response = self._call_claude_with_tools(messages)
+        
+        # Log thinking from the final response after tool execution
+        logger.info("=== LOGGING THINKING AFTER TOOL EXECUTION ===")
+        _extract_and_log_thinking(final_response, f"after_tool_execution_{_call_tracker['total_tool_calls']}")
+        
         final_response["tool_results"] = tool_results
         
         return final_response
