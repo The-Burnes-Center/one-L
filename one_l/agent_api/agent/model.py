@@ -265,6 +265,9 @@ class Model:
             all_conflicts = []
             total_tokens_used = 0
             
+            # Track Additional-[#] counter across chunks to ensure sequential numbering
+            additional_counter = 0
+            
             # Process each chunk
             for chunk_info in chunks:
                 chunk_num = chunk_info['chunk_num']
@@ -274,9 +277,13 @@ class Model:
                 
                 logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (paragraphs {start_para}-{end_para})")
                 
-                # Create instruction for this specific chunk
+                # Create instruction for this specific chunk with Additional counter context
                 approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
-                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters. Output ONLY a JSON array of conflicts (empty array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
+                additional_context = ""
+                if chunk_num > 0:  # Not the first chunk
+                    additional_context = f" IMPORTANT: For conflicts that don't have a vendor-provided ID, use 'Additional-{additional_counter + 1}', 'Additional-{additional_counter + 2}', etc. (continuing from previous sections)."
+                
+                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters.{additional_context} Output ONLY a JSON array of conflicts (empty array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
                 
                 messages = [
                     {
@@ -315,11 +322,24 @@ class Model:
                 if response.get("usage"):
                     total_tokens_used += response.get("usage", {}).get("totalTokens", 0)
                 
-                # Count conflicts in this chunk
+                # Count conflicts in this chunk and update Additional counter
                 try:
                     conflicts = parse_conflicts_for_redlining(content)
                     all_conflicts.extend(conflicts)
-                    logger.info(f"Found {len(conflicts)} conflicts in chunk {chunk_num + 1}")
+                    
+                    # Count Additional-[#] conflicts in this chunk to update counter for next chunk
+                    for conflict in conflicts:
+                        clarification_id = conflict.get('clarification_id', '')
+                        if isinstance(clarification_id, str) and clarification_id.startswith('Additional-'):
+                            try:
+                                # Extract number from "Additional-1", "Additional-2", etc.
+                                additional_num = int(clarification_id.split('-')[1])
+                                additional_counter = max(additional_counter, additional_num)
+                            except (ValueError, IndexError):
+                                # If parsing fails, just increment counter
+                                additional_counter += 1
+                    
+                    logger.info(f"Found {len(conflicts)} conflicts in chunk {chunk_num + 1}, Additional counter now at {additional_counter}")
                 except Exception as e:
                     logger.warning(f"Error parsing conflicts from chunk {chunk_num + 1}: {str(e)}")
             
@@ -330,8 +350,11 @@ class Model:
             merged_json_conflicts = []
             
             # Try to extract and combine JSON arrays from each chunk
+            # Also renumber Additional-[#] conflicts to ensure sequential numbering across chunks
             chunks_with_json = 0
-            for chunk_content in all_content:
+            global_additional_counter = 0  # Track Additional counter across all chunks for renumbering
+            
+            for chunk_idx, chunk_content in enumerate(all_content):
                 # Look for JSON array pattern in the chunk content
                 json_match = re.search(r'\[[\s\S]*\]', chunk_content)
                 if json_match:
@@ -341,13 +364,22 @@ class Model:
                         if isinstance(chunk_conflicts, list):
                             # Handle empty arrays (valid JSON response when no conflicts)
                             if len(chunk_conflicts) == 0:
-                                logger.info(f"Chunk returned empty JSON array (no conflicts found)")
+                                logger.info(f"Chunk {chunk_idx + 1} returned empty JSON array (no conflicts found)")
                             else:
+                                # Renumber Additional-[#] conflicts to ensure sequential numbering
+                                for conflict in chunk_conflicts:
+                                    if isinstance(conflict, dict):
+                                        clarification_id = conflict.get('clarification_id', '')
+                                        if isinstance(clarification_id, str) and clarification_id.startswith('Additional-'):
+                                            global_additional_counter += 1
+                                            conflict['clarification_id'] = f'Additional-{global_additional_counter}'
+                                            logger.debug(f"Renumbered Additional conflict to Additional-{global_additional_counter}")
+                                
                                 merged_json_conflicts.extend(chunk_conflicts)
-                                logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk JSON")
+                                logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk {chunk_idx + 1} JSON (Additional counter: {global_additional_counter})")
                             chunks_with_json += 1
                     except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse JSON from chunk, falling back to text merge: {e}")
+                        logger.warning(f"Failed to parse JSON from chunk {chunk_idx + 1}, falling back to text merge: {e}")
             
             # If we successfully found and merged JSON arrays, create a single valid JSON string
             if chunks_with_json > 0:

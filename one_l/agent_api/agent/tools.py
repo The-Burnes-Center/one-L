@@ -872,23 +872,32 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                         if validation_errors:
                             logger.warning(f"PARSE_VALIDATION: {len(validation_errors)} validation errors occurred")
                     
-                    # Deduplicate and filter (same logic as markdown parsing)
-                    seen_ids = {}
+                    # Deduplicate and filter using composite key (clarification_id + vendor_quote text)
+                    # This ensures conflicts with same ID but different text (from different chunks) are kept
+                    seen_conflicts = {}  # Key: (clarification_id, normalized_text)
                     deduplicated_items = []
                     for item in redline_items:
-                        clarification_id = item.get('clarification_id')
+                        clarification_id = item.get('clarification_id', '')
                         text_val = (item.get('text') or '').strip()
                         # Filter placeholders/empty like 'N/A' or too short strings
                         if not text_val or text_val.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available'] or len(text_val) < 5:
                             logger.warning(f"PARSE_FILTER: Skipping placeholder/empty conflict for ID={clarification_id} text='{text_val}'")
                             continue
-                        if clarification_id not in seen_ids:
-                            seen_ids[clarification_id] = True
+                        
+                        # Create composite key: clarification_id + normalized text (first 100 chars for uniqueness)
+                        normalized_text = text_val.lower().strip()[:100]  # Normalize and truncate for key
+                        composite_key = (clarification_id, normalized_text)
+                        
+                        if composite_key not in seen_conflicts:
+                            seen_conflicts[composite_key] = True
                             deduplicated_items.append(item)
                         else:
-                            logger.warning(f"PARSE_DEDUP: Duplicate clarification_id found: {clarification_id}, skipping")
+                            logger.warning(f"PARSE_DEDUP: Duplicate conflict found - ID={clarification_id}, text_preview='{text_val[:50]}...', skipping")
                     
-                    logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from JSON, {len(deduplicated_items)} unique conflicts after deduplication")
+                    logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from JSON, {len(deduplicated_items)} unique conflicts after deduplication (using composite key: clarification_id + text)")
+                    if len(redline_items) != len(deduplicated_items):
+                        dropped = len(redline_items) - len(deduplicated_items)
+                        logger.info(f"PARSE_DEDUP_SUMMARY: Dropped {dropped} duplicate conflicts (same ID + text combination)")
                     return deduplicated_items
                     
             except json.JSONDecodeError as e:
@@ -962,23 +971,32 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             'rationale': rationale
                         })
                         
-        # Deduplicate conflicts by clarification_id (keep first occurrence)
-        seen_ids = {}
+        # Deduplicate conflicts using composite key (clarification_id + vendor_quote text)
+        # This ensures conflicts with same ID but different text (from different chunks) are kept
+        seen_conflicts = {}  # Key: (clarification_id, normalized_text)
         deduplicated_items = []
         for item in redline_items:
-            clarification_id = item.get('clarification_id')
+            clarification_id = item.get('clarification_id', '')
             text_val = (item.get('text') or '').strip()
             # Filter placeholders/empty like 'N/A' or too short strings
             if not text_val or text_val.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available'] or len(text_val) < 5:
                 logger.warning(f"PARSE_FILTER: Skipping placeholder/empty conflict for ID={clarification_id} text='{text_val}'")
                 continue
-            if clarification_id not in seen_ids:
-                seen_ids[clarification_id] = True
+            
+            # Create composite key: clarification_id + normalized text (first 100 chars for uniqueness)
+            normalized_text = text_val.lower().strip()[:100]  # Normalize and truncate for key
+            composite_key = (clarification_id, normalized_text)
+            
+            if composite_key not in seen_conflicts:
+                seen_conflicts[composite_key] = True
                 deduplicated_items.append(item)
             else:
-                logger.warning(f"PARSE_DEDUP: Duplicate clarification_id found: {clarification_id}, skipping")
+                logger.warning(f"PARSE_DEDUP: Duplicate conflict found - ID={clarification_id}, text_preview='{text_val[:50]}...', skipping")
         
-        logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from analysis, {len(deduplicated_items)} unique conflicts after deduplication")
+        logger.info(f"PARSE_COMPLETE: Parsed {len(redline_items)} conflicts from analysis, {len(deduplicated_items)} unique conflicts after deduplication (using composite key: clarification_id + text)")
+        if len(redline_items) != len(deduplicated_items):
+            dropped = len(redline_items) - len(deduplicated_items)
+            logger.info(f"PARSE_DEDUP_SUMMARY: Dropped {dropped} duplicate conflicts (same ID + text combination)")
         for i, item in enumerate(deduplicated_items[:2]):
             logger.info(f"PARSE_CONFLICT_{i+1}: ID={item.get('clarification_id')}, Text='{item.get('text', '')[:60]}...'")
 
