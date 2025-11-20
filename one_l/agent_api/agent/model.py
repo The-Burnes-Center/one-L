@@ -4,6 +4,7 @@ Handles tool calling for comprehensive document review.
 """
 
 import json
+import re
 import boto3
 from botocore.config import Config
 import logging
@@ -51,6 +52,64 @@ _call_tracker = {
     'total_conflicts_detected': 0,
     'last_call_time': 0
 }
+
+def _extract_json_only(content: str) -> str:
+    """
+    Extract only JSON array from response content, stripping any explanatory text.
+    This ensures we only return valid JSON even if the agent adds explanatory text.
+    
+    Args:
+        content: Raw response content that may contain JSON plus explanatory text
+        
+    Returns:
+        Clean JSON string (array) or empty array if no valid JSON found
+    """
+    if not content:
+        return "[]"
+    
+    # First, try to find JSON array pattern (most common case)
+    json_match = re.search(r'\[[\s\S]*?\]', content)
+    if json_match:
+        json_str = json_match.group(0)
+        # Validate it's actually valid JSON
+        try:
+            json.loads(json_str)
+            logger.info(f"Extracted valid JSON array from response (length: {len(json_str)} chars)")
+            return json_str
+        except json.JSONDecodeError:
+            logger.warning("Found array-like pattern but not valid JSON, trying to fix...")
+    
+    # If no array pattern found, try to find any JSON object/array
+    # Look for content starting with [ or {
+    content_trimmed = content.strip()
+    
+    # Try to find JSON starting from the first [
+    start_idx = content_trimmed.find('[')
+    if start_idx != -1:
+        # Try to parse from [ to end, or find matching ]
+        bracket_count = 0
+        end_idx = start_idx
+        for i in range(start_idx, len(content_trimmed)):
+            if content_trimmed[i] == '[':
+                bracket_count += 1
+            elif content_trimmed[i] == ']':
+                bracket_count -= 1
+                if bracket_count == 0:
+                    end_idx = i + 1
+                    break
+        
+        if bracket_count == 0 and end_idx > start_idx:
+            json_str = content_trimmed[start_idx:end_idx]
+            try:
+                json.loads(json_str)
+                logger.info(f"Extracted JSON array by bracket matching (length: {len(json_str)} chars)")
+                return json_str
+            except json.JSONDecodeError:
+                pass
+    
+    # If all else fails, log warning and return empty array
+    logger.warning(f"Could not extract valid JSON from response. Response preview: {content[:200]}...")
+    return "[]"
 
 def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
     """
@@ -206,6 +265,9 @@ class Model:
                     if content_block.get("text"):
                         content += content_block["text"]
             
+            # Extract only JSON from response, stripping any explanatory text
+            content = _extract_json_only(content)
+            
             # Count conflicts detected in the analysis
             try:
                 conflicts = parse_conflicts_for_redlining(content)
@@ -314,6 +376,9 @@ class Model:
                     for content_block in response["output"]["message"]["content"]:
                         if content_block.get("text"):
                             content += content_block["text"]
+                
+                # Extract only JSON from response, stripping any explanatory text
+                content = _extract_json_only(content)
                 
                 all_content.append(content)
                 all_tool_results.append(response.get("tool_results", []))
