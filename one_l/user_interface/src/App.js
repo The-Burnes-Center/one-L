@@ -999,15 +999,20 @@ const SessionWorkspace = ({ session }) => {
           matched = true;
           const redlinedSuccess = data.redlined_document && data.redlined_document.success;
           const redlinedDoc = data.redlined_document?.redlined_document;
+          const hasRedline = redlinedSuccess && redlinedDoc;
+          
           return {
             ...doc,
-            status: 'completed',
+            status: redlinedSuccess ? 'completed' : 'failed',
             progress: 100,
             success: redlinedSuccess,
             redlinedDocument: redlinedDoc || doc.redlinedDocument,
             analysis: data.analysis_id || doc.analysis,
             processing: false,
-            message: 'Document processing completed'
+            error: redlinedSuccess ? undefined : (data.redlined_document?.error || 'Failed to generate redlined document'),
+            message: redlinedSuccess 
+              ? (hasRedline ? 'Document processing completed' : 'No conflicts detected')
+              : 'Document processing failed'
           };
         }
         return doc;
@@ -1054,8 +1059,45 @@ const SessionWorkspace = ({ session }) => {
       } else {
         entry.processingStage = '';
         entry.completedStages = stageOrder.map(item => item.key);
-        entry.workflowMessage = 'Document processing completed successfully!';
-        entry.workflowMessageType = 'success';
+        
+        // Determine completion message based on document states
+        const completedDocs = updatedDocs.filter(doc => !doc.processing && doc.status === 'completed');
+        const failedDocs = updatedDocs.filter(doc => doc.status === 'failed' || (doc.success === false && !doc.processing));
+        const successfulDocs = completedDocs.filter(doc => doc.success === true && doc.redlinedDocument);
+        const noConflictsDocs = completedDocs.filter(doc => doc.success === true && !doc.redlinedDocument);
+        
+        let completionMessage = 'Document processing completed successfully!';
+        let completionType = 'success';
+        
+        if (failedDocs.length > 0) {
+          // Some documents failed
+          if (failedDocs.length === updatedDocs.length) {
+            completionMessage = 'Document processing failed. Please check your documents and try again.';
+            completionType = 'error';
+          } else {
+            completionMessage = `Processing completed. ${failedDocs.length} document(s) failed to generate redlines.`;
+            completionType = 'error';
+          }
+        } else if (noConflictsDocs.length > 0 && successfulDocs.length === 0) {
+          // All documents completed but no conflicts found (no redlines generated)
+          if (noConflictsDocs.length === 1) {
+            completionMessage = 'Document analysis completed. No conflicts were detected, so no redlined document was generated.';
+          } else {
+            completionMessage = `Document analysis completed. No conflicts were detected in any documents, so no redlined documents were generated.`;
+          }
+          completionType = 'success';
+        } else if (successfulDocs.length > 0) {
+          // At least one successful redline generated
+          if (successfulDocs.length === updatedDocs.length) {
+            completionMessage = `Successfully generated ${successfulDocs.length} redlined document(s)!`;
+          } else {
+            completionMessage = `Successfully generated ${successfulDocs.length} redlined document(s). ${noConflictsDocs.length} document(s) had no conflicts.`;
+          }
+          completionType = 'success';
+        }
+        
+        entry.workflowMessage = completionMessage;
+        entry.workflowMessageType = completionType;
       }
 
       // Mark this session as having WebSocket updates that need to be preserved
@@ -1063,7 +1105,11 @@ const SessionWorkspace = ({ session }) => {
       entry.lastWebSocketUpdate = Date.now();
       saveSessionDataToStorage(sessionDataRef.current);
       updateGlobalProcessingFlag(targetSessionId, stillProcessing);
-      return { stillProcessing };
+      return { 
+        stillProcessing, 
+        completionMessage: entry.workflowMessage, 
+        completionType: entry.workflowMessageType 
+      };
     };
     
     if (isCurrentSession) {
@@ -1079,10 +1125,10 @@ const SessionWorkspace = ({ session }) => {
         return updatedDocs;
       });
       
-      const { stillProcessing } = persistSessionCompletion(mappedSessionId);
+      const { stillProcessing, completionMessage, completionType } = persistSessionCompletion(mappedSessionId);
       stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
       if (!stillProcessingAfterUpdate) {
-        markProcessingComplete();
+        markProcessingComplete(completionMessage, completionType);
         setGenerating(false);
       } else {
         setProcessingPhase('generating', stageMessages.generating);
