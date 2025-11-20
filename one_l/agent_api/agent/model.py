@@ -693,7 +693,6 @@ class Model:
                     logger.warning(f"Error parsing conflicts from chunk {chunk_num + 1}: {str(e)}")
             
             # Merge all content - combine JSON objects from all chunks into a single valid JSON object
-            import json
             import re
             
             merged_json_conflicts = []
