@@ -79,23 +79,46 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
     
     # Extract thinking from response - check multiple possible locations
     # AWS Bedrock Converse API may structure thinking in different ways
-    # According to AWS docs, thinking is typically in response["output"]["thinking"] as a string
+    # Based on actual API responses, thinking is in content blocks as "reasoningContent"
     
-    # Method 1: Direct thinking field (string) - most common location
-    if isinstance(response.get("thinking"), str) and response.get("thinking"):
+    # Method 1: Check for reasoningContent in content blocks - AWS Bedrock Converse API actual location
+    # This is where AWS Bedrock returns thinking when enabled via additionalModelRequestFields
+    # Check this FIRST since it's the actual location based on API responses
+    if response.get("output", {}).get("message", {}).get("content"):
+        for idx, content_block in enumerate(response.get("output", {}).get("message", {}).get("content", [])):
+            # Check for reasoningContent (the actual field name AWS Bedrock uses)
+            if "reasoningContent" in content_block:
+                reasoning_val = content_block.get("reasoningContent")
+                if isinstance(reasoning_val, str) and reasoning_val:
+                    thinking_content = reasoning_val
+                    logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent (length: {len(thinking_content)})")
+                    break
+                elif isinstance(reasoning_val, dict):
+                    # Handle structured reasoningContent
+                    if isinstance(reasoning_val.get("text"), str):
+                        thinking_content = reasoning_val.get("text", "")
+                        logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.text")
+                        break
+                    elif isinstance(reasoning_val.get("content"), str):
+                        thinking_content = reasoning_val.get("content", "")
+                        logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.content")
+                        break
+    
+    # Method 2: Direct thinking field (string) - fallback location
+    if not thinking_content and isinstance(response.get("thinking"), str) and response.get("thinking"):
         thinking_content = response.get("thinking", "")
-        logger.info(f"Found thinking via Method 1: direct thinking field")
+        logger.info(f"Found thinking via Method 2: direct thinking field")
     
-    # Method 2: Thinking in output.thinking (string) - AWS Bedrock Converse API standard location
+    # Method 3: Thinking in output.thinking (string) - alternative location
     # Check if thinking key exists first (even if None or empty)
-    elif response.get("output"):
+    elif not thinking_content and response.get("output"):
         output = response.get("output", {})
         if "thinking" in output:
             thinking_val = output.get("thinking")
             if isinstance(thinking_val, str):
                 if thinking_val and thinking_val.strip():  # Only use if not empty or whitespace
                     thinking_content = thinking_val
-                    logger.info(f"Found thinking via Method 2: output.thinking (length: {len(thinking_content)})")
+                    logger.info(f"Found thinking via Method 3: output.thinking (length: {len(thinking_content)})")
                 else:  # Empty string means thinking was enabled but not used
                     logger.info(f"DEBUG: output.thinking exists but is empty string (thinking enabled but not used)")
             elif thinking_val is None:
@@ -103,49 +126,49 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
             else:
                 logger.info(f"DEBUG: output.thinking exists but is unexpected type: {type(thinking_val)}")
     
-    # Method 3: Structured thinking object with content/text fields
-    elif isinstance(response.get("thinking"), dict):
+    # Method 4: Structured thinking object with content/text fields
+    elif not thinking_content and isinstance(response.get("thinking"), dict):
         thinking_obj = response.get("thinking", {})
         if isinstance(thinking_obj.get("content"), str):
             thinking_content = thinking_obj.get("content", "")
-            logger.info(f"Found thinking via Method 3: thinking.content")
+            logger.info(f"Found thinking via Method 4: thinking.content")
         elif isinstance(thinking_obj.get("text"), str):
             thinking_content = thinking_obj.get("text", "")
-            logger.info(f"Found thinking via Method 3: thinking.text")
+            logger.info(f"Found thinking via Method 4: thinking.text")
         elif isinstance(thinking_obj.get("thinking"), str):
             thinking_content = thinking_obj.get("thinking", "")
-            logger.info(f"Found thinking via Method 3: thinking.thinking")
+            logger.info(f"Found thinking via Method 4: thinking.thinking")
     
-    # Method 4: Thinking in output.thinking as object
-    elif isinstance(response.get("output", {}).get("thinking"), dict):
+    # Method 5: Thinking in output.thinking as object
+    elif not thinking_content and isinstance(response.get("output", {}).get("thinking"), dict):
         thinking_obj = response.get("output", {}).get("thinking", {})
         if isinstance(thinking_obj.get("content"), str):
             thinking_content = thinking_obj.get("content", "")
-            logger.info(f"Found thinking via Method 4: output.thinking.content")
+            logger.info(f"Found thinking via Method 5: output.thinking.content")
         elif isinstance(thinking_obj.get("text"), str):
             thinking_content = thinking_obj.get("text", "")
-            logger.info(f"Found thinking via Method 4: output.thinking.text")
+            logger.info(f"Found thinking via Method 5: output.thinking.text")
         elif isinstance(thinking_obj.get("thinking"), str):
             thinking_content = thinking_obj.get("thinking", "")
-            logger.info(f"Found thinking via Method 4: output.thinking.thinking")
+            logger.info(f"Found thinking via Method 5: output.thinking.thinking")
     
-    # Method 5: Check if thinking is in content blocks (some API versions)
-    elif response.get("output", {}).get("message", {}).get("content"):
+    # Method 6: Fallback - Check for thinking field in content blocks (older API versions)
+    if not thinking_content and response.get("output", {}).get("message", {}).get("content"):
         for idx, content_block in enumerate(response.get("output", {}).get("message", {}).get("content", [])):
             if content_block.get("thinking"):
                 if isinstance(content_block.get("thinking"), str):
                     thinking_content = content_block.get("thinking", "")
-                    logger.info(f"Found thinking via Method 5: content_block[{idx}].thinking (string)")
+                    logger.info(f"Found thinking via Method 6 (fallback): content_block[{idx}].thinking (string)")
                     break
                 elif isinstance(content_block.get("thinking"), dict):
                     thinking_obj = content_block.get("thinking", {})
                     if isinstance(thinking_obj.get("content"), str):
                         thinking_content = thinking_obj.get("content", "")
-                        logger.info(f"Found thinking via Method 5: content_block[{idx}].thinking.content")
+                        logger.info(f"Found thinking via Method 6 (fallback): content_block[{idx}].thinking.content")
                         break
                     elif isinstance(thinking_obj.get("text"), str):
                         thinking_content = thinking_obj.get("text", "")
-                        logger.info(f"Found thinking via Method 5: content_block[{idx}].thinking.text")
+                        logger.info(f"Found thinking via Method 6 (fallback): content_block[{idx}].thinking.text")
                         break
     
     # Method 6: Check usage metadata for thinking tokens (indicates thinking was used)
@@ -206,12 +229,19 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
                 message = output.get("message", {})
                 logger.info(f"DEBUG: Message keys: {list(message.keys())}")
                 
-                # Check content blocks for thinking
+                # Check content blocks for thinking/reasoningContent
                 if message.get("content"):
                     content_blocks = message.get("content", [])
                     logger.info(f"DEBUG: Found {len(content_blocks)} content blocks")
                     for idx, block in enumerate(content_blocks):
                         logger.info(f"DEBUG: Content block {idx} keys: {list(block.keys())}")
+                        if "reasoningContent" in block:
+                            reasoning_val = block.get("reasoningContent")
+                            logger.info(f"DEBUG: Found 'reasoningContent' in content block {idx}, type: {type(reasoning_val)}")
+                            if isinstance(reasoning_val, str):
+                                logger.info(f"DEBUG: reasoningContent is string, length: {len(reasoning_val)}, preview: {reasoning_val[:200]}")
+                            elif isinstance(reasoning_val, dict):
+                                logger.info(f"DEBUG: reasoningContent is dict, keys: {list(reasoning_val.keys())}")
                         if "thinking" in block:
                             logger.info(f"DEBUG: Found 'thinking' in content block {idx}, type: {type(block.get('thinking'))}")
         
