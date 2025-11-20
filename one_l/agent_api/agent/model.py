@@ -91,11 +91,15 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
                 reasoning_val = content_block.get("reasoningContent")
                 if isinstance(reasoning_val, str) and reasoning_val:
                     thinking_content = reasoning_val
-                    logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent (length: {len(thinking_content)})")
+                    logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent (string, length: {len(thinking_content)})")
                     break
                 elif isinstance(reasoning_val, dict):
-                    # Handle structured reasoningContent
-                    if isinstance(reasoning_val.get("text"), str):
+                    # Handle structured reasoningContent - AWS Bedrock uses reasoningText key
+                    if isinstance(reasoning_val.get("reasoningText"), str):
+                        thinking_content = reasoning_val.get("reasoningText", "")
+                        logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.reasoningText (length: {len(thinking_content)})")
+                        break
+                    elif isinstance(reasoning_val.get("text"), str):
                         thinking_content = reasoning_val.get("text", "")
                         logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.text")
                         break
@@ -242,6 +246,9 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
                                 logger.info(f"DEBUG: reasoningContent is string, length: {len(reasoning_val)}, preview: {reasoning_val[:200]}")
                             elif isinstance(reasoning_val, dict):
                                 logger.info(f"DEBUG: reasoningContent is dict, keys: {list(reasoning_val.keys())}")
+                                if "reasoningText" in reasoning_val:
+                                    reasoning_text = reasoning_val.get("reasoningText", "")
+                                    logger.info(f"DEBUG: reasoningText found, length: {len(reasoning_text)}, preview: {reasoning_text[:200]}")
                         if "thinking" in block:
                             logger.info(f"DEBUG: Found 'thinking' in content block {idx}, type: {type(block.get('thinking'))}")
         
@@ -807,6 +814,39 @@ class Model:
             if _call_tracker['total_model_calls'] == 1:
                 logger.info(f"DEBUG: Full response structure - Top-level keys: {list(response.keys())}")
                 logger.info(f"DEBUG: Response structure preview: {json.dumps({k: str(type(v).__name__) + (' (len=' + str(len(v)) + ')' if isinstance(v, (list, dict, str)) else '') for k, v in response.items()}, indent=2)}")
+            
+            # Log entire response as JSON for detailed inspection
+            # Remove ResponseMetadata to avoid cluttering logs with AWS SDK metadata
+            response_to_log = {k: v for k, v in response.items() if k != "ResponseMetadata"}
+            try:
+                # Convert to JSON string with proper formatting
+                response_json = json.dumps(response_to_log, indent=2, default=str, ensure_ascii=False)
+                logger.info(f"=== FULL API RESPONSE (call {_call_tracker['total_model_calls']}) ===")
+                
+                # Handle very large responses by splitting into chunks
+                max_log_length = 50000  # AWS CloudWatch log limit is ~256KB, but we'll use 50KB chunks for readability
+                if len(response_json) > max_log_length:
+                    logger.info(f"Response is large ({len(response_json)} chars), logging in chunks:")
+                    chunk_size = max_log_length
+                    num_chunks = (len(response_json) // chunk_size) + (1 if len(response_json) % chunk_size > 0 else 0)
+                    for i in range(0, len(response_json), chunk_size):
+                        chunk_num = (i // chunk_size) + 1
+                        chunk_end = min(i + chunk_size, len(response_json))
+                        chunk = response_json[i:chunk_end]
+                        logger.info(f"--- Response chunk {chunk_num}/{num_chunks} ---\n{chunk}")
+                else:
+                    logger.info(f"{response_json}")
+                
+                logger.info(f"=== END FULL API RESPONSE ===")
+            except Exception as e:
+                logger.warning(f"Could not serialize full response to JSON: {str(e)}")
+                # Fallback: try to log a summary
+                try:
+                    logger.info(f"Full response keys: {list(response_to_log.keys())}")
+                    if "output" in response_to_log:
+                        logger.info(f"Output structure: {json.dumps(response_to_log.get('output', {}), indent=2, default=str, ensure_ascii=False)}")
+                except:
+                    logger.info(f"Full response (repr, truncated): {repr(response_to_log)[:1000]}")
             
             # Extract and log thinking content
             thinking_context = f"inference_call_{_call_tracker['total_model_calls']}"
