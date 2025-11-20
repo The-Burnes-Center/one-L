@@ -79,48 +79,82 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
     
     # Extract thinking from response - check multiple possible locations
     # AWS Bedrock Converse API may structure thinking in different ways
+    # According to AWS docs, thinking is typically in response["output"]["thinking"] as a string
     
-    # Method 1: Direct thinking field (string)
+    # Method 1: Direct thinking field (string) - most common location
     if isinstance(response.get("thinking"), str) and response.get("thinking"):
         thinking_content = response.get("thinking", "")
+        logger.info(f"Found thinking via Method 1: direct thinking field")
     
-    # Method 2: Thinking in output.thinking (string)
-    elif isinstance(response.get("output", {}).get("thinking"), str):
-        thinking_content = response.get("output", {}).get("thinking", "")
+    # Method 2: Thinking in output.thinking (string) - AWS Bedrock Converse API standard location
+    # Check if thinking key exists first (even if None or empty)
+    elif response.get("output"):
+        output = response.get("output", {})
+        if "thinking" in output:
+            thinking_val = output.get("thinking")
+            if isinstance(thinking_val, str):
+                if thinking_val and thinking_val.strip():  # Only use if not empty or whitespace
+                    thinking_content = thinking_val
+                    logger.info(f"Found thinking via Method 2: output.thinking (length: {len(thinking_content)})")
+                else:  # Empty string means thinking was enabled but not used
+                    logger.info(f"DEBUG: output.thinking exists but is empty string (thinking enabled but not used)")
+            elif thinking_val is None:
+                logger.info(f"DEBUG: output.thinking exists but is None")
+            else:
+                logger.info(f"DEBUG: output.thinking exists but is unexpected type: {type(thinking_val)}")
     
     # Method 3: Structured thinking object with content/text fields
     elif isinstance(response.get("thinking"), dict):
         thinking_obj = response.get("thinking", {})
         if isinstance(thinking_obj.get("content"), str):
             thinking_content = thinking_obj.get("content", "")
+            logger.info(f"Found thinking via Method 3: thinking.content")
         elif isinstance(thinking_obj.get("text"), str):
             thinking_content = thinking_obj.get("text", "")
+            logger.info(f"Found thinking via Method 3: thinking.text")
         elif isinstance(thinking_obj.get("thinking"), str):
             thinking_content = thinking_obj.get("thinking", "")
+            logger.info(f"Found thinking via Method 3: thinking.thinking")
     
     # Method 4: Thinking in output.thinking as object
     elif isinstance(response.get("output", {}).get("thinking"), dict):
         thinking_obj = response.get("output", {}).get("thinking", {})
         if isinstance(thinking_obj.get("content"), str):
             thinking_content = thinking_obj.get("content", "")
+            logger.info(f"Found thinking via Method 4: output.thinking.content")
         elif isinstance(thinking_obj.get("text"), str):
             thinking_content = thinking_obj.get("text", "")
+            logger.info(f"Found thinking via Method 4: output.thinking.text")
         elif isinstance(thinking_obj.get("thinking"), str):
             thinking_content = thinking_obj.get("thinking", "")
+            logger.info(f"Found thinking via Method 4: output.thinking.thinking")
     
     # Method 5: Check if thinking is in content blocks (some API versions)
     elif response.get("output", {}).get("message", {}).get("content"):
-        for content_block in response.get("output", {}).get("message", {}).get("content", []):
+        for idx, content_block in enumerate(response.get("output", {}).get("message", {}).get("content", [])):
             if content_block.get("thinking"):
                 if isinstance(content_block.get("thinking"), str):
                     thinking_content = content_block.get("thinking", "")
+                    logger.info(f"Found thinking via Method 5: content_block[{idx}].thinking (string)")
+                    break
                 elif isinstance(content_block.get("thinking"), dict):
                     thinking_obj = content_block.get("thinking", {})
                     if isinstance(thinking_obj.get("content"), str):
                         thinking_content = thinking_obj.get("content", "")
+                        logger.info(f"Found thinking via Method 5: content_block[{idx}].thinking.content")
+                        break
                     elif isinstance(thinking_obj.get("text"), str):
                         thinking_content = thinking_obj.get("text", "")
-                break
+                        logger.info(f"Found thinking via Method 5: content_block[{idx}].thinking.text")
+                        break
+    
+    # Method 6: Check usage metadata for thinking tokens (indicates thinking was used)
+    # Note: This doesn't extract thinking content, but confirms thinking was enabled
+    if not thinking_content and response.get("usage"):
+        usage = response.get("usage", {})
+        thinking_tokens = usage.get("thinkingTokens") or usage.get("thinking_tokens") or usage.get("cachedThinkingTokens")
+        if thinking_tokens:
+            logger.info(f"DEBUG: Found thinking tokens in usage: {thinking_tokens} (but no thinking content found)")
     
     # Log thinking content in detail
     if thinking_content:
@@ -148,10 +182,43 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
         
         logger.info(f"=== END LLM THINKING [{context}] ===")
     else:
+        # Enhanced debugging to understand response structure
         logger.warning(f"No thinking content found in response for context: {context}")
-        logger.debug(f"Response keys: {list(response.keys())}")
+        logger.info(f"DEBUG: Response top-level keys: {list(response.keys())}")
+        
         if response.get("output"):
-            logger.debug(f"Output keys: {list(response.get('output', {}).keys())}")
+            output = response.get("output", {})
+            logger.info(f"DEBUG: Output keys: {list(output.keys())}")
+            
+            # Check for thinking in output
+            if "thinking" in output:
+                thinking_val = output.get("thinking")
+                logger.info(f"DEBUG: Found 'thinking' key in output, type: {type(thinking_val)}")
+                if thinking_val is None:
+                    logger.info(f"DEBUG: thinking value is None")
+                elif isinstance(thinking_val, str):
+                    logger.info(f"DEBUG: thinking is string, length: {len(thinking_val)}, preview: {thinking_val[:200]}")
+                else:
+                    logger.info(f"DEBUG: thinking value preview: {str(thinking_val)[:200]}")
+            
+            # Check message structure
+            if output.get("message"):
+                message = output.get("message", {})
+                logger.info(f"DEBUG: Message keys: {list(message.keys())}")
+                
+                # Check content blocks for thinking
+                if message.get("content"):
+                    content_blocks = message.get("content", [])
+                    logger.info(f"DEBUG: Found {len(content_blocks)} content blocks")
+                    for idx, block in enumerate(content_blocks):
+                        logger.info(f"DEBUG: Content block {idx} keys: {list(block.keys())}")
+                        if "thinking" in block:
+                            logger.info(f"DEBUG: Found 'thinking' in content block {idx}, type: {type(block.get('thinking'))}")
+        
+        # Check if thinking is at top level
+        if "thinking" in response:
+            thinking_val = response.get("thinking")
+            logger.info(f"DEBUG: Found 'thinking' key at top level, type: {type(thinking_val)}, value preview: {str(thinking_val)[:200] if thinking_val else 'None'}")
     
     return thinking_content if thinking_content else ""
 
@@ -705,6 +772,11 @@ class Model:
             _call_tracker['last_call_time'] = time.time()
             
             logger.info(f"Claude API call successful! Total successful model calls: {_call_tracker['total_model_calls']}")
+            
+            # Log full response structure for debugging (first time only to avoid log spam)
+            if _call_tracker['total_model_calls'] == 1:
+                logger.info(f"DEBUG: Full response structure - Top-level keys: {list(response.keys())}")
+                logger.info(f"DEBUG: Response structure preview: {json.dumps({k: str(type(v).__name__) + (' (len=' + str(len(v)) + ')' if isinstance(v, (list, dict, str)) else '') for k, v in response.items()}, indent=2)}")
             
             # Extract and log thinking content
             thinking_context = f"inference_call_{_call_tracker['total_model_calls']}"
