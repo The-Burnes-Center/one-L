@@ -552,6 +552,35 @@ class Model:
                     }
                 ]
                 
+                # Extract and log chunk content before sending for analysis
+                try:
+                    from docx import Document
+                    import io
+                    chunk_doc = Document(io.BytesIO(chunk_bytes))
+                    chunk_text_content = []
+                    for para in chunk_doc.paragraphs:
+                        if para.text.strip():
+                            chunk_text_content.append(para.text.strip())
+                    chunk_full_text = '\n\n'.join(chunk_text_content)
+                    
+                    logger.info(f"=== CHUNK {chunk_num + 1}/{len(chunks)} CONTENT (paragraphs {start_para}-{end_para}) ===")
+                    logger.info(f"Chunk size: {len(chunk_bytes)} bytes, {len(chunk_text_content)} paragraphs")
+                    logger.info(f"Chunk text length: {len(chunk_full_text)} characters")
+                    logger.info(f"--- CHUNK {chunk_num + 1} FULL TEXT ---")
+                    if len(chunk_full_text) > 10000:
+                        # If chunk is very large, log in sections
+                        logger.info(f"Chunk is large ({len(chunk_full_text)} chars), logging in sections:")
+                        section_size = 5000
+                        for section_idx in range(0, len(chunk_full_text), section_size):
+                            section_num = (section_idx // section_size) + 1
+                            section_end = min(section_idx + section_size, len(chunk_full_text))
+                            logger.info(f"--- Chunk {chunk_num + 1} Section {section_num} (chars {section_idx}-{section_end}) ---\n{chunk_full_text[section_idx:section_end]}")
+                    else:
+                        logger.info(f"{chunk_full_text}")
+                    logger.info(f"=== END CHUNK {chunk_num + 1} CONTENT ===")
+                except Exception as e:
+                    logger.warning(f"Could not extract text content from chunk {chunk_num + 1} for logging: {e}")
+                
                 # Analyze this chunk
                 logger.info(f"=== STARTING CHUNK {chunk_num + 1} INFERENCE ===")
                 response = self._call_claude_with_tools(messages)
