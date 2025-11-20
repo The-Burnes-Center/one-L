@@ -218,8 +218,13 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
         
         logger.info(f"=== END LLM THINKING [{context}] ===")
     else:
-        # Minimal warning if thinking not found
-        logger.warning(f"No thinking content found in response for context: {context}")
+        # Thinking not found - this is normal for tool call responses and continuation responses
+        # AWS Bedrock typically only returns thinking in the initial response
+        # Only log warning for initial calls, use debug for tool calls/continuations
+        if "tool_call" in context or "after_tool" in context:
+            logger.debug(f"No thinking content found for context: {context} (normal - thinking typically only in initial response)")
+        else:
+            logger.debug(f"No thinking content found for context: {context}")
     
     return thinking_content if thinking_content else ""
 
