@@ -1398,9 +1398,9 @@ const SessionWorkspace = ({ session }) => {
     
     // Check if General Terms & Conditions is selected (not supported yet)
     if (normalizedTermsProfile === 'general') {
-      setWorkflowMessage('General Terms & Conditions is not supported yet. Please select IT Terms & Conditions to generate redlined documents.');
+      setWorkflowMessage('Support for General Terms & Conditions is coming soon. Please select IT Terms & Conditions to generate redlined documents.');
       setWorkflowMessageType('error');
-      setTermsProfileError('General Terms & Conditions is not supported yet.');
+      setTermsProfileError('Support for General Terms & Conditions is coming soon.');
       return;
     }
     
@@ -1812,8 +1812,8 @@ const SessionWorkspace = ({ session }) => {
       const errorMessage = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
       if (errorMessage.includes('knowledge base') || errorMessage.includes('general terms')) {
         if (errorMessage.includes('general')) {
-          setTermsProfileError('General Terms & Conditions is not supported yet.');
-          const generalTermsMessage = 'General Terms & Conditions is not supported yet. Please select IT Terms & Conditions to generate redlined documents.';
+          setTermsProfileError('Support for General Terms & Conditions is coming soon.');
+          const generalTermsMessage = 'Support for General Terms & Conditions is coming soon. Please select IT Terms & Conditions to generate redlined documents.';
           if (isCurrentSession()) {
             setWorkflowMessage(generalTermsMessage);
             setWorkflowMessageType('error');
