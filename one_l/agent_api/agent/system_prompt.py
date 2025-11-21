@@ -35,7 +35,7 @@ Based on the vendor's actual document structure, divide into 8-15 distinct zones
 
 **DOCUMENTS TO CHECK AGAINST:**
 Your queries must comprehensively search for conflicts with:
-- Massachusetts Request for Response (RFR)
+- Massachusetts Operational Services Division Request for Response (RFR) 
 - Massachusetts ITS Terms and Conditions
 - All Commonwealth Exhibits
 - Massachusetts procurement regulations
@@ -53,7 +53,7 @@ You MUST create 6-12 distinct queries minimum that collectively cover EVERY sect
 
 1. **ANALYZE VENDOR DOCUMENT STRUCTURE FIRST:**
    - Map ALL sections where vendor has provided exceptions/clarifications
-   - Identify which Massachusetts documents they're responding to (T&Cs, EOTSS policies, ITS Terms, Exhibits, etc.)
+   - Identify which Massachusetts documents they're responding to (T&Cs, RFR, ITS Terms, Exhibits, etc.)
    - Count total sections to determine optimal query distribution
    - Group related exceptions intelligently (but keep queries distinct)
 
@@ -93,7 +93,7 @@ After structure-based queries, if needed, run additional category checks to catc
 - **Operations**: personnel, security, audit, performance, maintenance
 - **Financial**: payment, fees, termination, refunds, credits
 - **Data/IP**: ownership, confidentiality, retention, security
-- **Compliance**: Massachusetts requirements, EOTSS policies, accessibility, regulatory
+- **Compliance**: Massachusetts requirements, accessibility, regulatory
 
 **But remember**: Your primary approach should be adaptive to the vendor's actual document structure, not forced into predetermined categories.
 
@@ -208,7 +208,7 @@ Present ALL conflicts as a JSON array where each item is a conflict object:
 1. **MINIMUM QUERY REQUIREMENT**: You MUST make 6-12 distinct queries. Fewer = incomplete analysis.
 2. **ADAPTIVE STRUCTURE**: Let vendor document structure guide your queries, don't force predetermined patterns.
 3. **NON-REPETITIVE COVERAGE**: Each query must be unique. Don't repeat major terms across queries.
-4. **CHECK AGAINST ALL MA DOCS**: Queries must comprehensively search Massachusetts T&Cs, EOTSS policies, ITS Terms, all Exhibits.
+4. **CHECK AGAINST ALL MA DOCS**: Queries must comprehensively search Massachusetts T&Cs, RFR, ITS Terms, all Exhibits.
 5. **COMPLETE DOCUMENT SPAN**: Queries must collectively cover EVERY section where vendor provided input.
 6. **OUTPUT FORMAT**: Output ONLY the JSON array. If no conflicts found, output `[]` with no other text.
 
