@@ -1396,6 +1396,14 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
     
+    // Check if General Terms & Conditions is selected (not supported yet)
+    if (normalizedTermsProfile === 'general') {
+      setWorkflowMessage('General Terms & Conditions is not supported yet. Please select IT Terms & Conditions to generate redlined documents.');
+      setWorkflowMessageType('error');
+      setTermsProfileError('General Terms & Conditions is not supported yet.');
+      return;
+    }
+    
     setTermsProfileError('');
     setGenerating(true);
     resetProcessingStages({ keepGeneratingState: true, skipWorkflowReset: true });
@@ -1801,10 +1809,43 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
-      if (typeof error?.message === 'string' && error.message.toLowerCase().includes('knowledge base')) {
-        setTermsProfileError(error.message);
-      }
-      if (isCurrentSession()) {
+      const errorMessage = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+      if (errorMessage.includes('knowledge base') || errorMessage.includes('general terms')) {
+        if (errorMessage.includes('general')) {
+          setTermsProfileError('General Terms & Conditions is not supported yet.');
+          const generalTermsMessage = 'General Terms & Conditions is not supported yet. Please select IT Terms & Conditions to generate redlined documents.';
+          if (isCurrentSession()) {
+            setWorkflowMessage(generalTermsMessage);
+            setWorkflowMessageType('error');
+            resetProcessingStages();
+          } else {
+            persistSessionState(sessionIdAtStart, {
+              workflowMessage: generalTermsMessage,
+              workflowMessageType: 'error',
+              processingStage: '',
+              completedStages: [],
+              generating: false,
+              termsProfile: termsProfileForRun
+            });
+          }
+        } else {
+          setTermsProfileError(error.message);
+          if (isCurrentSession()) {
+            setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
+            setWorkflowMessageType('error');
+            resetProcessingStages();
+          } else {
+            persistSessionState(sessionIdAtStart, {
+              workflowMessage: `Failed to generate redlined documents: ${error.message}`,
+              workflowMessageType: 'error',
+              processingStage: '',
+              completedStages: [],
+              generating: false,
+              termsProfile: termsProfileForRun
+            });
+          }
+        }
+      } else if (isCurrentSession()) {
         setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
         setWorkflowMessageType('error');
         resetProcessingStages();
