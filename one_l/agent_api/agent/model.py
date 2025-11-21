@@ -1,9 +1,20 @@
 """
 Model integration for Claude 4 Sonnet thinking with AWS Bedrock.
 Handles tool calling for comprehensive document review.
+
+Features:
+- Detailed logging of LLM thinking process during all inference calls
+- Thinking logs are captured and logged for:
+  * Initial document review calls
+  * Tool call initiation and completion
+  * Chunked document analysis (per chunk)
+  * All agent inference operations during redlining workflow
+- Thinking content is automatically extracted from various response structures
+  and logged in detail with context identifiers for easy tracking
 """
 
 import json
+import re
 import boto3
 from botocore.config import Config
 import logging
@@ -51,6 +62,270 @@ _call_tracker = {
     'total_conflicts_detected': 0,
     'last_call_time': 0
 }
+
+def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> str:
+    """
+    Extract thinking content from Claude API response and log it in detail.
+    Handles various response structures from AWS Bedrock Converse API.
+    
+    Args:
+        response: Claude API response dictionary
+        context: Context string to identify where this thinking occurred (e.g., "initial_review", "chunk_1", "tool_call")
+        
+    Returns:
+        Thinking content as string (empty if not found)
+    """
+    thinking_content = ""
+    
+    # Extract thinking from response - check multiple possible locations
+    # AWS Bedrock Converse API may structure thinking in different ways
+    # Based on actual API responses, thinking is in content blocks as "reasoningContent"
+    
+    # Method 1: Check for reasoningContent in content blocks - AWS Bedrock Converse API actual location
+    # This is where AWS Bedrock returns thinking when enabled via additionalModelRequestFields
+    # Check this FIRST since it's the actual location based on API responses
+    if response.get("output", {}).get("message", {}).get("content"):
+        for idx, content_block in enumerate(response.get("output", {}).get("message", {}).get("content", [])):
+            # Check for reasoningContent (the actual field name AWS Bedrock uses)
+            if "reasoningContent" in content_block:
+                reasoning_val = content_block.get("reasoningContent")
+                if isinstance(reasoning_val, str) and reasoning_val:
+                    thinking_content = reasoning_val
+                    logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent (string, length: {len(thinking_content)})")
+                    break
+                elif isinstance(reasoning_val, dict):
+                    # Handle structured reasoningContent - AWS Bedrock structure: reasoningContent.reasoningText.text
+                    reasoning_text_obj = reasoning_val.get("reasoningText")
+                    if isinstance(reasoning_text_obj, dict):
+                        # reasoningText is a dict with 'text' and 'signature' fields
+                        if isinstance(reasoning_text_obj.get("text"), str):
+                            thinking_content = reasoning_text_obj.get("text", "")
+                            logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.reasoningText.text (length: {len(thinking_content)})")
+                            break
+                    elif isinstance(reasoning_text_obj, str):
+                        # Fallback: reasoningText might be a string directly
+                        thinking_content = reasoning_text_obj
+                        logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.reasoningText (string, length: {len(thinking_content)})")
+                        break
+                    # Additional fallbacks
+                    elif isinstance(reasoning_val.get("text"), str):
+                        thinking_content = reasoning_val.get("text", "")
+                        logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.text")
+                        break
+                    elif isinstance(reasoning_val.get("content"), str):
+                        thinking_content = reasoning_val.get("content", "")
+                        logger.info(f"Found thinking via Method 1: content_block[{idx}].reasoningContent.content")
+                        break
+    
+    # Method 2: Direct thinking field (string) - fallback location
+    if not thinking_content and isinstance(response.get("thinking"), str) and response.get("thinking"):
+        thinking_content = response.get("thinking", "")
+        logger.info(f"Found thinking via Method 2: direct thinking field")
+    
+    # Method 3: Thinking in output.thinking (string) - alternative location
+    # Check if thinking key exists first (even if None or empty)
+    elif not thinking_content and response.get("output"):
+        output = response.get("output", {})
+        if "thinking" in output:
+            thinking_val = output.get("thinking")
+            if isinstance(thinking_val, str):
+                if thinking_val and thinking_val.strip():  # Only use if not empty or whitespace
+                    thinking_content = thinking_val
+                    logger.info(f"Found thinking via Method 3: output.thinking (length: {len(thinking_content)})")
+                else:  # Empty string means thinking was enabled but not used
+                    logger.info(f"DEBUG: output.thinking exists but is empty string (thinking enabled but not used)")
+            elif thinking_val is None:
+                logger.info(f"DEBUG: output.thinking exists but is None")
+            else:
+                logger.info(f"DEBUG: output.thinking exists but is unexpected type: {type(thinking_val)}")
+    
+    # Method 4: Structured thinking object with content/text fields
+    elif not thinking_content and isinstance(response.get("thinking"), dict):
+        thinking_obj = response.get("thinking", {})
+        if isinstance(thinking_obj.get("content"), str):
+            thinking_content = thinking_obj.get("content", "")
+            logger.info(f"Found thinking via Method 4: thinking.content")
+        elif isinstance(thinking_obj.get("text"), str):
+            thinking_content = thinking_obj.get("text", "")
+            logger.info(f"Found thinking via Method 4: thinking.text")
+        elif isinstance(thinking_obj.get("thinking"), str):
+            thinking_content = thinking_obj.get("thinking", "")
+            logger.info(f"Found thinking via Method 4: thinking.thinking")
+    
+    # Method 5: Thinking in output.thinking as object
+    elif not thinking_content and isinstance(response.get("output", {}).get("thinking"), dict):
+        thinking_obj = response.get("output", {}).get("thinking", {})
+        if isinstance(thinking_obj.get("content"), str):
+            thinking_content = thinking_obj.get("content", "")
+            logger.info(f"Found thinking via Method 5: output.thinking.content")
+        elif isinstance(thinking_obj.get("text"), str):
+            thinking_content = thinking_obj.get("text", "")
+            logger.info(f"Found thinking via Method 5: output.thinking.text")
+        elif isinstance(thinking_obj.get("thinking"), str):
+            thinking_content = thinking_obj.get("thinking", "")
+            logger.info(f"Found thinking via Method 5: output.thinking.thinking")
+    
+    # Method 6: Fallback - Check for thinking field in content blocks (older API versions)
+    if not thinking_content and response.get("output", {}).get("message", {}).get("content"):
+        for idx, content_block in enumerate(response.get("output", {}).get("message", {}).get("content", [])):
+            if content_block.get("thinking"):
+                if isinstance(content_block.get("thinking"), str):
+                    thinking_content = content_block.get("thinking", "")
+                    logger.info(f"Found thinking via Method 6 (fallback): content_block[{idx}].thinking (string)")
+                    break
+                elif isinstance(content_block.get("thinking"), dict):
+                    thinking_obj = content_block.get("thinking", {})
+                    if isinstance(thinking_obj.get("content"), str):
+                        thinking_content = thinking_obj.get("content", "")
+                        logger.info(f"Found thinking via Method 6 (fallback): content_block[{idx}].thinking.content")
+                        break
+                    elif isinstance(thinking_obj.get("text"), str):
+                        thinking_content = thinking_obj.get("text", "")
+                        logger.info(f"Found thinking via Method 6 (fallback): content_block[{idx}].thinking.text")
+                        break
+    
+    # Method 6: Check usage metadata for thinking tokens (indicates thinking was used)
+    # Note: This doesn't extract thinking content, but confirms thinking was enabled
+    if not thinking_content and response.get("usage"):
+        usage = response.get("usage", {})
+        thinking_tokens = usage.get("thinkingTokens") or usage.get("thinking_tokens") or usage.get("cachedThinkingTokens")
+        if thinking_tokens:
+            logger.info(f"DEBUG: Found thinking tokens in usage: {thinking_tokens} (but no thinking content found)")
+    
+    # Log thinking content in detail
+    if thinking_content:
+        thinking_length = len(thinking_content)
+        thinking_preview = thinking_content[:500] if thinking_length > 500 else thinking_content
+        
+        logger.info(f"=== LLM THINKING [{context}] ===")
+        logger.info(f"Thinking content length: {thinking_length} characters")
+        logger.info(f"Thinking preview (first 500 chars):\n{thinking_preview}")
+        
+        # Log full thinking content (split into chunks if too long for single log entry)
+        if thinking_length > 5000:
+            # Split into chunks for better log readability
+            chunk_size = 5000
+            num_chunks = (thinking_length // chunk_size) + (1 if thinking_length % chunk_size > 0 else 0)
+            logger.info(f"Thinking content is large ({thinking_length} chars), logging in {num_chunks} chunks:")
+            
+            for i in range(0, thinking_length, chunk_size):
+                chunk_num = (i // chunk_size) + 1
+                chunk_end = min(i + chunk_size, thinking_length)
+                chunk = thinking_content[i:chunk_end]
+                logger.info(f"--- Thinking chunk {chunk_num}/{num_chunks} [{context}] ---\n{chunk}")
+        else:
+            logger.info(f"--- Full thinking content [{context}] ---\n{thinking_content}")
+        
+        logger.info(f"=== END LLM THINKING [{context}] ===")
+    else:
+        # Thinking not found - this is normal for tool call responses and continuation responses
+        # AWS Bedrock typically only returns thinking in the initial response
+        # Only log warning for initial calls, use debug for tool calls/continuations
+        if "tool_call" in context or "after_tool" in context:
+            logger.debug(f"No thinking content found for context: {context} (normal - thinking typically only in initial response)")
+        else:
+            logger.debug(f"No thinking content found for context: {context}")
+    
+    return thinking_content if thinking_content else ""
+
+def _extract_json_only(content: str) -> str:
+    """
+    Extract only JSON object or array from response content, stripping any explanatory text.
+    This ensures we only return valid JSON even if the agent adds explanatory text.
+    Prioritizes new format (object with explanation and conflicts) over old format (array).
+    
+    Args:
+        content: Raw response content that may contain JSON plus explanatory text
+        
+    Returns:
+        Clean JSON string (object or array) or empty object/array if no valid JSON found
+    """
+    if not content:
+        return '{"explanation": "", "conflicts": []}'
+    
+    content_trimmed = content.strip()
+    
+    # First, try to find JSON object pattern (new format with explanation and conflicts)
+    json_object_match = re.search(r'\{[\s\S]*?"conflicts"[\s\S]*?\}', content)
+    if json_object_match:
+        json_str = json_object_match.group(0)
+        # Validate it's actually valid JSON
+        try:
+            parsed = json.loads(json_str)
+            if isinstance(parsed, dict) and "conflicts" in parsed:
+                logger.info(f"Extracted valid JSON object from response (length: {len(json_str)} chars)")
+                return json_str
+        except json.JSONDecodeError:
+            logger.warning("Found object-like pattern but not valid JSON, trying bracket matching...")
+    
+    # Try to find JSON object by bracket matching (for new format)
+    start_idx = content_trimmed.find('{')
+    if start_idx != -1:
+        # Try to parse from { to end, or find matching }
+        brace_count = 0
+        end_idx = start_idx
+        for i in range(start_idx, len(content_trimmed)):
+            if content_trimmed[i] == '{':
+                brace_count += 1
+            elif content_trimmed[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_idx = i + 1
+                    break
+        
+        if brace_count == 0 and end_idx > start_idx:
+            json_str = content_trimmed[start_idx:end_idx]
+            try:
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict):
+                    logger.info(f"Extracted JSON object by bracket matching (length: {len(json_str)} chars)")
+                    return json_str
+            except json.JSONDecodeError:
+                pass
+    
+    # Fallback: try to find JSON array pattern (backwards compatibility)
+    json_array_match = re.search(r'\[[\s\S]*?\]', content)
+    if json_array_match:
+        json_str = json_array_match.group(0)
+        # Validate it's actually valid JSON
+        try:
+            parsed = json.loads(json_str)
+            if isinstance(parsed, list):
+                logger.info(f"Extracted valid JSON array from response (backwards compatibility, length: {len(json_str)} chars)")
+                # Convert array to new format for consistency
+                return json.dumps({"explanation": "", "conflicts": parsed})
+        except json.JSONDecodeError:
+            logger.warning("Found array-like pattern but not valid JSON, trying bracket matching...")
+    
+    # Try to find JSON array by bracket matching (backwards compatibility)
+    start_idx = content_trimmed.find('[')
+    if start_idx != -1:
+        # Try to parse from [ to end, or find matching ]
+        bracket_count = 0
+        end_idx = start_idx
+        for i in range(start_idx, len(content_trimmed)):
+            if content_trimmed[i] == '[':
+                bracket_count += 1
+            elif content_trimmed[i] == ']':
+                bracket_count -= 1
+                if bracket_count == 0:
+                    end_idx = i + 1
+                    break
+        
+        if bracket_count == 0 and end_idx > start_idx:
+            json_str = content_trimmed[start_idx:end_idx]
+            try:
+                parsed = json.loads(json_str)
+                if isinstance(parsed, list):
+                    logger.info(f"Extracted JSON array by bracket matching (backwards compatibility, length: {len(json_str)} chars)")
+                    # Convert array to new format for consistency
+                    return json.dumps({"explanation": "", "conflicts": parsed})
+            except json.JSONDecodeError:
+                pass
+    
+    # If all else fails, log warning and return empty object
+    logger.warning(f"Could not extract valid JSON from response. Response preview: {content[:200]}...")
+    return '{"explanation": "", "conflicts": []}'
 
 def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
     """
@@ -155,7 +430,7 @@ class Model:
             
             # Check document size and decide whether to chunk
             # Only try to parse DOCX files for chunking (PDFs are handled differently)
-            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
             
             if not is_pdf_file(document_s3_key):
                 try:
@@ -163,14 +438,14 @@ class Model:
                     import io
                     doc = Document(io.BytesIO(document_data))
                     total_paragraphs = len(doc.paragraphs)
-                    logger.info(f"Document has {total_paragraphs} paragraphs (approximately {total_paragraphs//20} pages)")
+                    logger.info(f"Document has {total_paragraphs} paragraphs ")
                     
                     # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
                     if total_paragraphs > 100:
                         logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
                         return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
                     else:
-                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections."
+                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
                 except Exception as e:
                     logger.warning(f"Could not pre-analyze document structure: {e}")
             else:
@@ -197,7 +472,12 @@ class Model:
             ]
             
             # Make the initial request to Claude with tools
+            logger.info("=== STARTING DOCUMENT REVIEW INFERENCE ===")
             response = self._call_claude_with_tools(messages)
+            
+            # Log thinking from document review response
+            logger.info("=== LOGGING THINKING FROM DOCUMENT REVIEW ===")
+            thinking_content = _extract_and_log_thinking(response, f"document_review_{document_s3_key}")
             
             # Extract content from Converse API response
             content = ""
@@ -205,6 +485,21 @@ class Model:
                 for content_block in response["output"]["message"]["content"]:
                     if content_block.get("text"):
                         content += content_block["text"]
+            
+            # Extract only JSON from response, stripping any explanatory text
+            content = _extract_json_only(content)
+            
+            # Extract and log explanation if present
+            try:
+                parsed_content = json.loads(content)
+                if isinstance(parsed_content, dict) and "explanation" in parsed_content:
+                    explanation = parsed_content.get("explanation", "")
+                    if explanation:
+                        logger.info(f"=== MODEL EXPLANATION ===")
+                        logger.info(f"{explanation}")
+                        logger.info(f"=== END MODEL EXPLANATION ===")
+            except json.JSONDecodeError:
+                pass  # Content might not be valid JSON yet, will be handled by parse_conflicts_for_redlining
             
             # Count conflicts detected in the analysis
             try:
@@ -218,12 +513,17 @@ class Model:
             # Log final summary with all metrics
             logger.info(f"DOCUMENT REVIEW COMPLETE - Total Tool Calls: {_call_tracker['total_tool_calls']}, Total Model Calls: {_call_tracker['total_model_calls']}, Total Conflicts Detected: {_call_tracker['total_conflicts_detected']} (this document: {conflicts_count})")
             
+            # Extract thinking for return value
+            thinking_for_return = _extract_and_log_thinking(response, f"final_review_{document_s3_key}")
+            if not thinking_for_return:
+                thinking_for_return = response.get("thinking", "")
+            
             return {
                 "success": True,
                 "analysis": content,
                 "tool_results": response.get("tool_results", []),
                 "usage": response.get("usage", {}),
-                "thinking": response.get("thinking", ""),
+                "thinking": thinking_for_return,
                 "conflicts_count": conflicts_count
             }
             
@@ -265,6 +565,9 @@ class Model:
             all_conflicts = []
             total_tokens_used = 0
             
+            # Track Additional-[#] counter across chunks to ensure sequential numbering
+            additional_counter = 0
+            
             # Process each chunk
             for chunk_info in chunks:
                 chunk_num = chunk_info['chunk_num']
@@ -274,9 +577,13 @@ class Model:
                 
                 logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (paragraphs {start_para}-{end_para})")
                 
-                # Create instruction for this specific chunk
+                # Create instruction for this specific chunk with Additional counter context
                 approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
-                instruction_text = f"CRITICAL: Analyze this vendor submission section {approx_pages} thoroughly. You MUST search through EVERY paragraph, table, and clause in this section for ANY conflicts with Massachusetts Commonwealth requirements. Be aggressive - look for deviations, limitations, missing requirements, non-compliant language, or any terms that don't align with the standards. Find ALL conflicts in this section, no matter how minor. If you find conflicts, list them in the markdown table format. DO NOT respond with 'N/A' or 'no conflicts' unless you have verified EVERY line in this section."
+                additional_context = ""
+                if chunk_num > 0:  # Not the first chunk
+                    additional_context = f" IMPORTANT: For conflicts that don't have a vendor-provided ID, use 'Additional-{additional_counter + 1}', 'Additional-{additional_counter + 2}', etc. (continuing from previous sections)."
+                
+                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters.{additional_context} Output ONLY a JSON object with 'explanation' and 'conflicts' fields (empty conflicts array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
                 
                 messages = [
                     {
@@ -298,8 +605,42 @@ class Model:
                     }
                 ]
                 
+                # Extract and log chunk content before sending for analysis
+                try:
+                    from docx import Document
+                    import io
+                    chunk_doc = Document(io.BytesIO(chunk_bytes))
+                    chunk_text_content = []
+                    for para in chunk_doc.paragraphs:
+                        if para.text.strip():
+                            chunk_text_content.append(para.text.strip())
+                    chunk_full_text = '\n\n'.join(chunk_text_content)
+                    
+                    logger.info(f"=== CHUNK {chunk_num + 1}/{len(chunks)} CONTENT (paragraphs {start_para}-{end_para}) ===")
+                    logger.info(f"Chunk size: {len(chunk_bytes)} bytes, {len(chunk_text_content)} paragraphs")
+                    logger.info(f"Chunk text length: {len(chunk_full_text)} characters")
+                    logger.info(f"--- CHUNK {chunk_num + 1} FULL TEXT ---")
+                    if len(chunk_full_text) > 10000:
+                        # If chunk is very large, log in sections
+                        logger.info(f"Chunk is large ({len(chunk_full_text)} chars), logging in sections:")
+                        section_size = 5000
+                        for section_idx in range(0, len(chunk_full_text), section_size):
+                            section_num = (section_idx // section_size) + 1
+                            section_end = min(section_idx + section_size, len(chunk_full_text))
+                            logger.info(f"--- Chunk {chunk_num + 1} Section {section_num} (chars {section_idx}-{section_end}) ---\n{chunk_full_text[section_idx:section_end]}")
+                    else:
+                        logger.info(f"{chunk_full_text}")
+                    logger.info(f"=== END CHUNK {chunk_num + 1} CONTENT ===")
+                except Exception as e:
+                    logger.warning(f"Could not extract text content from chunk {chunk_num + 1} for logging: {e}")
+                
                 # Analyze this chunk
+                logger.info(f"=== STARTING CHUNK {chunk_num + 1} INFERENCE ===")
                 response = self._call_claude_with_tools(messages)
+                
+                # Log thinking from chunk analysis response
+                logger.info(f"=== LOGGING THINKING FROM CHUNK {chunk_num + 1} ANALYSIS ===")
+                thinking_content = _extract_and_log_thinking(response, f"chunk_{chunk_num + 1}_of_{len(chunks)}")
                 
                 # Extract content
                 content = ""
@@ -308,6 +649,21 @@ class Model:
                         if content_block.get("text"):
                             content += content_block["text"]
                 
+                # Extract only JSON from response, stripping any explanatory text
+                content = _extract_json_only(content)
+                
+                # Extract and log explanation if present
+                try:
+                    parsed_content = json.loads(content)
+                    if isinstance(parsed_content, dict) and "explanation" in parsed_content:
+                        explanation = parsed_content.get("explanation", "")
+                        if explanation:
+                            logger.info(f"=== CHUNK {chunk_num + 1} MODEL EXPLANATION ===")
+                            logger.info(f"{explanation}")
+                            logger.info(f"=== END CHUNK {chunk_num + 1} MODEL EXPLANATION ===")
+                except json.JSONDecodeError:
+                    pass  # Content might not be valid JSON yet, will be handled by parse_conflicts_for_redlining
+                
                 all_content.append(content)
                 all_tool_results.append(response.get("tool_results", []))
                 
@@ -315,16 +671,119 @@ class Model:
                 if response.get("usage"):
                     total_tokens_used += response.get("usage", {}).get("totalTokens", 0)
                 
-                # Count conflicts in this chunk
+                # Count conflicts in this chunk and update Additional counter
                 try:
                     conflicts = parse_conflicts_for_redlining(content)
                     all_conflicts.extend(conflicts)
-                    logger.info(f"Found {len(conflicts)} conflicts in chunk {chunk_num + 1}")
+                    
+                    # Count Additional-[#] conflicts in this chunk to update counter for next chunk
+                    for conflict in conflicts:
+                        clarification_id = conflict.get('clarification_id', '')
+                        if isinstance(clarification_id, str) and clarification_id.startswith('Additional-'):
+                            try:
+                                # Extract number from "Additional-1", "Additional-2", etc.
+                                additional_num = int(clarification_id.split('-')[1])
+                                additional_counter = max(additional_counter, additional_num)
+                            except (ValueError, IndexError):
+                                # If parsing fails, just increment counter
+                                additional_counter += 1
+                    
+                    logger.info(f"Found {len(conflicts)} conflicts in chunk {chunk_num + 1}, Additional counter now at {additional_counter}")
                 except Exception as e:
                     logger.warning(f"Error parsing conflicts from chunk {chunk_num + 1}: {str(e)}")
             
-            # Merge all content
-            merged_content = "\n\n--- ANALYSIS CONTINUED FROM NEXT SECTION ---\n\n".join(all_content)
+            # Merge all content - combine JSON objects from all chunks into a single valid JSON object
+            import re
+            
+            merged_json_conflicts = []
+            chunk_explanations = []
+            
+            # Try to extract and combine JSON objects/arrays from each chunk
+            # Also renumber Additional-[#] conflicts to ensure sequential numbering across chunks
+            chunks_with_json = 0
+            global_additional_counter = 0  # Track Additional counter across all chunks for renumbering
+            
+            for chunk_idx, chunk_content in enumerate(all_content):
+                try:
+                    # Try to parse as JSON object first (new format)
+                    parsed_chunk = json.loads(chunk_content)
+                    
+                    if isinstance(parsed_chunk, dict) and "conflicts" in parsed_chunk:
+                        # New format with explanation and conflicts
+                        chunk_explanation = parsed_chunk.get("explanation", "")
+                        if chunk_explanation:
+                            chunk_explanations.append(f"Chunk {chunk_idx + 1}: {chunk_explanation}")
+                        
+                        chunk_conflicts = parsed_chunk.get("conflicts", [])
+                        if isinstance(chunk_conflicts, list):
+                            # Handle empty arrays (valid JSON response when no conflicts)
+                            if len(chunk_conflicts) == 0:
+                                logger.info(f"Chunk {chunk_idx + 1} returned empty conflicts array (no conflicts found)")
+                            else:
+                                # Renumber Additional-[#] conflicts to ensure sequential numbering
+                                for conflict in chunk_conflicts:
+                                    if isinstance(conflict, dict):
+                                        clarification_id = conflict.get('clarification_id', '')
+                                        if isinstance(clarification_id, str) and clarification_id.startswith('Additional-'):
+                                            global_additional_counter += 1
+                                            conflict['clarification_id'] = f'Additional-{global_additional_counter}'
+                                            logger.debug(f"Renumbered Additional conflict to Additional-{global_additional_counter}")
+                                
+                                merged_json_conflicts.extend(chunk_conflicts)
+                                logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk {chunk_idx + 1} JSON (Additional counter: {global_additional_counter})")
+                            chunks_with_json += 1
+                    elif isinstance(parsed_chunk, list):
+                        # Backwards compatibility: old array format
+                        chunk_conflicts = parsed_chunk
+                        if len(chunk_conflicts) == 0:
+                            logger.info(f"Chunk {chunk_idx + 1} returned empty JSON array (no conflicts found)")
+                        else:
+                            # Renumber Additional-[#] conflicts to ensure sequential numbering
+                            for conflict in chunk_conflicts:
+                                if isinstance(conflict, dict):
+                                    clarification_id = conflict.get('clarification_id', '')
+                                    if isinstance(clarification_id, str) and clarification_id.startswith('Additional-'):
+                                        global_additional_counter += 1
+                                        conflict['clarification_id'] = f'Additional-{global_additional_counter}'
+                                        logger.debug(f"Renumbered Additional conflict to Additional-{global_additional_counter}")
+                            
+                            merged_json_conflicts.extend(chunk_conflicts)
+                            logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk {chunk_idx + 1} JSON array (backwards compatibility, Additional counter: {global_additional_counter})")
+                        chunks_with_json += 1
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse JSON from chunk {chunk_idx + 1}, trying regex extraction: {e}")
+                    # Fallback: try regex extraction (backwards compatibility)
+                    json_match = re.search(r'\[[\s\S]*\]', chunk_content)
+                    if json_match:
+                        try:
+                            json_str = json_match.group(0)
+                            chunk_conflicts = json.loads(json_str)
+                            if isinstance(chunk_conflicts, list):
+                                merged_json_conflicts.extend(chunk_conflicts)
+                                chunks_with_json += 1
+                        except json.JSONDecodeError:
+                            pass
+            
+            # If we successfully found and merged JSON, create a single valid JSON object
+            if chunks_with_json > 0:
+                # Combine explanations from all chunks
+                combined_explanation = " ".join(chunk_explanations) if chunk_explanations else "Analysis completed across multiple document sections."
+                
+                # Create final JSON object with explanation and conflicts
+                merged_content = json.dumps({
+                    "explanation": combined_explanation,
+                    "conflicts": merged_json_conflicts
+                }, indent=2, ensure_ascii=False)
+                
+                logger.info(f"Successfully merged {len(merged_json_conflicts)} total conflicts from {chunks_with_json} chunks into single JSON object")
+                if chunk_explanations:
+                    logger.info(f"=== COMBINED EXPLANATION FROM ALL CHUNKS ===")
+                    logger.info(f"{combined_explanation}")
+                    logger.info(f"=== END COMBINED EXPLANATION ===")
+            else:
+                # Fallback: if no JSON found, merge as text (backwards compatibility)
+                merged_content = "\n\n--- ANALYSIS CONTINUED FROM NEXT SECTION ---\n\n".join(all_content)
+                logger.warning("No JSON found in chunks, using text merge fallback")
             
             # Log final summary
             total_conflicts = len(all_conflicts)
@@ -332,12 +791,16 @@ class Model:
             
             logger.info(f"CHUNKED DOCUMENT REVIEW COMPLETE - Total Chunks: {len(chunks)}, Total Conflicts: {total_conflicts}, Total Tokens Used: {total_tokens_used}")
             
+            # Collect all thinking from chunks for return (if available)
+            # Note: Individual chunk thinking was already logged above
+            logger.info("=== CHUNKED REVIEW SUMMARY: All chunk thinking has been logged above ===")
+            
             return {
                 "success": True,
                 "analysis": merged_content,
                 "tool_results": all_tool_results,
                 "usage": {"totalTokens": total_tokens_used},
-                "thinking": "",
+                "thinking": "",  # Chunked reviews have thinking logged per chunk above
                 "conflicts_count": total_conflicts
             }
             
@@ -455,6 +918,12 @@ class Model:
             
             logger.info(f"Claude API call successful! Total successful model calls: {_call_tracker['total_model_calls']}")
             
+            # Extract and log thinking content (only the reasoning text will be logged)
+            thinking_context = f"inference_call_{_call_tracker['total_model_calls']}"
+            if response.get("stopReason") == "tool_use":
+                thinking_context += "_before_tool_use"
+            _extract_and_log_thinking(response, thinking_context)
+            
             # Handle tool calls if present
             if response.get("stopReason") == "tool_use":
                 return self._handle_tool_calls(messages, response)
@@ -486,6 +955,10 @@ class Model:
         """
         Handle tool calls from Claude and continue the conversation.
         """
+        
+        # Log thinking from the initial tool use response
+        logger.info("=== TOOL CALL DETECTED - Logging thinking before tool execution ===")
+        _extract_and_log_thinking(claude_response, f"tool_call_initiation_{_call_tracker['total_tool_calls'] + 1}")
         
         # Add Claude's response to messages (Converse API format)
         messages.append({
@@ -564,7 +1037,13 @@ class Model:
                     })
         
         # Continue the conversation with tool results
+        logger.info("=== CONTINUING CONVERSATION AFTER TOOL EXECUTION ===")
         final_response = self._call_claude_with_tools(messages)
+        
+        # Log thinking from the final response after tool execution
+        logger.info("=== LOGGING THINKING AFTER TOOL EXECUTION ===")
+        _extract_and_log_thinking(final_response, f"after_tool_execution_{_call_tracker['total_tool_calls']}")
+        
         final_response["tool_results"] = tool_results
         
         return final_response

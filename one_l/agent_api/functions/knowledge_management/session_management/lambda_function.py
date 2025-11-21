@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any
 from decimal import Decimal
+from botocore.exceptions import ClientError
 
 # Set up logging
 logger = logging.getLogger()
@@ -14,6 +15,7 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
+cognito_client = boto3.client('cognito-idp')
 
 # Environment variables
 KNOWLEDGE_BUCKET = os.environ.get('KNOWLEDGE_BUCKET')
@@ -21,6 +23,7 @@ USER_DOCUMENTS_BUCKET = os.environ.get('USER_DOCUMENTS_BUCKET')
 AGENT_PROCESSING_BUCKET = os.environ.get('AGENT_PROCESSING_BUCKET')
 SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE', 'one-l-sessions')
 ANALYSIS_RESULTS_TABLE = os.environ.get('ANALYSIS_RESULTS_TABLE')
+USER_POOL_ID = os.environ.get('USER_POOL_ID')  # Optional: for fetching user names
 
 # Log environment variables at module load time for debugging (logger already initialized above)
 logger.info(f"SESSION_MANAGEMENT_ENV: SESSIONS_TABLE='{SESSIONS_TABLE}', ANALYSIS_RESULTS_TABLE='{ANALYSIS_RESULTS_TABLE}'")
@@ -454,6 +457,245 @@ def get_job_status(job_id: str, user_id: str) -> Dict[str, Any]:
             'error': str(e)
         }
 
+def get_admin_metrics() -> Dict[str, Any]:
+    """Get system-wide metrics for admin dashboard"""
+    try:
+        # Validate environment variables
+        if not SESSIONS_TABLE or not ANALYSIS_RESULTS_TABLE:
+            logger.error("SESSIONS_TABLE or ANALYSIS_RESULTS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Tables not configured'
+            }
+        
+        sessions_table = dynamodb.Table(SESSIONS_TABLE)
+        analysis_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
+        
+        # Get all sessions (paginated)
+        all_sessions = []
+        last_evaluated_key = None
+        while True:
+            scan_kwargs = {}
+            if last_evaluated_key:
+                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+            response = sessions_table.scan(**scan_kwargs)
+            all_sessions.extend(response.get('Items', []))
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+        
+        # Get all analysis results (paginated)
+        all_analysis_results = []
+        last_evaluated_key = None
+        while True:
+            scan_kwargs = {}
+            if last_evaluated_key:
+                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+            response = analysis_table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            # Filter out job status entries
+            analysis_items = [item for item in items if not item.get('analysis_id', '').startswith('job_')]
+            all_analysis_results.extend(analysis_items)
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+        
+        # Calculate metrics
+        from datetime import datetime, timezone
+        
+        # Session metrics
+        total_sessions = len(all_sessions)
+        unique_users = len(set(s.get('user_id') for s in all_sessions if s.get('user_id')))
+        sessions_with_results = len([s for s in all_sessions if s.get('has_results', False)])
+        
+        # Calculate active sessions (last activity within 24 hours)
+        now = datetime.now(timezone.utc)
+        active_sessions = 0
+        total_session_duration_seconds = 0
+        session_durations = []
+        
+        for session in all_sessions:
+            created_at_str = session.get('created_at')
+            last_activity_str = session.get('last_activity') or created_at_str
+            
+            if last_activity_str:
+                try:
+                    last_activity = datetime.fromisoformat(last_activity_str.replace('Z', '+00:00'))
+                    hours_since_activity = (now - last_activity).total_seconds() / 3600
+                    if hours_since_activity < 24:
+                        active_sessions += 1
+                    
+                    # Calculate session duration
+                    if created_at_str:
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                        duration_seconds = (last_activity - created_at).total_seconds()
+                        if duration_seconds > 0:
+                            total_session_duration_seconds += duration_seconds
+                            session_durations.append(duration_seconds)
+                except (ValueError, TypeError):
+                    pass
+        
+        avg_session_duration_minutes = (total_session_duration_seconds / len(session_durations) / 60) if session_durations else 0
+        
+        # Analysis/Redline metrics
+        total_documents_processed = len(all_analysis_results)
+        total_redlines = sum(r.get('conflicts_count', 0) for r in all_analysis_results)
+        avg_redlines_per_document = (total_redlines / total_documents_processed) if total_documents_processed > 0 else 0
+        
+        # Documents with redlines vs without
+        documents_with_redlines = len([r for r in all_analysis_results if r.get('conflicts_count', 0) > 0])
+        documents_without_redlines = total_documents_processed - documents_with_redlines
+        redline_percentage = (documents_with_redlines / total_documents_processed * 100) if total_documents_processed > 0 else 0
+        
+        # User activity (sessions per user)
+        user_session_counts = {}
+        for session in all_sessions:
+            user_id = session.get('user_id')
+            if user_id:
+                user_session_counts[user_id] = user_session_counts.get(user_id, 0) + 1
+        
+        top_users = sorted(user_session_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        # Fetch user names from Cognito if USER_POOL_ID is available
+        user_info_map = {}
+        if not USER_POOL_ID:
+            logger.warning("USER_POOL_ID not set - user names will not be fetched from Cognito")
+        if USER_POOL_ID and top_users:
+            logger.info(f"Fetching user names from Cognito for {len(top_users)} users (USER_POOL_ID: {USER_POOL_ID})")
+            try:
+                # Fetch user attributes for top users
+                for user_id, session_count in top_users:
+                    try:
+                        response = cognito_client.admin_get_user(
+                            UserPoolId=USER_POOL_ID,
+                            Username=user_id
+                        )
+                        # Extract name and email from attributes
+                        name = None
+                        email = None
+                        for attr in response.get('UserAttributes', []):
+                            if attr['Name'] == 'given_name':
+                                name = attr.get('Value', '')
+                            elif attr['Name'] == 'family_name':
+                                if name:
+                                    name = f"{name} {attr.get('Value', '')}"
+                                else:
+                                    name = attr.get('Value', '')
+                            elif attr['Name'] == 'email':
+                                email = attr.get('Value', '')
+                        
+                        # Use name if available, otherwise email, otherwise user_id
+                        display_name = name or email or user_id
+                        logger.info(f"Fetched user info for {user_id}: name='{display_name}', email='{email}'")
+                        user_info_map[user_id] = {
+                            'name': display_name,
+                            'email': email,
+                            'session_count': session_count
+                        }
+                    except ClientError as e:
+                        error_code = e.response.get('Error', {}).get('Code', '')
+                        if error_code == 'UserNotFoundException':
+                            # User not found in Cognito, use user_id
+                            user_info_map[user_id] = {
+                                'name': user_id,
+                                'email': None,
+                                'session_count': session_count
+                            }
+                        else:
+                            logger.warning(f"Error fetching user info for {user_id}: {e}")
+                            user_info_map[user_id] = {
+                                'name': user_id,
+                                'email': None,
+                                'session_count': session_count
+                            }
+                    except Exception as e:
+                        logger.warning(f"Error fetching user info for {user_id}: {e}")
+                        user_info_map[user_id] = {
+                            'name': user_id,
+                            'email': None,
+                            'session_count': session_count
+                        }
+            except Exception as e:
+                logger.warning(f"Error fetching user names from Cognito: {e}")
+                # Fallback: use user_ids if Cognito lookup fails
+                for user_id, session_count in top_users:
+                    if user_id not in user_info_map:
+                        user_info_map[user_id] = {
+                            'name': user_id,
+                            'email': None,
+                            'session_count': session_count
+                        }
+        
+        # Build top_users list with names
+        if user_info_map:
+            top_users_list = [user_info_map[uid] for uid, _ in top_users if uid in user_info_map]
+        else:
+            # Fallback if Cognito lookup not available or failed
+            top_users_list = [{'user_id': uid, 'name': uid, 'session_count': count} for uid, count in top_users]
+        
+        # Recent activity (last 7 days)
+        recent_sessions = 0
+        recent_analyses = 0
+        seven_days_ago = now.timestamp() - (7 * 24 * 60 * 60)
+        
+        for session in all_sessions:
+            created_at_str = session.get('created_at')
+            if created_at_str:
+                try:
+                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    if created_at.timestamp() > seven_days_ago:
+                        recent_sessions += 1
+                except (ValueError, TypeError):
+                    pass
+        
+        for analysis in all_analysis_results:
+            timestamp_str = analysis.get('timestamp')
+            if timestamp_str:
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    if timestamp.timestamp() > seven_days_ago:
+                        recent_analyses += 1
+                except (ValueError, TypeError):
+                    pass
+        
+        return {
+            'success': True,
+            'metrics': {
+                'sessions': {
+                    'total': total_sessions,
+                    'active': active_sessions,
+                    'with_results': sessions_with_results,
+                    'without_results': total_sessions - sessions_with_results,
+                    'average_duration_minutes': round(avg_session_duration_minutes, 2)
+                },
+                'users': {
+                    'total': unique_users,
+                    'top_users': top_users_list
+                },
+                'documents': {
+                    'total_processed': total_documents_processed,
+                    'with_redlines': documents_with_redlines,
+                    'without_redlines': documents_without_redlines,
+                    'redline_percentage': round(redline_percentage, 2)
+                },
+                'redlines': {
+                    'total': total_redlines,
+                    'average_per_document': round(avg_redlines_per_document, 2)
+                },
+                'activity': {
+                    'sessions_last_7_days': recent_sessions,
+                    'analyses_last_7_days': recent_analyses
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting admin metrics: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
 def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any]:
     """Get all analysis results for a specific session"""
     try:
@@ -555,15 +797,20 @@ def lambda_handler(event, context):
             except json.JSONDecodeError:
                 return create_cors_response(400, {'error': 'Invalid JSON in request body'})
         
-        # Extract user information
+        # Get action from query parameters or body
+        action = query_parameters.get('action') or body.get('action')
+        
+        # Metrics endpoint doesn't require user_id
+        if action == 'metrics':
+            result = get_admin_metrics()
+            return create_cors_response(200 if result['success'] else 500, result)
+        
+        # Extract user information for other endpoints
         user_id = body.get('user_id') or query_parameters.get('user_id')
         cognito_session_id = body.get('cognito_session_id') or query_parameters.get('cognito_session_id')
         
         if not user_id:
             return create_cors_response(400, {'error': 'user_id is required'})
-        
-        # Get action from query parameters or body
-        action = query_parameters.get('action') or body.get('action')
         
         # Route based on HTTP method and action
         if http_method == 'POST' and action == 'create':

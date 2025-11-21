@@ -665,6 +665,34 @@ const SessionSidebar = ({
               >
                 <span>Knowledge Base</span>
               </button>
+              <button
+                onClick={() => onAdminSectionChange && onAdminSectionChange('metrics')}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  backgroundColor: 'transparent',
+                  color: '#cccccc',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '4px',
+                  transition: 'background-color 0.2s',
+                  marginTop: '4px'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#1f1f1f';
+                  e.target.style.color = '#ffffff';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                  e.target.style.color = '#cccccc';
+                }}
+              >
+                <span>Metrics</span>
+              </button>
             </div>
           )}
         </div>

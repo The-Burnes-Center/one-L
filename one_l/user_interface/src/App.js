@@ -8,6 +8,7 @@ import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
 import SessionSidebar from './components/SessionSidebar';
 import AdminDashboard from './components/AdminDashboard';
+import MetricsDashboard from './components/MetricsDashboard';
 import UserHeader from './components/UserHeader';
 import { isConfigValid, loadConfig } from './utils/config';
 import { agentAPI, sessionAPI } from './services/api';
@@ -223,6 +224,7 @@ const SessionWorkspace = ({ session }) => {
 
   const jobSessionMapRef = useRef(loadJobSessionMapFromStorage());
   const activeJobsRef = useRef({});
+  const jobTimeoutRef = useRef({}); // Store timeout IDs for each job
 
   const cloneUploadedFiles = (files = []) => {
     if (!Array.isArray(files)) {
@@ -270,7 +272,8 @@ const SessionWorkspace = ({ session }) => {
         processingStage: '',
         completedStages: [],
         workflowMessage: '',
-        workflowMessageType: ''
+        workflowMessageType: '',
+        termsProfile: 'it'
       };
     }
 
@@ -299,7 +302,8 @@ const SessionWorkspace = ({ session }) => {
       'workflowMessage',
       'workflowMessageType',
       'hasWebSocketUpdates',
-      'lastWebSocketUpdate'
+      'lastWebSocketUpdate',
+      'termsProfile'
     ];
 
     scalarKeys.forEach(key => {
@@ -340,6 +344,8 @@ const SessionWorkspace = ({ session }) => {
   const [redlinedDocuments, setRedlinedDocuments] = useState([]);
   const [sessionResults, setSessionResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
+  const [termsProfile, setTermsProfile] = useState('it');
+  const [termsProfileError, setTermsProfileError] = useState('');
   
   // ← NEW KB SYNC STATE
   // eslint-disable-next-line no-unused-vars
@@ -363,6 +369,29 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   // Use ref to persist the initial state, as location.state can be cleared
   const isNewSession = initialIsNewSessionRef.current ?? false;
+  const normalizedTermsProfile = (termsProfile || 'it').toLowerCase();
+  const termsProfileOptions = [
+    {
+      value: 'general',
+      label: 'General Terms & Conditions',
+      description: 'Statewide contract standards for broad procurement needs.',
+    },
+    {
+      value: 'it',
+      label: 'IT Terms & Conditions',
+      description: 'Technology-focused standards for software and systems.',
+    }
+  ];
+  const activeTermsProfileOption = termsProfileOptions.find(option => option.value === normalizedTermsProfile) || termsProfileOptions[0];
+
+  const handleTermsProfileSelection = (nextValue) => {
+    const normalized = (nextValue || '').toLowerCase();
+    if (normalized === normalizedTermsProfile) {
+      return;
+    }
+    setTermsProfile(normalized === 'general' ? 'general' : 'it');
+    setTermsProfileError('');
+  };
 
   // Keep session data ref in sync with current state (for current session)
   // Only sync if we're not in the middle of switching sessions
@@ -381,10 +410,22 @@ const SessionWorkspace = ({ session }) => {
         processingStage,
         completedStages,
         workflowMessage,
-        workflowMessageType
+        workflowMessageType,
+        termsProfile
       });
     }
-  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, persistSessionState]);
+  }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, termsProfile, persistSessionState]);
+
+  // Cleanup timeouts on component unmount
+  useEffect(() => {
+    return () => {
+      // Clear all job timeouts on unmount
+      Object.values(jobTimeoutRef.current).forEach(timeoutId => {
+        clearTimeout(timeoutId);
+      });
+      jobTimeoutRef.current = {};
+    };
+  }, []);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
@@ -397,6 +438,12 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
+      
+      // Clear any existing job timeouts when switching sessions
+      Object.values(jobTimeoutRef.current).forEach(timeoutId => {
+        clearTimeout(timeoutId);
+      });
+      jobTimeoutRef.current = {};
       
       // Save previous session's data BEFORE switching (if we had a previous session)
       if (previousSessionId && previousSessionId !== currentSessionId) {
@@ -423,7 +470,8 @@ const SessionWorkspace = ({ session }) => {
         processingStage: '',
         completedStages: [],
         workflowMessage: '',
-        workflowMessageType: ''
+        workflowMessageType: '',
+        termsProfile: 'it'
       };
       
       // If this is a new session, explicitly initialize it as empty in the ref and set state to empty FIRST
@@ -436,7 +484,8 @@ const SessionWorkspace = ({ session }) => {
           processingStage: '',
           completedStages: [],
           workflowMessage: '',
-          workflowMessageType: ''
+          workflowMessageType: '',
+          termsProfile: 'it'
         };
         // Save to localStorage for new session initialization
         saveSessionDataToStorage(sessionDataRef.current);
@@ -448,6 +497,8 @@ const SessionWorkspace = ({ session }) => {
         setCompletedStages([]);
         setWorkflowMessage('');
         setWorkflowMessageType('');
+        setTermsProfile('it');
+        setTermsProfileError('');
         // Update ref AFTER clearing state to prevent sync from running with old data
         previousSessionIdRef.current = currentSessionId;
       } else {
@@ -511,6 +562,8 @@ const SessionWorkspace = ({ session }) => {
         setCompletedStages(restoredCompletedStages);
         setWorkflowMessage(restoredMessage || '');
         setWorkflowMessageType(restoredMessageType || '');
+        setTermsProfile(sessionData.termsProfile || 'it');
+        setTermsProfileError('');
         // Update ref AFTER restoring state for existing sessions
         previousSessionIdRef.current = currentSessionId;
       }
@@ -716,11 +769,32 @@ const SessionWorkspace = ({ session }) => {
             (typeof doc?.progress === 'number' && doc.progress < 100)
           );
 
-          const completionMessage = hasProcessingDocs
-            ? (sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.')
-            : 'Document processing completed successfully!';
-
-          const completionMessageType = hasProcessingDocs ? 'progress' : 'success';
+          // Check for no conflicts case when processing is complete
+          let completionMessage;
+          let completionMessageType;
+          if (hasProcessingDocs) {
+            completionMessage = sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.';
+            completionMessageType = 'progress';
+          } else {
+            // Processing is complete - check if there are no conflicts
+            const completedDocs = latestRedlinedDocs.filter(doc => !doc.processing && (doc.status === 'completed' || doc.success === true));
+            const successfulDocs = completedDocs.filter(doc => doc.success === true && doc.redlinedDocument);
+            const noConflictsDocs = completedDocs.filter(doc => doc.success === true && !doc.redlinedDocument);
+            
+            if (noConflictsDocs.length > 0 && successfulDocs.length === 0) {
+              // All documents completed but no conflicts found
+              if (noConflictsDocs.length === 1) {
+                completionMessage = 'Document analysis completed. No conflicts were detected, so no redlined document was generated.';
+              } else {
+                completionMessage = `Document analysis completed. No conflicts were detected in any documents, so no redlined documents were generated.`;
+              }
+              completionMessageType = 'success';
+            } else {
+              // Use existing workflowMessage if available, otherwise default success message
+              completionMessage = sessionData?.workflowMessage || 'Document processing completed successfully!';
+              completionMessageType = 'success';
+            }
+          }
 
           persistSessionState(session.session_id, {
             redlinedDocuments: latestRedlinedDocs,
@@ -932,6 +1006,12 @@ const SessionWorkspace = ({ session }) => {
       console.warn('Received job_completed without session mapping', { job_id, session_id, data });
       return;
     }
+    
+    // Clear timeout since job completed
+    if (jobTimeoutRef.current[job_id]) {
+      clearTimeout(jobTimeoutRef.current[job_id]);
+      delete jobTimeoutRef.current[job_id];
+    }
 
     const isCurrentSession = mappedSessionId === session?.session_id;
     
@@ -942,21 +1022,29 @@ const SessionWorkspace = ({ session }) => {
           matched = true;
           const redlinedSuccess = data.redlined_document && data.redlined_document.success;
           const redlinedDoc = data.redlined_document?.redlined_document;
+          const hasNoConflicts = data.redlined_document?.no_conflicts === true;
+          const hasRedline = redlinedSuccess && redlinedDoc && !hasNoConflicts;
+          
           return {
             ...doc,
-            status: 'completed',
+            status: redlinedSuccess ? 'completed' : 'failed',
             progress: 100,
             success: redlinedSuccess,
-            redlinedDocument: redlinedDoc || doc.redlinedDocument,
+            redlinedDocument: hasNoConflicts ? undefined : (redlinedDoc || doc.redlinedDocument),
             analysis: data.analysis_id || doc.analysis,
             processing: false,
-            message: 'Document processing completed'
+            error: redlinedSuccess ? undefined : (data.redlined_document?.error || 'Failed to generate redlined document'),
+            message: redlinedSuccess 
+              ? (hasNoConflicts || !hasRedline ? 'No conflicts detected' : 'Document processing completed')
+              : 'Document processing failed'
           };
         }
         return doc;
       });
       if (!matched && data.redlined_document && data.redlined_document.success) {
         const jobMeta = activeJobsRef.current[job_id];
+        const hasNoConflicts = data.redlined_document.no_conflicts === true || 
+                               (!data.redlined_document.redlined_document && data.redlined_document.success);
         updatedDocs.push({
           originalFile: jobMeta?.vendorFile ? { ...jobMeta.vendorFile } : { filename: `Document for job ${job_id}` },
           redlinedDocument: data.redlined_document.redlined_document,
@@ -965,7 +1053,8 @@ const SessionWorkspace = ({ session }) => {
           processing: false,
           jobId: job_id,
           status: 'completed',
-          progress: 100
+          progress: 100,
+          message: hasNoConflicts ? 'No conflicts detected' : 'Document processing completed'
         });
       }
       const stillProcessing = updatedDocs.some(doc => doc.processing === true || doc.status === 'processing');
@@ -997,8 +1086,45 @@ const SessionWorkspace = ({ session }) => {
       } else {
         entry.processingStage = '';
         entry.completedStages = stageOrder.map(item => item.key);
-        entry.workflowMessage = 'Document processing completed successfully!';
-        entry.workflowMessageType = 'success';
+        
+        // Determine completion message based on document states
+        const completedDocs = updatedDocs.filter(doc => !doc.processing && doc.status === 'completed');
+        const failedDocs = updatedDocs.filter(doc => doc.status === 'failed' || (doc.success === false && !doc.processing));
+        const successfulDocs = completedDocs.filter(doc => doc.success === true && doc.redlinedDocument);
+        const noConflictsDocs = completedDocs.filter(doc => doc.success === true && !doc.redlinedDocument);
+        
+        let completionMessage = 'Document processing completed successfully!';
+        let completionType = 'success';
+        
+        if (failedDocs.length > 0) {
+          // Some documents failed
+          if (failedDocs.length === updatedDocs.length) {
+            completionMessage = 'Document processing failed. Please check your documents and try again.';
+            completionType = 'error';
+          } else {
+            completionMessage = `Processing completed. ${failedDocs.length} document(s) failed to generate redlines.`;
+            completionType = 'error';
+          }
+        } else if (noConflictsDocs.length > 0 && successfulDocs.length === 0) {
+          // All documents completed but no conflicts found (no redlines generated)
+          if (noConflictsDocs.length === 1) {
+            completionMessage = 'Document analysis completed. No conflicts were detected, so no redlined document was generated.';
+          } else {
+            completionMessage = `Document analysis completed. No conflicts were detected in any documents, so no redlined documents were generated.`;
+          }
+          completionType = 'success';
+        } else if (successfulDocs.length > 0) {
+          // At least one successful redline generated
+          if (successfulDocs.length === updatedDocs.length) {
+            completionMessage = `Successfully generated ${successfulDocs.length} redlined document(s)!`;
+          } else {
+            completionMessage = `Successfully generated ${successfulDocs.length} redlined document(s). ${noConflictsDocs.length} document(s) had no conflicts.`;
+          }
+          completionType = 'success';
+        }
+        
+        entry.workflowMessage = completionMessage;
+        entry.workflowMessageType = completionType;
       }
 
       // Mark this session as having WebSocket updates that need to be preserved
@@ -1006,7 +1132,11 @@ const SessionWorkspace = ({ session }) => {
       entry.lastWebSocketUpdate = Date.now();
       saveSessionDataToStorage(sessionDataRef.current);
       updateGlobalProcessingFlag(targetSessionId, stillProcessing);
-      return { stillProcessing };
+      return { 
+        stillProcessing, 
+        completionMessage: entry.workflowMessage, 
+        completionType: entry.workflowMessageType 
+      };
     };
     
     if (isCurrentSession) {
@@ -1022,10 +1152,10 @@ const SessionWorkspace = ({ session }) => {
         return updatedDocs;
       });
       
-      const { stillProcessing } = persistSessionCompletion(mappedSessionId);
+      const { stillProcessing, completionMessage, completionType } = persistSessionCompletion(mappedSessionId);
       stillProcessingAfterUpdate = stillProcessingAfterUpdate || stillProcessing;
       if (!stillProcessingAfterUpdate) {
-        markProcessingComplete();
+        markProcessingComplete(completionMessage, completionType);
         setGenerating(false);
       } else {
         setProcessingPhase('generating', stageMessages.generating);
@@ -1249,6 +1379,7 @@ const SessionWorkspace = ({ session }) => {
   const handleGenerateRedline = async () => {
     const sessionIdAtStart = session?.session_id;
     const userIdAtStart = session?.user_id || authService.getUserId();
+    const termsProfileForRun = normalizedTermsProfile;
     if (!sessionIdAtStart || !userIdAtStart) {
       setWorkflowMessage('Unable to start processing because the session or user could not be identified. Please refresh and try again.');
       setWorkflowMessageType('error');
@@ -1271,6 +1402,15 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
     
+    // Check if General Terms & Conditions is selected (not supported yet)
+    if (normalizedTermsProfile === 'general') {
+      setWorkflowMessage('Support for General Terms & Conditions is coming soon. Please select IT Terms & Conditions to generate redlined documents.');
+      setWorkflowMessageType('error');
+      setTermsProfileError('Support for General Terms & Conditions is coming soon.');
+      return;
+    }
+    
+    setTermsProfileError('');
     setGenerating(true);
     resetProcessingStages({ keepGeneratingState: true, skipWorkflowReset: true });
     setProcessingPhase('kb_sync', stageMessages.kb_sync);
@@ -1280,7 +1420,8 @@ const SessionWorkspace = ({ session }) => {
       processingStage: 'kb_sync',
       completedStages: [],
       workflowMessage: stageMessages.kb_sync,
-      workflowMessageType: 'progress'
+      workflowMessageType: 'progress',
+      termsProfile: termsProfileForRun
     });
     updateGlobalProcessingFlag(sessionIdAtStart, true);
     let hasProcessingResults = false;
@@ -1298,7 +1439,8 @@ const SessionWorkspace = ({ session }) => {
             vendorFile.s3_key, 
             'agent_processing',
             sessionIdAtStart,
-            userIdAtStart
+            userIdAtStart,
+            { termsProfile: termsProfileForRun }
           );
           
           // Check if processing is asynchronous
@@ -1309,41 +1451,138 @@ const SessionWorkspace = ({ session }) => {
               setWorkflowMessage(`Processing ${vendorFile.filename} in background...`);
             }
             
+            const jobId = reviewResponse.job_id;
+            const TIMEOUT_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds
+            
             // Subscribe to WebSocket notifications for this job
             try {
-              webSocketService.subscribeToJob(reviewResponse.job_id, sessionIdAtStart);
+              webSocketService.subscribeToJob(jobId, sessionIdAtStart);
 
               
-              jobSessionMapRef.current[reviewResponse.job_id] = sessionIdAtStart;
+              jobSessionMapRef.current[jobId] = sessionIdAtStart;
               saveJobSessionMapToStorage(jobSessionMapRef.current);
-              activeJobsRef.current[reviewResponse.job_id] = {
+              activeJobsRef.current[jobId] = {
                 sessionId: sessionIdAtStart,
                 vendorFile,
                 startedAt: Date.now()
               };
               window.currentProcessingJob = {
-                jobId: reviewResponse.job_id,
+                jobId: jobId,
                 sessionId: sessionIdAtStart
               };
 
               // Add job to tracking with initial progress
               processingEntry = {
                 originalFile: vendorFile,
-                jobId: reviewResponse.job_id,
+                jobId: jobId,
                 status: 'processing',
                 progress: 0,
                 message: 'Starting document analysis...',
                 processing: true,
-                success: false
+                  success: false,
+                  termsProfile: termsProfileForRun
               };
               redlineResults.push({ ...processingEntry });
+              
+              // Start 15-minute timeout timer
+              const timeoutId = setTimeout(() => {
+                // Check if job is still processing
+                const isCurrentSessionCheck = () => currentSessionIdRef.current === sessionIdAtStart;
+                
+                // Mark job as failed due to timeout
+                const markJobAsTimeout = () => {
+                  setRedlinedDocuments(prev => {
+                    const updatedDocs = prev.map(doc => {
+                      if (doc.jobId === jobId && doc.processing) {
+                        return {
+                          ...doc,
+                          processing: false,
+                          status: 'failed',
+                          success: false,
+                          error: 'Processing timed out after 15 minutes. Please try again or contact support.',
+                          message: 'Processing timed out after 15 minutes'
+                        };
+                      }
+                      return doc;
+                    });
+                    
+                    // Also update session data
+                    if (sessionDataRef.current[sessionIdAtStart]) {
+                      const sessionEntry = sessionDataRef.current[sessionIdAtStart];
+                      const sessionUpdatedDocs = (sessionEntry.redlinedDocuments || []).map(doc => {
+                        if (doc.jobId === jobId && doc.processing) {
+                          return {
+                            ...doc,
+                            processing: false,
+                            status: 'failed',
+                            success: false,
+                            error: 'Processing timed out after 15 minutes. Please try again or contact support.',
+                            message: 'Processing timed out after 15 minutes'
+                          };
+                        }
+                        return doc;
+                      });
+                      sessionEntry.redlinedDocuments = sessionUpdatedDocs;
+                      sessionEntry.generating = sessionUpdatedDocs.some(doc => doc.processing);
+                      
+                      if (!sessionEntry.generating) {
+                        sessionEntry.processingStage = '';
+                        sessionEntry.completedStages = stageOrder.map(item => item.key);
+                        sessionEntry.workflowMessage = 'Processing timed out. Some documents may have failed.';
+                        sessionEntry.workflowMessageType = 'error';
+                      }
+                      
+                      persistSessionState(sessionIdAtStart, {
+                        redlinedDocuments: sessionUpdatedDocs,
+                        generating: sessionEntry.generating,
+                        processingStage: sessionEntry.processingStage,
+                        completedStages: sessionEntry.completedStages,
+                        workflowMessage: sessionEntry.workflowMessage,
+                        workflowMessageType: sessionEntry.workflowMessageType
+                      });
+                    }
+                    
+                    updateGlobalProcessingFlag(sessionIdAtStart, updatedDocs.some(doc => doc.processing));
+                    
+                    if (isCurrentSessionCheck() && !updatedDocs.some(doc => doc.processing)) {
+                      setGenerating(false);
+                      setWorkflowMessage('Processing timed out after 15 minutes. Some documents may have failed.');
+                      setWorkflowMessageType('error');
+                      resetProcessingStages();
+                    }
+                    
+                    return updatedDocs;
+                  });
+                  
+                  // Clean up job tracking
+                  if (jobSessionMapRef.current[jobId]) {
+                    delete jobSessionMapRef.current[jobId];
+                    saveJobSessionMapToStorage(jobSessionMapRef.current);
+                  }
+                  if (activeJobsRef.current[jobId]) {
+                    delete activeJobsRef.current[jobId];
+                  }
+                  if (jobTimeoutRef.current[jobId]) {
+                    delete jobTimeoutRef.current[jobId];
+                  }
+                  if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
+                    window.currentProcessingJob = null;
+                  }
+                };
+                
+                markJobAsTimeout();
+              }, TIMEOUT_DURATION);
+              
+              // Store timeout ID for cleanup
+              jobTimeoutRef.current[jobId] = timeoutId;
 
               if (isCurrentSession()) {
                 setRedlinedDocuments(prev => {
                   const nextDocs = [...prev, processingEntry];
                   persistSessionState(sessionIdAtStart, {
                     redlinedDocuments: nextDocs,
-                    generating: true
+                    generating: true,
+                    termsProfile: termsProfileForRun
                   });
                   updateGlobalProcessingFlag(sessionIdAtStart, true);
                   return nextDocs;
@@ -1355,7 +1594,8 @@ const SessionWorkspace = ({ session }) => {
                 const nextDocs = [...existingDocs, processingEntry];
                 persistSessionState(sessionIdAtStart, {
                   redlinedDocuments: nextDocs,
-                  generating: true
+                  generating: true,
+                  termsProfile: termsProfileForRun
                 });
                 updateGlobalProcessingFlag(sessionIdAtStart, true);
               }
@@ -1381,6 +1621,13 @@ const SessionWorkspace = ({ session }) => {
             }
 
             if (finalResult?.processing === false) {
+              // Clear timeout since job completed
+              const jobId = reviewResponse.job_id;
+              if (jobTimeoutRef.current[jobId]) {
+                clearTimeout(jobTimeoutRef.current[jobId]);
+                delete jobTimeoutRef.current[jobId];
+              }
+              
               const transformedEntry = {
                 ...processingEntry,
                 processing: false,
@@ -1394,7 +1641,8 @@ const SessionWorkspace = ({ session }) => {
                 error: finalResult.success ? undefined : finalResult.error,
                 message: finalResult.success
                   ? 'Document processing completed'
-                  : (finalResult.error || 'Processing failed')
+                  : (finalResult.error || 'Processing failed'),
+                termsProfile: termsProfileForRun
               };
 
               // Replace the last pushed processing entry with the final result
@@ -1430,7 +1678,8 @@ const SessionWorkspace = ({ session }) => {
                 });
                 persistSessionState(sessionIdAtStart, {
                   redlinedDocuments: nextDocs,
-                  generating: nextDocs.some(doc => doc.processing)
+                  generating: nextDocs.some(doc => doc.processing),
+                  termsProfile: termsProfileForRun
                 });
                 updateGlobalProcessingFlag(
                   sessionIdAtStart,
@@ -1442,11 +1691,18 @@ const SessionWorkspace = ({ session }) => {
           if (isCurrentSession()) {
             setProcessingPhase('generating', `Generating redlined document for ${vendorFile.filename}. Please stand by.`);
           }
+            // Check if this is a "no conflicts" case (success but no redlined document)
+            const hasNoConflicts = reviewResponse.redlined_document.no_conflicts === true || 
+                                   (!reviewResponse.redlined_document.redlined_document && reviewResponse.redlined_document.success);
             redlineResults.push({
               originalFile: vendorFile,
               redlinedDocument: reviewResponse.redlined_document.redlined_document,
               analysis: reviewResponse.analysis,
-              success: true
+              success: true,
+              status: 'completed',
+              processing: false,
+              message: hasNoConflicts ? 'No conflicts detected' : 'Document processing completed',
+              termsProfile: termsProfileForRun
             });
           } else if (reviewResponse.processing) {
             redlineResults.push({
@@ -1454,14 +1710,35 @@ const SessionWorkspace = ({ session }) => {
               processing: true,
               jobId: `job_${vendorFile.s3_key.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
               success: false,
-              message: reviewResponse.message || 'Processing in background...'
+              message: reviewResponse.message || 'Processing in background...',
+              termsProfile: termsProfileForRun
             });
           } else {
-            redlineResults.push({
-              originalFile: vendorFile,
-              error: reviewResponse.redlined_document?.error || reviewResponse.error || 'Unknown error',
-              success: false
-            });
+            // Check if this is actually a "no conflicts" case that was returned as an error
+            const errorMessage = reviewResponse.redlined_document?.error || reviewResponse.error || '';
+            const isNoConflictsCase = errorMessage.toLowerCase().includes('no conflicts found') ||
+                                      reviewResponse.redlined_document?.no_conflicts === true;
+            
+            if (isNoConflictsCase) {
+              // Treat as success with no conflicts
+              redlineResults.push({
+                originalFile: vendorFile,
+                analysis: reviewResponse.analysis,
+                success: true,
+                status: 'completed',
+                processing: false,
+                message: 'No conflicts detected',
+                termsProfile: termsProfileForRun
+              });
+            } else {
+              // Actual error case
+              redlineResults.push({
+                originalFile: vendorFile,
+                error: errorMessage || 'Unknown error',
+                success: false,
+                termsProfile: termsProfileForRun
+              });
+            }
           }
         } catch (error) {
           if (error.message.includes('timeout') || error.message.includes('504') || error.message.includes('502') || 
@@ -1502,7 +1779,8 @@ const SessionWorkspace = ({ session }) => {
         }
       }
       
-      const successfulResults = redlineResults.filter(r => r.success);
+      const successfulResults = redlineResults.filter(r => r.success && r.redlinedDocument);
+      const noConflictsResults = redlineResults.filter(r => r.success && !r.redlinedDocument);
       const failedResults = redlineResults.filter(r => !r.success && !r.processing);
       const processingResults = redlineResults.filter(r => r.processing);
       hasProcessingResults = processingResults.length > 0;
@@ -1513,20 +1791,45 @@ const SessionWorkspace = ({ session }) => {
 
       persistSessionState(sessionIdAtStart, {
         redlinedDocuments: redlineResults,
-        generating: hasProcessingResults
+        generating: hasProcessingResults,
+        termsProfile: termsProfileForRun
       });
       updateGlobalProcessingFlag(sessionIdAtStart, hasProcessingResults);
       
-      if (successfulResults.length > 0) {
-        let message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
-        if (processingResults.length > 0) {
-          message += ` ${processingResults.length} document(s) are still processing in background.`;
-        }
-        if (failedResults.length > 0) {
-          message += ` ${failedResults.length} failed.`;
-        }
-        if (successfulResults.length > 0) {
+      if (successfulResults.length > 0 || noConflictsResults.length > 0) {
+        let message = '';
+        if (successfulResults.length > 0 && noConflictsResults.length === 0) {
+          // All successful with redlines
+          message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
+          if (processingResults.length > 0) {
+            message += ` ${processingResults.length} document(s) are still processing in background.`;
+          }
+          if (failedResults.length > 0) {
+            message += ` ${failedResults.length} failed.`;
+          }
           message += ' Scroll down to download completed documents.';
+        } else if (noConflictsResults.length > 0 && successfulResults.length === 0) {
+          // All no conflicts
+          if (noConflictsResults.length === 1) {
+            message = 'Document analysis completed. No conflicts were detected, so no redlined document was generated.';
+          } else {
+            message = `Document analysis completed. No conflicts were detected in any documents, so no redlined documents were generated.`;
+          }
+        } else {
+          // Mixed: some with redlines, some no conflicts
+          message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
+          if (noConflictsResults.length > 0) {
+            message += ` ${noConflictsResults.length} document(s) had no conflicts.`;
+          }
+          if (processingResults.length > 0) {
+            message += ` ${processingResults.length} document(s) are still processing in background.`;
+          }
+          if (failedResults.length > 0) {
+            message += ` ${failedResults.length} failed.`;
+          }
+          if (successfulResults.length > 0) {
+            message += ' Scroll down to download completed documents.';
+          }
         }
         if (isCurrentSession()) {
           if (processingResults.length === 0) {
@@ -1562,7 +1865,43 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
-      if (isCurrentSession()) {
+      const errorMessage = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+      if (errorMessage.includes('knowledge base') || errorMessage.includes('general terms')) {
+        if (errorMessage.includes('general')) {
+          setTermsProfileError('Support for General Terms & Conditions is coming soon.');
+          const generalTermsMessage = 'Support for General Terms & Conditions is coming soon. Please select IT Terms & Conditions to generate redlined documents.';
+          if (isCurrentSession()) {
+            setWorkflowMessage(generalTermsMessage);
+            setWorkflowMessageType('error');
+            resetProcessingStages();
+          } else {
+            persistSessionState(sessionIdAtStart, {
+              workflowMessage: generalTermsMessage,
+              workflowMessageType: 'error',
+              processingStage: '',
+              completedStages: [],
+              generating: false,
+              termsProfile: termsProfileForRun
+            });
+          }
+        } else {
+          setTermsProfileError(error.message);
+          if (isCurrentSession()) {
+            setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
+            setWorkflowMessageType('error');
+            resetProcessingStages();
+          } else {
+            persistSessionState(sessionIdAtStart, {
+              workflowMessage: `Failed to generate redlined documents: ${error.message}`,
+              workflowMessageType: 'error',
+              processingStage: '',
+              completedStages: [],
+              generating: false,
+              termsProfile: termsProfileForRun
+            });
+          }
+        }
+      } else if (isCurrentSession()) {
         setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
         setWorkflowMessageType('error');
         resetProcessingStages();
@@ -1572,7 +1911,8 @@ const SessionWorkspace = ({ session }) => {
           workflowMessageType: 'error',
           processingStage: '',
           completedStages: [],
-          generating: false
+          generating: false,
+          termsProfile: termsProfileForRun
         });
         updateGlobalProcessingFlag(sessionIdAtStart, false);
       }
@@ -1592,13 +1932,15 @@ const SessionWorkspace = ({ session }) => {
           processingStage: sessionEntry?.processingStage || 'document_review',
           completedStages: Array.isArray(sessionEntry?.completedStages)
             ? sessionEntry.completedStages
-            : []
+            : [],
+          termsProfile: termsProfileForRun
         });
       } else {
         persistSessionState(sessionIdAtStart, {
           generating: false,
           processingStage: '',
-          completedStages: stageOrder.map(item => item.key)
+          completedStages: stageOrder.map(item => item.key),
+          termsProfile: termsProfileForRun
         });
       }
       updateGlobalProcessingFlag(sessionIdAtStart, stillProcessing);
@@ -1940,6 +2282,131 @@ const SessionWorkspace = ({ session }) => {
       <div className="card" style={{ marginTop: '20px' }}>
           <h2>AI Document Review Workflow</h2>
           <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
+        <div
+          style={{
+            margin: '16px 0',
+            padding: '18px 20px',
+            background: '#eef2f7',
+            borderRadius: '12px',
+            border: '1px solid #d1dae7',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              gap: '12px',
+              marginBottom: '16px'
+            }}
+          >
+            <div style={{ maxWidth: '520px' }}>
+              <div style={{ fontWeight: 600, fontSize: '16px', color: '#0b1f33' }}>
+                Select Terms &amp; Conditions Profile
+              </div>
+              <div style={{ fontSize: '13px', color: '#4b5a6b', marginTop: '4px', lineHeight: 1.5 }}>
+                Choose the contract standard the AI should follow before generating redlines.
+              </div>
+            </div>
+            <div
+              style={{
+                fontSize: '12px',
+                color: '#37518f',
+                background: '#dce7ff',
+                padding: '6px 10px',
+                borderRadius: '20px',
+                fontWeight: 600,
+                alignSelf: 'flex-start'
+              }}
+            >
+              Current selection: {activeTermsProfileOption.label}
+            </div>
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gap: '12px',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))'
+            }}
+          >
+            {termsProfileOptions.map(option => {
+              const isActive = normalizedTermsProfile === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleTermsProfileSelection(option.value)}
+                  disabled={generating}
+                  aria-pressed={isActive}
+                  style={{
+                    position: 'relative',
+                    padding: '16px 18px',
+                    borderRadius: '10px',
+                    border: isActive ? '2px solid #2563eb' : '1px solid #ccd6e3',
+                    background: isActive ? '#2563eb' : '#ffffff',
+                    color: isActive ? '#f8fafc' : '#1a2c44',
+                    textAlign: 'left',
+                    cursor: generating ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: isActive
+                      ? '0 10px 25px -12px rgba(37, 99, 235, 0.65)'
+                      : '0 1px 3px rgba(15, 23, 42, 0.08)',
+                    opacity: generating ? 0.72 : 1
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: '12px'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 600, lineHeight: 1.3 }}>
+                        {option.label}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '13px',
+                          marginTop: '6px',
+                          color: isActive ? 'rgba(241,245,249,0.9)' : '#4b5a6b',
+                          lineHeight: 1.5
+                        }}
+                      >
+                        {option.description}
+                      </div>
+                    </div>
+                    {isActive && (
+                      <div
+                        style={{
+                          flexShrink: 0,
+                          background: '#1d4ed8',
+                          color: '#f1f5f9',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          padding: '4px 8px',
+                          borderRadius: '999px',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.08em',
+                          boxShadow: '0 2px 0 rgba(15,23,42,0.18)'
+                        }}
+                      >
+                        Selected
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {termsProfileError && (
+            <div className="alert alert-error" style={{ marginTop: '14px' }}>
+              {termsProfileError}
+            </div>
+          )}
+        </div>
         
 
         
@@ -1975,7 +2442,7 @@ const SessionWorkspace = ({ session }) => {
           const activeStage = stageOrder.find(stage => stage.key === activeStageKey);
           const fallbackMessage = activeStage ? stageMessages[activeStage.key] : '';
           const displayMessage = isCompleted
-            ? 'Document processing completed successfully!'
+            ? (workflowMessage || 'Document processing completed successfully!')
             : (workflowMessage || fallbackMessage || 'Please stand by while we process your documents.');
           const showSpinner = !isCompleted;
 
@@ -2081,20 +2548,32 @@ const SessionWorkspace = ({ session }) => {
                   </div>
                   {result.success ? (
                     <div>
-                      <button
-                        onClick={() => handleDownloadRedlined(result)}
-                        style={{
-                          background: '#28a745',
-                          color: 'white',
-                          border: 'none',
-                          padding: '6px 12px',
+                      {result.redlinedDocument ? (
+                        <button
+                          onClick={() => handleDownloadRedlined(result)}
+                          style={{
+                            background: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '14px'
+                          }}
+                        >
+                          Download Redlined Document
+                        </button>
+                      ) : (
+                        <div style={{ 
+                          padding: '8px', 
+                          background: '#f8d7da', 
                           borderRadius: '4px',
-                          cursor: 'pointer',
+                          color: '#721c24',
                           fontSize: '14px'
-                        }}
-                      >
-                        Download Redlined Document
-                      </button>
+                        }}>
+                          ✓ No conflicts found in this document
+                        </div>
+                      )}
                       
                       {result.analysis && (
                         <div style={{ 
@@ -2368,12 +2847,14 @@ const AppContent = () => {
 
   // Handle admin section navigation
   const handleAdminSectionChange = async (section) => {
+    if (!isAdmin) {
+      navigate('/');
+      return;
+    }
     if (section === 'admin') {
-      if (!isAdmin) {
-        navigate('/');
-        return;
-      }
       navigate('/admin/knowledgebase');
+    } else if (section === 'metrics') {
+      navigate('/admin/metrics');
     } else {
       // Go back to main page by creating a new session
       try {
@@ -2424,6 +2905,15 @@ const AppContent = () => {
           isAdmin ? (
             <div className="main-content">
               <AdminDashboard activeTab={activeTab} onTabChange={setActiveTab} />
+            </div>
+          ) : (
+            <Navigate to="/" replace />
+          )
+        } />
+        <Route path="/admin/metrics" element={
+          isAdmin ? (
+            <div className="main-content">
+              <MetricsDashboard />
             </div>
           ) : (
             <Navigate to="/" replace />

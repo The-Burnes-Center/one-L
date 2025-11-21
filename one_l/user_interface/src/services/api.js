@@ -347,13 +347,17 @@ const agentAPI = {
   /**
    * Review a document for conflicts using AI analysis
    */
-  reviewDocument: async (documentS3Key, bucketType = 'user_documents', sessionId = null, userId = null) => {
+  reviewDocument: async (documentS3Key, bucketType = 'user_documents', sessionId = null, userId = null, options = {}) => {
     const payload = {
       document_s3_key: documentS3Key,
       bucket_type: bucketType,
       session_id: sessionId,
       user_id: userId
     };
+    
+    if (options?.termsProfile) {
+      payload.terms_profile = options.termsProfile;
+    }
     
     return await apiCall('/agent/review', {
       method: 'POST',
@@ -614,6 +618,30 @@ const sessionAPI = {
       return response;
     } catch (error) {
       console.error('Error in createSession API call:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get admin metrics (system-wide statistics)
+   */
+  getAdminMetrics: async () => {
+    try {
+      const response = await apiCall('/knowledge_management/sessions?action=metrics');
+      
+      // Handle Lambda response structure (may be wrapped in body)
+      if (response.body) {
+        try {
+          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing getAdminMetrics response body:', e);
+          return response;
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      console.error('Error in getAdminMetrics API call:', error);
       throw error;
     }
   },
