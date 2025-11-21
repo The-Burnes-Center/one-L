@@ -2561,9 +2561,9 @@ const SessionWorkspace = ({ session }) => {
                       ) : (
                         <div style={{ 
                           padding: '8px', 
-                          background: '#d4edda', 
+                          background: '#f8d7da', 
                           borderRadius: '4px',
-                          color: '#155724',
+                          color: '#721c24',
                           fontSize: '14px'
                         }}>
                           ✓ No conflicts found in this document
