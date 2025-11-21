@@ -230,35 +230,74 @@ def _extract_and_log_thinking(response: Dict[str, Any], context: str = "") -> st
 
 def _extract_json_only(content: str) -> str:
     """
-    Extract only JSON array from response content, stripping any explanatory text.
+    Extract only JSON object or array from response content, stripping any explanatory text.
     This ensures we only return valid JSON even if the agent adds explanatory text.
+    Prioritizes new format (object with explanation and conflicts) over old format (array).
     
     Args:
         content: Raw response content that may contain JSON plus explanatory text
         
     Returns:
-        Clean JSON string (array) or empty array if no valid JSON found
+        Clean JSON string (object or array) or empty object/array if no valid JSON found
     """
     if not content:
-        return "[]"
+        return '{"explanation": "", "conflicts": []}'
     
-    # First, try to find JSON array pattern (most common case)
-    json_match = re.search(r'\[[\s\S]*?\]', content)
-    if json_match:
-        json_str = json_match.group(0)
-        # Validate it's actually valid JSON
-        try:
-            json.loads(json_str)
-            logger.info(f"Extracted valid JSON array from response (length: {len(json_str)} chars)")
-            return json_str
-        except json.JSONDecodeError:
-            logger.warning("Found array-like pattern but not valid JSON, trying to fix...")
-    
-    # If no array pattern found, try to find any JSON object/array
-    # Look for content starting with [ or {
     content_trimmed = content.strip()
     
-    # Try to find JSON starting from the first [
+    # First, try to find JSON object pattern (new format with explanation and conflicts)
+    json_object_match = re.search(r'\{[\s\S]*?"conflicts"[\s\S]*?\}', content)
+    if json_object_match:
+        json_str = json_object_match.group(0)
+        # Validate it's actually valid JSON
+        try:
+            parsed = json.loads(json_str)
+            if isinstance(parsed, dict) and "conflicts" in parsed:
+                logger.info(f"Extracted valid JSON object from response (length: {len(json_str)} chars)")
+                return json_str
+        except json.JSONDecodeError:
+            logger.warning("Found object-like pattern but not valid JSON, trying bracket matching...")
+    
+    # Try to find JSON object by bracket matching (for new format)
+    start_idx = content_trimmed.find('{')
+    if start_idx != -1:
+        # Try to parse from { to end, or find matching }
+        brace_count = 0
+        end_idx = start_idx
+        for i in range(start_idx, len(content_trimmed)):
+            if content_trimmed[i] == '{':
+                brace_count += 1
+            elif content_trimmed[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_idx = i + 1
+                    break
+        
+        if brace_count == 0 and end_idx > start_idx:
+            json_str = content_trimmed[start_idx:end_idx]
+            try:
+                parsed = json.loads(json_str)
+                if isinstance(parsed, dict):
+                    logger.info(f"Extracted JSON object by bracket matching (length: {len(json_str)} chars)")
+                    return json_str
+            except json.JSONDecodeError:
+                pass
+    
+    # Fallback: try to find JSON array pattern (backwards compatibility)
+    json_array_match = re.search(r'\[[\s\S]*?\]', content)
+    if json_array_match:
+        json_str = json_array_match.group(0)
+        # Validate it's actually valid JSON
+        try:
+            parsed = json.loads(json_str)
+            if isinstance(parsed, list):
+                logger.info(f"Extracted valid JSON array from response (backwards compatibility, length: {len(json_str)} chars)")
+                # Convert array to new format for consistency
+                return json.dumps({"explanation": "", "conflicts": parsed})
+        except json.JSONDecodeError:
+            logger.warning("Found array-like pattern but not valid JSON, trying bracket matching...")
+    
+    # Try to find JSON array by bracket matching (backwards compatibility)
     start_idx = content_trimmed.find('[')
     if start_idx != -1:
         # Try to parse from [ to end, or find matching ]
@@ -276,15 +315,17 @@ def _extract_json_only(content: str) -> str:
         if bracket_count == 0 and end_idx > start_idx:
             json_str = content_trimmed[start_idx:end_idx]
             try:
-                json.loads(json_str)
-                logger.info(f"Extracted JSON array by bracket matching (length: {len(json_str)} chars)")
-                return json_str
+                parsed = json.loads(json_str)
+                if isinstance(parsed, list):
+                    logger.info(f"Extracted JSON array by bracket matching (backwards compatibility, length: {len(json_str)} chars)")
+                    # Convert array to new format for consistency
+                    return json.dumps({"explanation": "", "conflicts": parsed})
             except json.JSONDecodeError:
                 pass
     
-    # If all else fails, log warning and return empty array
+    # If all else fails, log warning and return empty object
     logger.warning(f"Could not extract valid JSON from response. Response preview: {content[:200]}...")
-    return "[]"
+    return '{"explanation": "", "conflicts": []}'
 
 def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
     """
@@ -389,7 +430,7 @@ class Model:
             
             # Check document size and decide whether to chunk
             # Only try to parse DOCX files for chunking (PDFs are handled differently)
-            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON array format."
+            instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
             
             if not is_pdf_file(document_s3_key):
                 try:
@@ -404,7 +445,7 @@ class Model:
                         logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
                         return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
                     else:
-                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON array format."
+                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
                 except Exception as e:
                     logger.warning(f"Could not pre-analyze document structure: {e}")
             else:
@@ -447,6 +488,18 @@ class Model:
             
             # Extract only JSON from response, stripping any explanatory text
             content = _extract_json_only(content)
+            
+            # Extract and log explanation if present
+            try:
+                parsed_content = json.loads(content)
+                if isinstance(parsed_content, dict) and "explanation" in parsed_content:
+                    explanation = parsed_content.get("explanation", "")
+                    if explanation:
+                        logger.info(f"=== MODEL EXPLANATION ===")
+                        logger.info(f"{explanation}")
+                        logger.info(f"=== END MODEL EXPLANATION ===")
+            except json.JSONDecodeError:
+                pass  # Content might not be valid JSON yet, will be handled by parse_conflicts_for_redlining
             
             # Count conflicts detected in the analysis
             try:
@@ -530,7 +583,7 @@ class Model:
                 if chunk_num > 0:  # Not the first chunk
                     additional_context = f" IMPORTANT: For conflicts that don't have a vendor-provided ID, use 'Additional-{additional_counter + 1}', 'Additional-{additional_counter + 2}', etc. (continuing from previous sections)."
                 
-                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters.{additional_context} Output ONLY a JSON array of conflicts (empty array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
+                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters.{additional_context} Output ONLY a JSON object with 'explanation' and 'conflicts' fields (empty conflicts array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
                 
                 messages = [
                     {
@@ -599,6 +652,18 @@ class Model:
                 # Extract only JSON from response, stripping any explanatory text
                 content = _extract_json_only(content)
                 
+                # Extract and log explanation if present
+                try:
+                    parsed_content = json.loads(content)
+                    if isinstance(parsed_content, dict) and "explanation" in parsed_content:
+                        explanation = parsed_content.get("explanation", "")
+                        if explanation:
+                            logger.info(f"=== CHUNK {chunk_num + 1} MODEL EXPLANATION ===")
+                            logger.info(f"{explanation}")
+                            logger.info(f"=== END CHUNK {chunk_num + 1} MODEL EXPLANATION ===")
+                except json.JSONDecodeError:
+                    pass  # Content might not be valid JSON yet, will be handled by parse_conflicts_for_redlining
+                
                 all_content.append(content)
                 all_tool_results.append(response.get("tool_results", []))
                 
@@ -627,28 +692,33 @@ class Model:
                 except Exception as e:
                     logger.warning(f"Error parsing conflicts from chunk {chunk_num + 1}: {str(e)}")
             
-            # Merge all content - combine JSON arrays from all chunks into a single valid JSON array
-            import json
+            # Merge all content - combine JSON objects from all chunks into a single valid JSON object
             import re
             
             merged_json_conflicts = []
+            chunk_explanations = []
             
-            # Try to extract and combine JSON arrays from each chunk
+            # Try to extract and combine JSON objects/arrays from each chunk
             # Also renumber Additional-[#] conflicts to ensure sequential numbering across chunks
             chunks_with_json = 0
             global_additional_counter = 0  # Track Additional counter across all chunks for renumbering
             
             for chunk_idx, chunk_content in enumerate(all_content):
-                # Look for JSON array pattern in the chunk content
-                json_match = re.search(r'\[[\s\S]*\]', chunk_content)
-                if json_match:
-                    try:
-                        json_str = json_match.group(0)
-                        chunk_conflicts = json.loads(json_str)
+                try:
+                    # Try to parse as JSON object first (new format)
+                    parsed_chunk = json.loads(chunk_content)
+                    
+                    if isinstance(parsed_chunk, dict) and "conflicts" in parsed_chunk:
+                        # New format with explanation and conflicts
+                        chunk_explanation = parsed_chunk.get("explanation", "")
+                        if chunk_explanation:
+                            chunk_explanations.append(f"Chunk {chunk_idx + 1}: {chunk_explanation}")
+                        
+                        chunk_conflicts = parsed_chunk.get("conflicts", [])
                         if isinstance(chunk_conflicts, list):
                             # Handle empty arrays (valid JSON response when no conflicts)
                             if len(chunk_conflicts) == 0:
-                                logger.info(f"Chunk {chunk_idx + 1} returned empty JSON array (no conflicts found)")
+                                logger.info(f"Chunk {chunk_idx + 1} returned empty conflicts array (no conflicts found)")
                             else:
                                 # Renumber Additional-[#] conflicts to ensure sequential numbering
                                 for conflict in chunk_conflicts:
@@ -662,18 +732,58 @@ class Model:
                                 merged_json_conflicts.extend(chunk_conflicts)
                                 logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk {chunk_idx + 1} JSON (Additional counter: {global_additional_counter})")
                             chunks_with_json += 1
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse JSON from chunk {chunk_idx + 1}, falling back to text merge: {e}")
+                    elif isinstance(parsed_chunk, list):
+                        # Backwards compatibility: old array format
+                        chunk_conflicts = parsed_chunk
+                        if len(chunk_conflicts) == 0:
+                            logger.info(f"Chunk {chunk_idx + 1} returned empty JSON array (no conflicts found)")
+                        else:
+                            # Renumber Additional-[#] conflicts to ensure sequential numbering
+                            for conflict in chunk_conflicts:
+                                if isinstance(conflict, dict):
+                                    clarification_id = conflict.get('clarification_id', '')
+                                    if isinstance(clarification_id, str) and clarification_id.startswith('Additional-'):
+                                        global_additional_counter += 1
+                                        conflict['clarification_id'] = f'Additional-{global_additional_counter}'
+                                        logger.debug(f"Renumbered Additional conflict to Additional-{global_additional_counter}")
+                            
+                            merged_json_conflicts.extend(chunk_conflicts)
+                            logger.info(f"Merged {len(chunk_conflicts)} conflicts from chunk {chunk_idx + 1} JSON array (backwards compatibility, Additional counter: {global_additional_counter})")
+                        chunks_with_json += 1
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse JSON from chunk {chunk_idx + 1}, trying regex extraction: {e}")
+                    # Fallback: try regex extraction (backwards compatibility)
+                    json_match = re.search(r'\[[\s\S]*\]', chunk_content)
+                    if json_match:
+                        try:
+                            json_str = json_match.group(0)
+                            chunk_conflicts = json.loads(json_str)
+                            if isinstance(chunk_conflicts, list):
+                                merged_json_conflicts.extend(chunk_conflicts)
+                                chunks_with_json += 1
+                        except json.JSONDecodeError:
+                            pass
             
-            # If we successfully found and merged JSON arrays, create a single valid JSON string
+            # If we successfully found and merged JSON, create a single valid JSON object
             if chunks_with_json > 0:
-                # Always output valid JSON array, even if empty
-                merged_content = json.dumps(merged_json_conflicts, indent=2, ensure_ascii=False)
-                logger.info(f"Successfully merged {len(merged_json_conflicts)} total conflicts from {chunks_with_json} chunks into single JSON array")
+                # Combine explanations from all chunks
+                combined_explanation = " ".join(chunk_explanations) if chunk_explanations else "Analysis completed across multiple document sections."
+                
+                # Create final JSON object with explanation and conflicts
+                merged_content = json.dumps({
+                    "explanation": combined_explanation,
+                    "conflicts": merged_json_conflicts
+                }, indent=2, ensure_ascii=False)
+                
+                logger.info(f"Successfully merged {len(merged_json_conflicts)} total conflicts from {chunks_with_json} chunks into single JSON object")
+                if chunk_explanations:
+                    logger.info(f"=== COMBINED EXPLANATION FROM ALL CHUNKS ===")
+                    logger.info(f"{combined_explanation}")
+                    logger.info(f"=== END COMBINED EXPLANATION ===")
             else:
                 # Fallback: if no JSON found, merge as text (backwards compatibility)
                 merged_content = "\n\n--- ANALYSIS CONTINUED FROM NEXT SECTION ---\n\n".join(all_content)
-                logger.warning("No JSON arrays found in chunks, using text merge fallback")
+                logger.warning("No JSON found in chunks, using text merge fallback")
             
             # Log final summary
             total_conflicts = len(all_conflicts)
