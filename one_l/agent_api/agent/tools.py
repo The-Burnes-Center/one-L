@@ -616,8 +616,9 @@ def redline_document(
                 except Exception as cleanup_error:
                     logger.error(f"Session cleanup error during no conflicts check: {cleanup_error}")
             return {
-                "success": False,
-                "error": "No conflicts found in analysis data for redlining",
+                "success": True,
+                "no_conflicts": True,
+                "message": "No conflicts found in analysis data for redlining",
                 "cleanup_performed": cleanup_result is not None,
                 "cleanup_result": cleanup_result
             }
@@ -673,8 +674,9 @@ def redline_document(
                 except Exception as cleanup_error:
                     logger.error(f"Session cleanup error during unexpected no conflicts check: {cleanup_error}")
             return {
-                "success": False,
-                "error": "No conflicts found in analysis data for redlining",
+                "success": True,
+                "no_conflicts": True,
+                "message": "No conflicts found in analysis data for redlining",
                 "cleanup_performed": cleanup_result is not None,
                 "cleanup_result": cleanup_result
             }

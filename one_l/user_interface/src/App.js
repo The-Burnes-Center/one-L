@@ -1020,19 +1020,20 @@ const SessionWorkspace = ({ session }) => {
           matched = true;
           const redlinedSuccess = data.redlined_document && data.redlined_document.success;
           const redlinedDoc = data.redlined_document?.redlined_document;
-          const hasRedline = redlinedSuccess && redlinedDoc;
+          const hasNoConflicts = data.redlined_document?.no_conflicts === true;
+          const hasRedline = redlinedSuccess && redlinedDoc && !hasNoConflicts;
           
           return {
             ...doc,
             status: redlinedSuccess ? 'completed' : 'failed',
             progress: 100,
             success: redlinedSuccess,
-            redlinedDocument: redlinedDoc || doc.redlinedDocument,
+            redlinedDocument: hasNoConflicts ? undefined : (redlinedDoc || doc.redlinedDocument),
             analysis: data.analysis_id || doc.analysis,
             processing: false,
             error: redlinedSuccess ? undefined : (data.redlined_document?.error || 'Failed to generate redlined document'),
             message: redlinedSuccess 
-              ? (hasRedline ? 'Document processing completed' : 'No conflicts detected')
+              ? (hasNoConflicts || !hasRedline ? 'No conflicts detected' : 'Document processing completed')
               : 'Document processing failed'
           };
         }
@@ -1040,6 +1041,8 @@ const SessionWorkspace = ({ session }) => {
       });
       if (!matched && data.redlined_document && data.redlined_document.success) {
         const jobMeta = activeJobsRef.current[job_id];
+        const hasNoConflicts = data.redlined_document.no_conflicts === true || 
+                               (!data.redlined_document.redlined_document && data.redlined_document.success);
         updatedDocs.push({
           originalFile: jobMeta?.vendorFile ? { ...jobMeta.vendorFile } : { filename: `Document for job ${job_id}` },
           redlinedDocument: data.redlined_document.redlined_document,
@@ -1048,7 +1051,8 @@ const SessionWorkspace = ({ session }) => {
           processing: false,
           jobId: job_id,
           status: 'completed',
-          progress: 100
+          progress: 100,
+          message: hasNoConflicts ? 'No conflicts detected' : 'Document processing completed'
         });
       }
       const stillProcessing = updatedDocs.some(doc => doc.processing === true || doc.status === 'processing');
@@ -1685,11 +1689,17 @@ const SessionWorkspace = ({ session }) => {
           if (isCurrentSession()) {
             setProcessingPhase('generating', `Generating redlined document for ${vendorFile.filename}. Please stand by.`);
           }
+            // Check if this is a "no conflicts" case (success but no redlined document)
+            const hasNoConflicts = reviewResponse.redlined_document.no_conflicts === true || 
+                                   (!reviewResponse.redlined_document.redlined_document && reviewResponse.redlined_document.success);
             redlineResults.push({
               originalFile: vendorFile,
               redlinedDocument: reviewResponse.redlined_document.redlined_document,
               analysis: reviewResponse.analysis,
               success: true,
+              status: 'completed',
+              processing: false,
+              message: hasNoConflicts ? 'No conflicts detected' : 'Document processing completed',
               termsProfile: termsProfileForRun
             });
           } else if (reviewResponse.processing) {
@@ -1702,12 +1712,31 @@ const SessionWorkspace = ({ session }) => {
               termsProfile: termsProfileForRun
             });
           } else {
-            redlineResults.push({
-              originalFile: vendorFile,
-              error: reviewResponse.redlined_document?.error || reviewResponse.error || 'Unknown error',
-              success: false,
-              termsProfile: termsProfileForRun
-            });
+            // Check if this is actually a "no conflicts" case that was returned as an error
+            const errorMessage = reviewResponse.redlined_document?.error || reviewResponse.error || '';
+            const isNoConflictsCase = errorMessage.toLowerCase().includes('no conflicts found') ||
+                                      reviewResponse.redlined_document?.no_conflicts === true;
+            
+            if (isNoConflictsCase) {
+              // Treat as success with no conflicts
+              redlineResults.push({
+                originalFile: vendorFile,
+                analysis: reviewResponse.analysis,
+                success: true,
+                status: 'completed',
+                processing: false,
+                message: 'No conflicts detected',
+                termsProfile: termsProfileForRun
+              });
+            } else {
+              // Actual error case
+              redlineResults.push({
+                originalFile: vendorFile,
+                error: errorMessage || 'Unknown error',
+                success: false,
+                termsProfile: termsProfileForRun
+              });
+            }
           }
         } catch (error) {
           if (error.message.includes('timeout') || error.message.includes('504') || error.message.includes('502') || 
@@ -1748,7 +1777,8 @@ const SessionWorkspace = ({ session }) => {
         }
       }
       
-      const successfulResults = redlineResults.filter(r => r.success);
+      const successfulResults = redlineResults.filter(r => r.success && r.redlinedDocument);
+      const noConflictsResults = redlineResults.filter(r => r.success && !r.redlinedDocument);
       const failedResults = redlineResults.filter(r => !r.success && !r.processing);
       const processingResults = redlineResults.filter(r => r.processing);
       hasProcessingResults = processingResults.length > 0;
@@ -1764,16 +1794,40 @@ const SessionWorkspace = ({ session }) => {
       });
       updateGlobalProcessingFlag(sessionIdAtStart, hasProcessingResults);
       
-      if (successfulResults.length > 0) {
-        let message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
-        if (processingResults.length > 0) {
-          message += ` ${processingResults.length} document(s) are still processing in background.`;
-        }
-        if (failedResults.length > 0) {
-          message += ` ${failedResults.length} failed.`;
-        }
-        if (successfulResults.length > 0) {
+      if (successfulResults.length > 0 || noConflictsResults.length > 0) {
+        let message = '';
+        if (successfulResults.length > 0 && noConflictsResults.length === 0) {
+          // All successful with redlines
+          message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
+          if (processingResults.length > 0) {
+            message += ` ${processingResults.length} document(s) are still processing in background.`;
+          }
+          if (failedResults.length > 0) {
+            message += ` ${failedResults.length} failed.`;
+          }
           message += ' Scroll down to download completed documents.';
+        } else if (noConflictsResults.length > 0 && successfulResults.length === 0) {
+          // All no conflicts
+          if (noConflictsResults.length === 1) {
+            message = 'Document analysis completed. No conflicts were detected, so no redlined document was generated.';
+          } else {
+            message = `Document analysis completed. No conflicts were detected in any documents, so no redlined documents were generated.`;
+          }
+        } else {
+          // Mixed: some with redlines, some no conflicts
+          message = `Successfully generated ${successfulResults.length} redlined document(s)!`;
+          if (noConflictsResults.length > 0) {
+            message += ` ${noConflictsResults.length} document(s) had no conflicts.`;
+          }
+          if (processingResults.length > 0) {
+            message += ` ${processingResults.length} document(s) are still processing in background.`;
+          }
+          if (failedResults.length > 0) {
+            message += ` ${failedResults.length} failed.`;
+          }
+          if (successfulResults.length > 0) {
+            message += ' Scroll down to download completed documents.';
+          }
         }
         if (isCurrentSession()) {
           if (processingResults.length === 0) {
@@ -2489,20 +2543,32 @@ const SessionWorkspace = ({ session }) => {
                   </div>
                   {result.success ? (
                     <div>
-                      <button
-                        onClick={() => handleDownloadRedlined(result)}
-                        style={{
-                          background: '#28a745',
-                          color: 'white',
-                          border: 'none',
-                          padding: '6px 12px',
+                      {result.redlinedDocument ? (
+                        <button
+                          onClick={() => handleDownloadRedlined(result)}
+                          style={{
+                            background: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '14px'
+                          }}
+                        >
+                          Download Redlined Document
+                        </button>
+                      ) : (
+                        <div style={{ 
+                          padding: '8px', 
+                          background: '#d4edda', 
                           borderRadius: '4px',
-                          cursor: 'pointer',
+                          color: '#155724',
                           fontSize: '14px'
-                        }}
-                      >
-                        Download Redlined Document
-                      </button>
+                        }}>
+                          ✓ No conflicts found in this document
+                        </div>
+                      )}
                       
                       {result.analysis && (
                         <div style={{ 
