@@ -767,11 +767,32 @@ const SessionWorkspace = ({ session }) => {
             (typeof doc?.progress === 'number' && doc.progress < 100)
           );
 
-          const completionMessage = hasProcessingDocs
-            ? (sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.')
-            : 'Document processing completed successfully!';
-
-          const completionMessageType = hasProcessingDocs ? 'progress' : 'success';
+          // Check for no conflicts case when processing is complete
+          let completionMessage;
+          let completionMessageType;
+          if (hasProcessingDocs) {
+            completionMessage = sessionData?.workflowMessage || stageMessages.generating || 'Processing documents. Please stand by.';
+            completionMessageType = 'progress';
+          } else {
+            // Processing is complete - check if there are no conflicts
+            const completedDocs = latestRedlinedDocs.filter(doc => !doc.processing && (doc.status === 'completed' || doc.success === true));
+            const successfulDocs = completedDocs.filter(doc => doc.success === true && doc.redlinedDocument);
+            const noConflictsDocs = completedDocs.filter(doc => doc.success === true && !doc.redlinedDocument);
+            
+            if (noConflictsDocs.length > 0 && successfulDocs.length === 0) {
+              // All documents completed but no conflicts found
+              if (noConflictsDocs.length === 1) {
+                completionMessage = 'Document analysis completed. No conflicts were detected, so no redlined document was generated.';
+              } else {
+                completionMessage = `Document analysis completed. No conflicts were detected in any documents, so no redlined documents were generated.`;
+              }
+              completionMessageType = 'success';
+            } else {
+              // Use existing workflowMessage if available, otherwise default success message
+              completionMessage = sessionData?.workflowMessage || 'Document processing completed successfully!';
+              completionMessageType = 'success';
+            }
+          }
 
           persistSessionState(session.session_id, {
             redlinedDocuments: latestRedlinedDocs,
@@ -2321,7 +2342,7 @@ const SessionWorkspace = ({ session }) => {
           const activeStage = stageOrder.find(stage => stage.key === activeStageKey);
           const fallbackMessage = activeStage ? stageMessages[activeStage.key] : '';
           const displayMessage = isCompleted
-            ? 'Document processing completed successfully!'
+            ? (workflowMessage || 'Document processing completed successfully!')
             : (workflowMessage || fallbackMessage || 'Please stand by while we process your documents.');
           const showSpinner = !isCompleted;
 
