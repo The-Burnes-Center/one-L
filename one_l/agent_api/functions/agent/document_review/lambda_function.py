@@ -315,29 +315,37 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         except Exception as notify_error:
                             logger.error(f"Failed to send timeout notification: {notify_error}")
                         
-                        # Cleanup session documents
+                        # Cleanup session documents (critical - must complete before Lambda times out)
                         if session_id and user_id:
                             try:
                                 from agent_api.agent.tools import _cleanup_session_documents
+                                # Cleanup is synchronous and should complete within the 2-minute buffer
+                                # If it fails, log error but don't block timeout notification
                                 cleanup_result = _cleanup_session_documents(session_id, user_id)
-                                logger.info(f"Timeout cleanup completed: {cleanup_result}")
+                                if cleanup_result.get('success'):
+                                    logger.info(f"Timeout cleanup completed successfully: {cleanup_result.get('message', '')}")
+                                else:
+                                    logger.error(f"Timeout cleanup failed: {cleanup_result.get('error', 'Unknown error')}")
+                                    # Note: Documents may not be deleted, but timeout notification was sent
                             except Exception as cleanup_error:
-                                logger.error(f"Timeout cleanup error: {cleanup_error}")
+                                logger.error(f"Timeout cleanup error (documents may not be deleted): {cleanup_error}")
+                                # Continue - timeout notification already sent, cleanup failure is logged
                     else:
                         # Cleanup already triggered (likely by successful completion)
                         logger.info(f"Timeout handler skipped - cleanup already triggered for job {job_id}")
                 
-                # Schedule cleanup 1 minute before timeout (14 minutes = 840 seconds)
+                # Schedule cleanup 2 minutes before timeout (13 minutes) to ensure cleanup completes
                 # Only set up timer if context is available
                 if context and hasattr(context, 'get_remaining_time_in_millis'):
-                    # Calculate remaining time and schedule cleanup 60 seconds before timeout
+                    # Calculate remaining time and schedule cleanup 120 seconds before timeout
+                    # This gives us 2 minutes buffer to ensure cleanup completes before Lambda is killed
                     remaining_ms = context.get_remaining_time_in_millis()
                     remaining_seconds = remaining_ms / 1000.0
-                    cleanup_delay = max(60.0, remaining_seconds - 60.0)  # At least 60 seconds before timeout
+                    cleanup_delay = max(120.0, remaining_seconds - 120.0)  # At least 120 seconds before timeout
                     timeout_timer = threading.Timer(cleanup_delay, timeout_cleanup_handler)
                     timeout_timer.daemon = True
                     timeout_timer.start()
-                    logger.info(f"Scheduled timeout cleanup in {cleanup_delay} seconds")
+                    logger.info(f"Scheduled timeout cleanup in {cleanup_delay} seconds (2 minutes before Lambda timeout)")
                 
                 # Clear knowledge base cache for fresh document review session
                 from agent_api.agent.tools import clear_knowledge_base_cache

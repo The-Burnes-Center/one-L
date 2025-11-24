@@ -1519,8 +1519,6 @@ const SessionWorkspace = ({ session }) => {
             }
 
             if (finalResult?.processing === false) {
-              const jobId = reviewResponse.job_id;
-              
               const transformedEntry = {
                 ...processingEntry,
                 processing: false,
