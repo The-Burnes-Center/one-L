@@ -1,0 +1,593 @@
+{
+  "overview": {
+    "description": "One-L is an AI-powered legal document review tool that uses AWS Bedrock (Claude 4 Sonnet) with a RAG knowledge base to compare vendor contracts against Massachusetts requirements and produce conflict JSON + redlined documents.",
+    "main_technologies": [
+      "AWS Bedrock (Claude 4 Sonnet)",
+      "AWS Bedrock Knowledge Base",
+      "OpenSearch Serverless",
+      "Amazon Titan Embeddings",
+      "AWS Lambda (Python 3.12)",
+      "API Gateway (REST + WebSocket)",
+      "React",
+      "AWS CDK",
+      "DynamoDB",
+      "S3",
+      "AWS Cognito"
+    ],
+    "high_level_flow": "Vendor uploads document via React frontend → File stored in S3 agent_processing bucket → Frontend calls /agent/review API Gateway endpoint → Lambda function (document_review) receives request → Agent.review_document() called → Model.review_document() attaches document to Claude 4 Sonnet via Converse API with system prompt → Claude makes tool calls to retrieve_from_knowledge_base (6-12 queries) → Knowledge base searches OpenSearch Serverless vector DB → Results returned to Claude → Claude analyzes and outputs JSON conflict object → JSON parsed and validated → Agent.create_redlined_document() called → Tools.redline_document() applies redlines to DOCX/PDF → Redlined document saved to S3 → Results saved to DynamoDB → WebSocket notifications sent → Frontend polls/streams for completion → User downloads redlined document"
+  },
+  "backend": {
+    "runtime_environment": "Python 3.12 (Lambda functions)",
+    "entrypoints": [
+      {
+        "name": "document_review",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/agent/document_review/lambda_function.py",
+        "description": "Main Lambda function for AI-powered document review. Handles vendor document analysis, orchestrates Agent workflow, manages job status tracking, and sends WebSocket notifications.",
+        "trigger": "API Gateway POST /agent/review",
+        "called_by_frontend_routes": [
+          "/session/:sessionId (VendorSubmission component triggers review)"
+        ]
+      },
+      {
+        "name": "upload_to_s3",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/knowledge_management/upload_to_s3/lambda_function.py",
+        "description": "Generates presigned URLs for S3 uploads and handles file uploads to knowledge/user_documents/agent_processing buckets.",
+        "trigger": "API Gateway POST /knowledge_management/upload",
+        "called_by_frontend_routes": [
+          "/ (FileUpload component)",
+          "/session/:sessionId (VendorSubmission component)"
+        ]
+      },
+      {
+        "name": "retrieve_from_s3",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/knowledge_management/retrieve_from_s3/lambda_function.py",
+        "description": "Retrieves files from S3 buckets, optionally returning file content as base64.",
+        "trigger": "API Gateway GET/POST /knowledge_management/retrieve",
+        "called_by_frontend_routes": [
+          "/session/:sessionId (download flow)"
+        ]
+      },
+      {
+        "name": "session_management",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/knowledge_management/session_management/lambda_function.py",
+        "description": "Manages user sessions: create, list, update, delete sessions. Tracks session state and analysis results.",
+        "trigger": "API Gateway GET/POST/PUT/DELETE /knowledge_management/sessions",
+        "called_by_frontend_routes": [
+          "/ (SessionSidebar component)",
+          "/session/:sessionId (session operations)"
+        ]
+      },
+      {
+        "name": "websocket_connect",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/websocket/connect/lambda_function.py",
+        "description": "Handles WebSocket connection establishment, stores connection info in DynamoDB.",
+        "trigger": "WebSocket API $connect route",
+        "called_by_frontend_routes": [
+          "WebSocket connection (websocket.js service)"
+        ]
+      },
+      {
+        "name": "websocket_disconnect",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/websocket/disconnect/lambda_function.py",
+        "description": "Handles WebSocket disconnection, cleans up connection records from DynamoDB.",
+        "trigger": "WebSocket API $disconnect route",
+        "called_by_frontend_routes": [
+          "WebSocket disconnection (websocket.js service)"
+        ]
+      },
+      {
+        "name": "websocket_notification",
+        "type": "lambda",
+        "file_path": "one_l/agent_api/functions/websocket/notification/lambda_function.py",
+        "description": "Sends notifications to WebSocket clients for job progress updates.",
+        "trigger": "Invoked asynchronously by document_review Lambda",
+        "called_by_frontend_routes": [
+          "WebSocket message handlers (websocket.js service)"
+        ]
+      }
+    ],
+    "api_routes": [
+      {
+        "method": "POST",
+        "path": "/agent/review",
+        "handler_file": "one_l/agent_api/functions/agent/document_review/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Initiates AI document review. Returns immediately with job_id for async processing. Processes document with Claude 4 Sonnet, generates redlined document, saves results to DynamoDB, sends WebSocket notifications."
+      },
+      {
+        "method": "POST",
+        "path": "/knowledge_management/upload",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/upload_to_s3/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Generates presigned URLs for S3 uploads. Used in upload phase to store vendor documents and knowledge base files."
+      },
+      {
+        "method": "GET",
+        "path": "/knowledge_management/retrieve",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/retrieve_from_s3/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Retrieves file metadata or content from S3. Used in download phase to fetch redlined documents."
+      },
+      {
+        "method": "POST",
+        "path": "/knowledge_management/retrieve",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/retrieve_from_s3/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Same as GET but accepts request body. Used for file retrieval with content return."
+      },
+      {
+        "method": "DELETE",
+        "path": "/knowledge_management/delete",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/delete_from_s3/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Deletes files from S3 buckets. Used for cleanup operations."
+      },
+      {
+        "method": "POST",
+        "path": "/knowledge_management/sync",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/sync_knowledge_base/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Manually triggers Knowledge Base sync job to ingest new documents from S3 data sources into vector database."
+      },
+      {
+        "method": "GET",
+        "path": "/knowledge_management/sessions",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/session_management/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Lists user sessions or gets session details. Used throughout frontend for session management."
+      },
+      {
+        "method": "POST",
+        "path": "/knowledge_management/sessions",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/session_management/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Creates new session or performs session actions (create, metrics, job_status, session_results)."
+      },
+      {
+        "method": "PUT",
+        "path": "/knowledge_management/sessions",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/session_management/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Updates session (e.g., title update)."
+      },
+      {
+        "method": "DELETE",
+        "path": "/knowledge_management/sessions",
+        "handler_file": "one_l/agent_api/functions/knowledge_management/session_management/lambda_function.py",
+        "handler_function": "lambda_handler",
+        "summary": "Deletes a session."
+      }
+    ]
+  },
+  "rag_pipeline": {
+    "uses_bedrock_or_other_llm": "AWS Bedrock Converse API is used to call Claude 4 Sonnet (us.anthropic.claude-sonnet-4-20250514-v1:0) with document attachments. The model makes tool calls to retrieve_from_knowledge_base which queries AWS Bedrock Knowledge Base. Knowledge Base uses Amazon Titan Embed Text v2 for embeddings and OpenSearch Serverless for vector search. The RAG flow: Claude requests retrieval → retrieve_from_knowledge_base tool → Bedrock Knowledge Base Retrieve API → OpenSearch Serverless vector search → Results returned to Claude for analysis.",
+    "rag_implementation_files": [
+      {
+        "file_path": "one_l/agent_api/agent/tools.py",
+        "description": "Contains retrieve_from_knowledge_base() function that implements RAG retrieval. Handles query optimization, result filtering, deduplication, chunking, and caching. Called by Claude via tool calling.",
+        "key_functions": [
+          {
+            "name": "retrieve_from_knowledge_base",
+            "purpose": "Main RAG retrieval function. Queries Bedrock Knowledge Base Retrieve API, filters results by relevance, deduplicates, chunks large content, and returns optimized results to Claude.",
+            "called_from": "one_l/agent_api/agent/model.py:_handle_tool_calls() when Claude requests tool_use with name 'retrieve_from_knowledge_base'"
+          },
+          {
+            "name": "_filter_and_prioritize_results",
+            "purpose": "Filters and prioritizes retrieval results by relevance score, removes duplicates, limits to optimal result count.",
+            "called_from": "retrieve_from_knowledge_base()"
+          },
+          {
+            "name": "_chunk_content_intelligently",
+            "purpose": "Splits large retrieved content into semantic chunks preserving sentence boundaries for better context management.",
+            "called_from": "retrieve_from_knowledge_base()"
+          }
+        ]
+      },
+      {
+        "file_path": "one_l/agent_api/agent/model.py",
+        "description": "Contains Model class that orchestrates Claude API calls with tool support. Handles document attachment, tool calling, and response processing.",
+        "key_functions": [
+          {
+            "name": "_call_claude_with_tools",
+            "purpose": "Calls AWS Bedrock Converse API with Claude 4 Sonnet, system prompt, document attachments, and tool definitions. Handles throttling with exponential backoff.",
+            "called_from": "Model.review_document() and Model._handle_tool_calls()"
+          },
+          {
+            "name": "_handle_tool_calls",
+            "purpose": "Processes tool use requests from Claude, executes retrieve_from_knowledge_base, and continues conversation with tool results.",
+            "called_from": "_call_claude_with_tools() when stopReason is 'tool_use'"
+          }
+        ]
+      },
+      {
+        "file_path": "one_l/agent_api/knowledge_base/knowledge_base.py",
+        "description": "CDK construct that creates AWS Bedrock Knowledge Base infrastructure with OpenSearch Serverless backend and Titan embeddings.",
+        "key_functions": []
+      }
+    ],
+    "knowledge_base": {
+      "type": "Bedrock KB",
+      "index_or_collection_names": [
+        "knowledge-base-index (OpenSearch Serverless vector index)"
+      ],
+      "document_types": [
+        "Massachusetts Operational Services Division Request for Response (RFR)",
+        "Massachusetts ITS Terms and Conditions",
+        "Commonwealth Exhibits",
+        "EOTSS Security Policies",
+        "Massachusetts procurement regulations",
+        "State-specific requirements"
+      ],
+      "how_retrieval_is_called": "Retrieval is called via tool calling: Claude requests retrieve_from_knowledge_base tool → Model._handle_tool_calls() in model.py executes → calls retrieve_from_knowledge_base() in tools.py → uses boto3 bedrock-agent-runtime client → calls retrieve() API with knowledge_base_id, retrieval_query, and max_results → Bedrock Knowledge Base performs vector search in OpenSearch Serverless → returns results with text, metadata, and relevance scores → results filtered, deduplicated, and chunked → returned to Claude as tool result → Claude continues analysis with retrieved context.",
+      "max_chunks_or_tokens_per_request": "MAX_CHUNK_SIZE = 3000 tokens per chunk (tools.py line 101). OPTIMAL_RESULTS_PER_QUERY = 50 results (tools.py line 103). Default max_results = 50 per retrieve call (tools.py line 210). Chunking uses 300 tokens max with 20% overlap (knowledge_base.py lines 166-168)."
+    },
+    "llm_call_pattern": {
+      "number_of_llm_calls_per_analysis": "Multiple sequential calls: 1 initial call with document attachment → N tool calls (6-12 retrieve_from_knowledge_base calls as per system prompt) → 1 final call with tool results. For large documents (>100 paragraphs), document is chunked and each chunk gets separate LLM calls (model.py lines 444-446).",
+      "streaming_or_batch": "Batch mode - Converse API returns complete responses. No streaming implemented. Responses include thinking content when enabled.",
+      "where_the_prompt_is_defined": [
+        {
+          "file_path": "one_l/agent_api/agent/system_prompt.py",
+          "variable_name": "SYSTEM_PROMPT",
+          "description": "Main system prompt that instructs Claude to analyze vendor documents, make 6-12 comprehensive queries, identify conflicts, and output JSON. Includes detailed methodology for document structure analysis, query construction, conflict detection, and output format requirements."
+        },
+        {
+          "file_path": "one_l/agent_api/agent/model.py",
+          "variable_name": "instruction_text",
+          "description": "User instruction appended to document attachment. For regular documents: 'Please analyze this vendor submission document completely...'. For chunked documents: includes chunk-specific instructions with Additional-[#] counter context (lines 433, 586)."
+        }
+      ]
+    }
+  },
+  "prompting": {
+    "system_prompt": {
+      "file_path": "one_l/agent_api/agent/system_prompt.py",
+      "variable_name": "SYSTEM_PROMPT",
+      "full_or_key_excerpt": "**CRITICAL OUTPUT REQUIREMENT - READ THIS FIRST:**\nYour response MUST be ONLY a JSON object with \"explanation\" and \"conflicts\" fields. NO explanatory text, NO markdown, NO code blocks, NO commentary.\nIf conflicts found, output: {\"explanation\": \"justification/explanation in the form of text so the model can give more context\", \"conflicts\": [{\"clarification_id\": \"...\", \"vendor_quote\": \"...\", \"summary\": \"...\", \"source_doc\": \"...\", \"clause_ref\": \"...\", \"conflict_type\": \"...\", \"rationale\": \"...\"}]}\nIf NO conflicts found, output: {\"explanation\": \"justification/explanation in the form of text so the model can give more context\", \"conflicts\": []}\nStart your response with { and end with }. Nothing else.\n\nYou are a Legal-AI Contract Analysis Assistant that identifies ALL material conflicts between vendor contract language and Massachusetts state requirements.\n\n## CRITICAL METHODOLOGY: DOCUMENT STRUCTURE-DRIVEN ANALYSIS\n\nSuccess is measured by finding ALL conflicts through intelligent, structure-aware querying that adapts to how the vendor organized their exceptions.\n\n## WORKFLOW\n\n### STEP 1: ANALYZE VENDOR DOCUMENT STRUCTURE\nFirst, map the ENTIRE vendor document structure:\n- Identify ALL document sections (every heading, exhibit, attachment, appendix)\n- Determine which Massachusetts documents they reference (T&Cs, ITS Terms, RFR, etc.)\n- Count total sections to ensure you'll have 6-12 queries minimum\n- Note patterns in how vendor organized their exceptions\n- Extract exact vendor language for each exception (copy verbatim)\n\n**ADAPTIVE ZONE MAPPING:**\nBased on the vendor's actual document structure, divide into 8-15 distinct zones:\n- Each zone should represent a logical grouping of related exceptions\n- Zones can be based on:\n  - Document sections (if vendor organized by source docs)\n  - Topic areas (if vendor organized by subject matter)\n  - Risk categories (if vendor mixed different topics)\n  - State-specific sections (if multiple states involved)\n  - Technical vs. legal vs. financial groupings\n  \n**Don't force a pattern - adapt to what the vendor actually provided.**\n\n**DOCUMENTS TO CHECK AGAINST:**\nYour queries must comprehensively search for conflicts with:\n- Massachusetts Operational Services Division Request for Response (RFR) \n- Massachusetts ITS Terms and Conditions\n- All Commonwealth Exhibits\n- Massachusetts procurement regulations\n- State-specific requirements\n- Any other documents referenced in vendor submission\n\n**CRITICAL**: Vendors often place their most problematic exceptions in later sections, appendices, or state-specific attachments. You MUST analyze the ENTIRE document, creating queries that collectively cover every section where vendor provided input.\n\n### STEP 2: INTELLIGENT STRUCTURE-BASED QUERYING\n\n**CRITICAL REQUIREMENT: 6-12 COMPREHENSIVE, NON-REPETITIVE QUERIES**\nYou MUST create 6-12 distinct queries minimum that collectively cover EVERY section of the vendor document. Each query must be unique and non-overlapping to maximize coverage.",
+      "notes": "System prompt is passed to Claude via Converse API system parameter (model.py line 901). Used in all document review calls. Instructs Claude to make 6-12 queries, adapt to document structure, identify conflicts, and output strict JSON format."
+    },
+    "additional_prompts": [
+      {
+        "purpose": "Document review instruction",
+        "file_path": "one_l/agent_api/agent/model.py",
+        "variable_name": "instruction_text",
+        "summary": "User instruction for document analysis: 'Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields.'"
+      },
+      {
+        "purpose": "Chunked document analysis instruction",
+        "file_path": "one_l/agent_api/agent/model.py",
+        "variable_name": "instruction_text (in _review_document_chunked)",
+        "summary": "Chunk-specific instruction: 'Analyze this vendor submission section (approximately pages X-Y) for MATERIAL conflicts... Focus on issues that have real business or legal impact... Output ONLY a JSON object with 'explanation' and 'conflicts' fields.' Includes Additional-[#] counter context for sequential conflict numbering across chunks."
+      }
+    ]
+  },
+  "conflict_json_and_postprocessing": {
+    "expects_strict_json": "true - System prompt explicitly requires JSON-only output with no markdown, no code blocks, no explanatory text. Code enforces this via _extract_json_only() function that strips non-JSON content using regex and bracket matching.",
+    "schema_definition_location": [
+      {
+        "file_path": "one_l/agent_api/agent/system_prompt.py",
+        "description": "JSON schema defined in system prompt as example structure: {\"explanation\": \"...\", \"conflicts\": [{\"clarification_id\": \"...\", \"vendor_quote\": \"...\", \"summary\": \"...\", \"source_doc\": \"...\", \"clause_ref\": \"...\", \"conflict_type\": \"...\", \"rationale\": \"...\"}]}"
+      },
+      {
+        "file_path": "one_l/agent_api/agent/tools.py",
+        "description": "parse_conflicts_for_redlining() function (line 775) parses JSON and extracts conflicts array. Handles both new format (object with explanation/conflicts) and old format (array only) for backwards compatibility."
+      }
+    ],
+    "parsing_logic": [
+      {
+        "file_path": "one_l/agent_api/agent/model.py",
+        "function_name": "_extract_json_only",
+        "responsibility": "Extracts JSON object or array from response content, stripping any explanatory text. Prioritizes new format (object with explanation/conflicts) over old format (array). Uses regex and bracket matching to find valid JSON."
+      },
+      {
+        "file_path": "one_l/agent_api/agent/tools.py",
+        "function_name": "parse_conflicts_for_redlining",
+        "responsibility": "Parses analysis_data JSON string, extracts conflicts array, validates conflict structure, normalizes fields (vendor_quote, summary, source_doc, etc.), handles backwards compatibility with array-only format."
+      },
+      {
+        "file_path": "one_l/agent_api/agent/tools.py",
+        "function_name": "save_analysis_to_dynamodb",
+        "responsibility": "Saves parsed conflicts and analysis data to DynamoDB. Extracts conflicts from JSON, normalizes analysis_data, stores with metadata (analysis_id, timestamp, document_s3_key, session_id, user_id, redlined_document_s3_key)."
+      }
+    ]
+  },
+  "redline_generation": {
+    "implementation_files": [
+      {
+        "file_path": "one_l/agent_api/agent/tools.py",
+        "description": "Main redlining implementation. Handles both DOCX and PDF documents. For DOCX: uses python-docx to apply red strikethrough formatting and comments. For PDF: uses PDF processor (PyMuPDF) to add annotations. Applies conflicts to original vendor document by finding matching text and highlighting in red.",
+        "key_functions": [
+          {
+            "name": "redline_document",
+            "purpose": "Main redlining function. Parses conflicts from analysis_data, downloads original document from S3, applies redlines using exact sentence matching, saves redlined document to S3 agent_processing bucket.",
+            "inputs": "analysis_data (JSON string), document_s3_key, bucket_type, session_id, user_id",
+            "outputs": "Dict with success status and redlined_document S3 key"
+          },
+          {
+            "name": "apply_exact_sentence_redlining",
+            "purpose": "Applies redlines to DOCX document using multi-tier search strategy: exact match → case-insensitive → normalized → fuzzy → tokenized matching. Processes both paragraphs and tables. Adds red strikethrough formatting and comments to conflict text.",
+            "inputs": "doc (python-docx Document), redline_items (list of conflict dicts)",
+            "outputs": "Dict with matches_found count and failed_matches list"
+          },
+          {
+            "name": "_redline_pdf_document",
+            "purpose": "Handles PDF redlining using annotation-based approach. Finds text in PDF using fuzzy matching, creates redlined PDF with annotations, saves to S3.",
+            "inputs": "agent_processing_bucket, agent_document_key, redline_items, document_s3_key, session_id, user_id",
+            "outputs": "Dict with success status and redlined_document S3 key"
+          }
+        ]
+      }
+    ],
+    "document_formats_supported": [
+      "docx",
+      "pdf",
+      "txt (via DOCX conversion)"
+    ]
+  },
+  "realtime_updates": {
+    "transport": "WebSocket via API Gateway WebSocket API",
+    "server_side_implementation": [
+      {
+        "file_path": "one_l/agent_api/functions/websocket/notification/lambda_function.py",
+        "description": "Lambda function that sends WebSocket notifications. Reads connection records from DynamoDB, sends messages to connected clients via API Gateway Management API.",
+        "event_types": [
+          "job_progress (status: analyzing, generating_redline)",
+          "job_completed (status: completed)",
+          "connection_established"
+        ]
+      },
+      {
+        "file_path": "one_l/agent_api/functions/agent/document_review/lambda_function.py",
+        "description": "Document review Lambda invokes notification function asynchronously at key stages: when analysis starts (analyzing, progress: 25%), when redline generation starts (generating_redline, progress: 75%), and when job completes (completed).",
+        "event_types": [
+          "UPLOAD_RECEIVED (implicit via job_id creation)",
+          "ANALYSIS_STARTED (status: analyzing)",
+          "LLM_CALL_IN_PROGRESS (status: analyzing)",
+          "CONFLICTS_READY (status: generating_redline)",
+          "REDLINE_READY (status: completed)",
+          "ERROR (status: failed)"
+        ]
+      }
+    ],
+    "frontend_consumption": [
+      {
+        "file_path": "one_l/user_interface/src/services/websocket.js",
+        "component_name": "WebSocketService",
+        "description": "WebSocket service singleton that manages connection lifecycle, subscribes to job/session updates, handles reconnection, and routes messages to registered handlers. Connects to WebSocket API, subscribes to job_id or session_id for updates."
+      },
+      {
+        "file_path": "one_l/user_interface/src/App.js",
+        "component_name": "SessionWorkspace",
+        "description": "React component that uses WebSocket service to subscribe to job updates. Registers message handlers for 'job_progress' and 'job_completed' types. Updates UI state (progress, status) based on WebSocket messages. Also polls DynamoDB via sessionAPI.checkJobStatus() as fallback."
+      }
+    ]
+  },
+  "data_storage": {
+    "s3": {
+      "buckets": [
+        {
+          "name_or_pattern": "{stack-name}-knowledge-source",
+          "purpose": "Stores reference documents (MA requirements, T&Cs, RFR, Exhibits) for Knowledge Base ingestion"
+        },
+        {
+          "name_or_pattern": "{stack-name}-user-documents",
+          "purpose": "Stores user-uploaded knowledge base files (admin uploads)"
+        },
+        {
+          "name_or_pattern": "{stack-name}-agent-processing",
+          "purpose": "Stores vendor submission documents and generated redlined documents. Organized by session_id/user_id prefixes."
+        }
+      ]
+    },
+    "dynamodb": {
+      "tables": [
+        {
+          "name": "{stack-name}-analysis-results",
+          "file_defining_schema": "one_l/agent_api/storage/storage.py (lines 174-204)",
+          "primary_keys": "analysis_id (partition), timestamp (sort)",
+          "gsi_or_lsi": "document-index GSI: document_s3_key (partition), timestamp (sort)",
+          "usage": "Stores analysis results: conflicts JSON, analysis_data, usage metrics, thinking content, redlined_document_s3_key. Also stores job status entries with analysis_id='job_{job_id}' for frontend polling."
+        },
+        {
+          "name": "{stack-name}-sessions",
+          "file_defining_schema": "one_l/agent_api/storage/storage.py (lines 206-235)",
+          "primary_keys": "session_id (partition), user_id (sort)",
+          "gsi_or_lsi": "user-index GSI: user_id (partition), created_at (sort)",
+          "usage": "Stores user sessions: session_id, user_id, title, created_at, updated_at, has_results flag, status. Used for session management and organizing document reviews."
+        },
+        {
+          "name": "{stack-name}-websocket-connections",
+          "file_defining_schema": "one_l/agent_api/functions/websocket/websocket.py (lines 56-86)",
+          "primary_keys": "connection_id (partition), user_id (sort)",
+          "gsi_or_lsi": "user-index GSI: user_id (partition), connected_at (sort)",
+          "usage": "Stores WebSocket connection records for sending real-time notifications. Includes connection_id, user_id, connected_at, subscribed_job_id, session_id, ttl for auto-cleanup."
+        }
+      ]
+    },
+    "opensearch_or_db": {
+      "clusters_or_indices": [
+        {
+          "name": "knowledge-base-index",
+          "purpose": "Vector index in OpenSearch Serverless collection. Stores embedded chunks of reference documents with vector_field, text_field, and metadata_field. Used by Bedrock Knowledge Base for semantic search."
+        }
+      ]
+    },
+    "session_model": {
+      "how_sessions_are_tracked": "Sessions identified by session_id (UUID) and user_id (Cognito user ID). Sessions stored in DynamoDB sessions table. Documents organized in S3 with prefixes: agent_processing/{user_id}/{session_id}/. Analysis results linked to sessions via session_id field in analysis-results table. Frontend maintains session state in localStorage and URL routing (/session/:sessionId).",
+      "where_session_state_is_updated": [
+        {
+          "file_path": "one_l/agent_api/functions/knowledge_management/session_management/lambda_function.py",
+          "function_name": "create_session, update_session_title, mark_session_results",
+          "description": "Session management Lambda handles session CRUD operations. mark_session_results() called by document_review Lambda after analysis completes to set has_results flag."
+        },
+        {
+          "file_path": "one_l/agent_api/functions/agent/document_review/lambda_function.py",
+          "function_name": "lambda_handler (lines 388-406)",
+          "description": "After analysis completes, invokes session_management Lambda to mark session as having results."
+        }
+      ]
+    }
+  },
+  "frontend": {
+    "framework": "React 18",
+    "routing": {
+      "file_path": "one_l/user_interface/src/App.js",
+      "routes": [
+        {
+          "path": "/",
+          "component": "HomeView (SessionSidebar + FileUpload)",
+          "purpose": "Main landing page showing user sessions and knowledge base file upload"
+        },
+        {
+          "path": "/session/:sessionId",
+          "component": "SessionView → SessionWorkspace",
+          "purpose": "Session workspace for vendor document upload, review initiation, progress tracking, and results display"
+        },
+        {
+          "path": "/admin",
+          "component": "AdminDashboard",
+          "purpose": "Admin interface for knowledge base management and sync operations"
+        },
+        {
+          "path": "/metrics",
+          "component": "MetricsDashboard",
+          "purpose": "System metrics and analytics dashboard"
+        }
+      ]
+    },
+    "key_flows": {
+      "upload_flow": {
+        "components": [
+          {
+            "file_path": "one_l/user_interface/src/components/VendorSubmission.js",
+            "component_name": "VendorSubmission",
+            "role": "File selection and upload UI. Handles file validation, calls knowledgeManagementAPI.uploadFiles() to get presigned URLs, uploads directly to S3 agent_processing bucket."
+          },
+          {
+            "file_path": "one_l/user_interface/src/services/api.js",
+            "component_name": "knowledgeManagementAPI.uploadFiles",
+            "role": "API service that requests presigned URLs from /knowledge_management/upload endpoint, then uploads files directly to S3 using presigned URLs."
+          }
+        ],
+        "steps": "1. User selects document file in VendorSubmission component → 2. Component validates file (max 10MB, .doc/.docx/.pdf) → 3. Calls knowledgeManagementAPI.uploadFiles() with file metadata → 4. API service requests presigned URLs from /knowledge_management/upload → 5. Backend Lambda generates presigned URLs for S3 agent_processing bucket → 6. Frontend uploads file directly to S3 using presigned URL → 7. Upload success callback triggers onFilesUploaded() → 8. SessionWorkspace component receives uploaded file info → 9. User clicks 'Analyze Document' button → 10. Calls agentAPI.reviewDocument() with document_s3_key → 11. Backend receives request, returns job_id immediately → 12. Processing continues asynchronously in background"
+      },
+      "progress_and_results_flow": {
+        "components": [
+          {
+            "file_path": "one_l/user_interface/src/App.js",
+            "component_name": "SessionWorkspace",
+            "role": "Main workspace component that manages review state, subscribes to WebSocket updates, polls job status, displays progress and results."
+          },
+          {
+            "file_path": "one_l/user_interface/src/services/websocket.js",
+            "component_name": "WebSocketService",
+            "role": "WebSocket connection manager that subscribes to job updates and routes messages to registered handlers."
+          },
+          {
+            "file_path": "one_l/user_interface/src/services/api.js",
+            "component_name": "sessionAPI.checkJobStatus",
+            "role": "Polling fallback that queries DynamoDB for job status via /knowledge_management/sessions?action=job_status endpoint."
+          }
+        ],
+        "steps": "1. After review initiated, SessionWorkspace connects WebSocket → 2. Subscribes to job_id via websocketService.subscribeToJob() → 3. WebSocket receives 'job_progress' messages (analyzing @ 25%, generating_redline @ 75%) → 4. SessionWorkspace updates UI state with progress percentage and status message → 5. When 'job_completed' message received → 6. SessionWorkspace calls sessionAPI.getSessionResults() to fetch analysis results → 7. Results displayed in conflicts table → 8. Redlined document download button enabled → 9. Polling continues every 10 seconds as fallback if WebSocket fails"
+      },
+      "download_flow": {
+        "components": [
+          {
+            "file_path": "one_l/user_interface/src/App.js",
+            "component_name": "SessionWorkspace (download handler)",
+            "role": "Handles download button clicks, calls agentAPI.downloadFile() with redlined_document_s3_key."
+          },
+          {
+            "file_path": "one_l/user_interface/src/services/api.js",
+            "component_name": "agentAPI.downloadFile",
+            "role": "Retrieves file from S3 via /knowledge_management/retrieve endpoint, decodes base64 content, creates Blob, triggers browser download."
+          }
+        ],
+        "steps": "1. User clicks 'Download Redlined Document' button → 2. SessionWorkspace calls agentAPI.downloadFile() with redlined_document_s3_key from analysis results → 3. API service calls /knowledge_management/retrieve POST with return_content=true → 4. Backend Lambda retrieves file from S3 agent_processing bucket → 5. Returns file content as base64 → 6. Frontend decodes base64 to binary → 7. Creates Blob with proper MIME type → 8. Creates temporary download link → 9. Triggers browser download → 10. Cleans up temporary URL"
+      }
+    }
+  },
+  "limitations_and_assumptions": {
+    "known_limitations_in_code": [
+      "MAX_TOKENS = 8000 per Claude API call (model.py line 47) - may limit analysis of very large documents",
+      "THINKING_BUDGET_TOKENS = 4000 (model.py line 49) - thinking content limited to 4000 tokens",
+      "Document chunking threshold: >100 paragraphs triggers chunked analysis (model.py line 444) - may split related content",
+      "MAX_CHUNK_SIZE = 3000 tokens for knowledge base content chunking (tools.py line 101) - large reference documents split",
+      "OPTIMAL_RESULTS_PER_QUERY = 50 (tools.py line 103) - limits retrieval results per query",
+      "API Gateway timeout: 29 seconds (api_gateway.py line 140) - document_review returns immediately, processes async",
+      "Lambda timeout: 15 minutes for document_review (agent.py line 98) - very large documents may timeout",
+      "File size limit: 10MB per file (frontend validation in api.js line 564) - larger files rejected",
+      "Redline matching: Multi-tier search but some conflicts may not match if text differs significantly (tools.py apply_exact_sentence_redlining)",
+      "PDF redlining: Uses PyMuPDF with fuzzy text matching - may miss conflicts if PDF is scanned/flattened (tools.py _redline_pdf_document)",
+      "WebSocket connection: Max 5 reconnection attempts (websocket.js line 15) - may lose connection after 5 failures",
+      "DynamoDB scan limit: 1MB per page (session_management.py line 140) - pagination required for large result sets",
+      "Knowledge Base chunking: 300 tokens max with 20% overlap (knowledge_base.py lines 166-168) - may split clauses across chunks"
+    ],
+    "mismatches_with_prompt_intent": [
+      "System prompt requires 6-12 queries minimum, but code doesn't enforce this - relies on Claude to follow instructions. No validation that 6-12 queries were actually made.",
+      "System prompt emphasizes 'source_doc' must be actual KB document name, but code doesn't validate source_doc against actual KB documents - invalid source_doc values may be accepted.",
+      "System prompt requires 'N/A - Missing provision' for omissions, but code doesn't enforce this format - any text accepted in vendor_quote field.",
+      "System prompt says 'ADAPTIVE ZONE MAPPING: 8-15 distinct zones' but this is guidance only - no code enforces zone-based querying strategy.",
+      "System prompt requires 'Additional-[#]' format for conflicts without vendor ID, and code does track/renumber these across chunks (model.py lines 568-691), but doesn't validate format strictly.",
+      "System prompt emphasizes comprehensive coverage of ALL sections, but for chunked documents, each chunk is analyzed independently - no cross-chunk validation that all sections were covered."
+    ]
+  },
+  "example_end_to_end_trace": {
+    "description": "Complete execution path for a vendor document review from upload to redlined document download.",
+    "steps": [
+      "1. User uploads vendor-submission.docx via VendorSubmission component → file_path: one_l/user_interface/src/components/VendorSubmission.js, function: handleUpload()",
+      "2. Frontend calls knowledgeManagementAPI.uploadFiles() → file_path: one_l/user_interface/src/services/api.js, function: uploadFiles()",
+      "3. API Gateway receives POST /knowledge_management/upload → file_path: one_l/api_gateway/api_gateway.py, route: /knowledge_management/upload",
+      "4. Lambda function upload_to_s3 invoked → file_path: one_l/agent_api/functions/knowledge_management/upload_to_s3/lambda_function.py, function: lambda_handler()",
+      "5. Lambda generates presigned URL for S3 agent_processing bucket → file_path: one_l/agent_api/functions/knowledge_management/upload_to_s3/lambda_function.py, function: lambda_handler()",
+      "6. Frontend uploads file directly to S3 → S3 bucket: {stack-name}-agent-processing, key: vendor-submissions/{uuid}_{filename}",
+      "7. User clicks 'Analyze Document' → file_path: one_l/user_interface/src/App.js, component: SessionWorkspace, function: handleAnalyzeDocument()",
+      "8. Frontend calls agentAPI.reviewDocument() → file_path: one_l/user_interface/src/services/api.js, function: reviewDocument()",
+      "9. API Gateway receives POST /agent/review → file_path: one_l/api_gateway/api_gateway.py, route: /agent/review",
+      "10. Lambda function document_review invoked → file_path: one_l/agent_api/functions/agent/document_review/lambda_function.py, function: lambda_handler()",
+      "11. Lambda creates job_id, saves initial status to DynamoDB → file_path: one_l/agent_api/functions/agent/document_review/lambda_function.py, function: save_job_status()",
+      "12. Lambda initializes Agent → file_path: one_l/agent_api/agent/agent.py, function: __init__()",
+      "13. Agent initializes Model → file_path: one_l/agent_api/agent/model.py, function: __init__()",
+      "14. Agent.review_document() called → file_path: one_l/agent_api/agent/agent.py, function: review_document()",
+      "15. Model.review_document() downloads document from S3 → file_path: one_l/agent_api/agent/model.py, function: review_document(), line: 421",
+      "16. Model prepares Converse API request with document attachment → file_path: one_l/agent_api/agent/model.py, function: review_document(), lines: 454-472",
+      "17. Model._call_claude_with_tools() invokes Bedrock Converse API → file_path: one_l/agent_api/agent/model.py, function: _call_claude_with_tools(), line: 898",
+      "18. Claude receives document + system prompt → AWS Bedrock Converse API, model: us.anthropic.claude-sonnet-4-20250514-v1:0",
+      "19. Claude analyzes document structure and makes tool call → file_path: one_l/agent_api/agent/model.py, function: _handle_tool_calls(), line: 928",
+      "20. Tool call: retrieve_from_knowledge_base executed → file_path: one_l/agent_api/agent/tools.py, function: retrieve_from_knowledge_base(), line: 208",
+      "21. Bedrock Knowledge Base Retrieve API called → boto3 bedrock-agent-runtime client, method: retrieve()",
+      "22. OpenSearch Serverless vector search performed → OpenSearch Serverless collection: {stack-name}-vector-db, index: knowledge-base-index",
+      "23. Retrieval results filtered and chunked → file_path: one_l/agent_api/agent/tools.py, functions: _filter_and_prioritize_results(), _chunk_content_intelligently()",
+      "24. Results returned to Claude as tool result → file_path: one_l/agent_api/agent/model.py, function: _handle_tool_calls(), lines: 1004-1015",
+      "25. Steps 19-24 repeat 6-12 times (multiple queries) → Claude makes multiple retrieve_from_knowledge_base tool calls",
+      "26. Claude outputs final JSON conflict object → file_path: one_l/agent_api/agent/model.py, function: review_document(), line: 490",
+      "27. JSON extracted and validated → file_path: one_l/agent_api/agent/model.py, function: _extract_json_only(), line: 231",
+      "28. Conflicts parsed for redlining → file_path: one_l/agent_api/agent/tools.py, function: parse_conflicts_for_redlining(), line: 775",
+      "29. Agent.create_redlined_document() called → file_path: one_l/agent_api/agent/agent.py, function: create_redlined_document(), line: 72",
+      "30. Tools.redline_document() downloads original document → file_path: one_l/agent_api/agent/tools.py, function: redline_document(), line: 553",
+      "31. Redlines applied using exact sentence matching → file_path: one_l/agent_api/agent/tools.py, function: apply_exact_sentence_redlining(), line: 1078",
+      "32. Redlined document saved to S3 → file_path: one_l/agent_api/agent/tools.py, function: _save_and_upload_document(), line: 3145, S3 key: redlines/{session_id}/{user_id}/redlined_{filename}",
+      "33. Results saved to DynamoDB → file_path: one_l/agent_api/agent/tools.py, function: save_analysis_to_dynamodb(), line: 2996, table: {stack-name}-analysis-results",
+      "34. Job status updated to 'completed' → file_path: one_l/agent_api/functions/agent/document_review/lambda_function.py, function: save_job_status(), line: 376",
+      "35. WebSocket notification sent → file_path: one_l/agent_api/functions/agent/document_review/lambda_function.py, function: lambda_handler(), lines: 409-430",
+      "36. Notification Lambda sends WebSocket message → file_path: one_l/agent_api/functions/websocket/notification/lambda_function.py, function: lambda_handler()",
+      "37. Frontend receives 'job_completed' WebSocket message → file_path: one_l/user_interface/src/services/websocket.js, function: onMessage()",
+      "38. SessionWorkspace updates UI with results → file_path: one_l/user_interface/src/App.js, component: SessionWorkspace, function: handleJobCompleted()",
+      "39. User clicks 'Download Redlined Document' → file_path: one_l/user_interface/src/App.js, component: SessionWorkspace",
+      "40. Frontend calls agentAPI.downloadFile() → file_path: one_l/user_interface/src/services/api.js, function: downloadFile()",
+      "41. API Gateway receives POST /knowledge_management/retrieve → file_path: one_l/api_gateway/api_gateway.py, route: /knowledge_management/retrieve",
+      "42. Lambda function retrieve_from_s3 invoked → file_path: one_l/agent_api/functions/knowledge_management/retrieve_from_s3/lambda_function.py, function: lambda_handler()",
+      "43. Lambda retrieves redlined document from S3 → S3 bucket: {stack-name}-agent-processing",
+      "44. File content returned as base64 → file_path: one_l/agent_api/functions/knowledge_management/retrieve_from_s3/lambda_function.py",
+      "45. Frontend decodes base64 and triggers browser download → file_path: one_l/user_interface/src/services/api.js, function: downloadFile(), lines: 449-475"
+    ]
+  }
+}
+
+
