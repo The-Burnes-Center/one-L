@@ -224,7 +224,6 @@ const SessionWorkspace = ({ session }) => {
 
   const jobSessionMapRef = useRef(loadJobSessionMapFromStorage());
   const activeJobsRef = useRef({});
-  const jobTimeoutRef = useRef({}); // Store timeout IDs for each job
 
   const cloneUploadedFiles = (files = []) => {
     if (!Array.isArray(files)) {
@@ -255,7 +254,6 @@ const SessionWorkspace = ({ session }) => {
       status: doc?.status,
       progress: doc?.progress,
       message: doc?.message,
-      timeoutError: doc?.timeoutError
     }));
   };
 
@@ -416,16 +414,6 @@ const SessionWorkspace = ({ session }) => {
     }
   }, [session?.session_id, uploadedFiles, redlinedDocuments, generating, processingStage, completedStages, workflowMessage, workflowMessageType, termsProfile, persistSessionState]);
 
-  // Cleanup timeouts on component unmount
-  useEffect(() => {
-    return () => {
-      // Clear all job timeouts on unmount
-      Object.values(jobTimeoutRef.current).forEach(timeoutId => {
-        clearTimeout(timeoutId);
-      });
-      jobTimeoutRef.current = {};
-    };
-  }, []);
 
   // Reset processing state and load session results when session changes
   useEffect(() => {
@@ -438,12 +426,6 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
-      
-      // Clear any existing job timeouts when switching sessions
-      Object.values(jobTimeoutRef.current).forEach(timeoutId => {
-        clearTimeout(timeoutId);
-      });
-      jobTimeoutRef.current = {};
       
       // Save previous session's data BEFORE switching (if we had a previous session)
       if (previousSessionId && previousSessionId !== currentSessionId) {
@@ -1007,12 +989,6 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
     
-    // Clear timeout since job completed
-    if (jobTimeoutRef.current[job_id]) {
-      clearTimeout(jobTimeoutRef.current[job_id]);
-      delete jobTimeoutRef.current[job_id];
-    }
-
     const isCurrentSession = mappedSessionId === session?.session_id;
     
     const reconcileDocuments = (docs = []) => {
@@ -1025,6 +1001,25 @@ const SessionWorkspace = ({ session }) => {
           const hasNoConflicts = data.redlined_document?.no_conflicts === true;
           const hasRedline = redlinedSuccess && redlinedDoc && !hasNoConflicts;
           
+          // Check for Lambda timeout errors from backend
+          const errorMessage = data.redlined_document?.error || data.error || '';
+          const isTimeoutError = errorMessage.toLowerCase().includes('timeout') || 
+                                 errorMessage.toLowerCase().includes('timed out') ||
+                                 errorMessage.toLowerCase().includes('task timed out') ||
+                                 (data.status === 'failed' && errorMessage.toLowerCase().includes('lambda'));
+          
+          const finalError = redlinedSuccess 
+            ? undefined 
+            : (isTimeoutError 
+                ? 'Redline failed to generate due to timeout. The document review process exceeded the maximum processing time. Please try again with a smaller document or contact support.'
+                : errorMessage || 'Failed to generate redlined document');
+          
+          const finalMessage = redlinedSuccess 
+            ? (hasNoConflicts || !hasRedline ? 'No conflicts detected' : 'Document processing completed')
+            : (isTimeoutError 
+                ? 'Redline generation timed out'
+                : 'Document processing failed');
+          
           return {
             ...doc,
             status: redlinedSuccess ? 'completed' : 'failed',
@@ -1033,10 +1028,8 @@ const SessionWorkspace = ({ session }) => {
             redlinedDocument: hasNoConflicts ? undefined : (redlinedDoc || doc.redlinedDocument),
             analysis: data.analysis_id || doc.analysis,
             processing: false,
-            error: redlinedSuccess ? undefined : (data.redlined_document?.error || 'Failed to generate redlined document'),
-            message: redlinedSuccess 
-              ? (hasNoConflicts || !hasRedline ? 'No conflicts detected' : 'Document processing completed')
-              : 'Document processing failed'
+            error: finalError,
+            message: finalMessage
           };
         }
         return doc;
@@ -1452,7 +1445,6 @@ const SessionWorkspace = ({ session }) => {
             }
             
             const jobId = reviewResponse.job_id;
-            const TIMEOUT_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds
             
             // Subscribe to WebSocket notifications for this job
             try {
@@ -1483,98 +1475,6 @@ const SessionWorkspace = ({ session }) => {
                   termsProfile: termsProfileForRun
               };
               redlineResults.push({ ...processingEntry });
-              
-              // Start 15-minute timeout timer
-              const timeoutId = setTimeout(() => {
-                // Check if job is still processing
-                const isCurrentSessionCheck = () => currentSessionIdRef.current === sessionIdAtStart;
-                
-                // Mark job as failed due to timeout
-                const markJobAsTimeout = () => {
-                  setRedlinedDocuments(prev => {
-                    const updatedDocs = prev.map(doc => {
-                      if (doc.jobId === jobId && doc.processing) {
-                        return {
-                          ...doc,
-                          processing: false,
-                          status: 'failed',
-                          success: false,
-                          error: 'Processing timed out after 15 minutes. Please try again or contact support.',
-                          message: 'Processing timed out after 15 minutes'
-                        };
-                      }
-                      return doc;
-                    });
-                    
-                    // Also update session data
-                    if (sessionDataRef.current[sessionIdAtStart]) {
-                      const sessionEntry = sessionDataRef.current[sessionIdAtStart];
-                      const sessionUpdatedDocs = (sessionEntry.redlinedDocuments || []).map(doc => {
-                        if (doc.jobId === jobId && doc.processing) {
-                          return {
-                            ...doc,
-                            processing: false,
-                            status: 'failed',
-                            success: false,
-                            error: 'Processing timed out after 15 minutes. Please try again or contact support.',
-                            message: 'Processing timed out after 15 minutes'
-                          };
-                        }
-                        return doc;
-                      });
-                      sessionEntry.redlinedDocuments = sessionUpdatedDocs;
-                      sessionEntry.generating = sessionUpdatedDocs.some(doc => doc.processing);
-                      
-                      if (!sessionEntry.generating) {
-                        sessionEntry.processingStage = '';
-                        sessionEntry.completedStages = stageOrder.map(item => item.key);
-                        sessionEntry.workflowMessage = 'Processing timed out. Some documents may have failed.';
-                        sessionEntry.workflowMessageType = 'error';
-                      }
-                      
-                      persistSessionState(sessionIdAtStart, {
-                        redlinedDocuments: sessionUpdatedDocs,
-                        generating: sessionEntry.generating,
-                        processingStage: sessionEntry.processingStage,
-                        completedStages: sessionEntry.completedStages,
-                        workflowMessage: sessionEntry.workflowMessage,
-                        workflowMessageType: sessionEntry.workflowMessageType
-                      });
-                    }
-                    
-                    updateGlobalProcessingFlag(sessionIdAtStart, updatedDocs.some(doc => doc.processing));
-                    
-                    if (isCurrentSessionCheck() && !updatedDocs.some(doc => doc.processing)) {
-                      setGenerating(false);
-                      setWorkflowMessage('Processing timed out after 15 minutes. Some documents may have failed.');
-                      setWorkflowMessageType('error');
-                      resetProcessingStages();
-                    }
-                    
-                    return updatedDocs;
-                  });
-                  
-                  // Clean up job tracking
-                  if (jobSessionMapRef.current[jobId]) {
-                    delete jobSessionMapRef.current[jobId];
-                    saveJobSessionMapToStorage(jobSessionMapRef.current);
-                  }
-                  if (activeJobsRef.current[jobId]) {
-                    delete activeJobsRef.current[jobId];
-                  }
-                  if (jobTimeoutRef.current[jobId]) {
-                    delete jobTimeoutRef.current[jobId];
-                  }
-                  if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
-                    window.currentProcessingJob = null;
-                  }
-                };
-                
-                markJobAsTimeout();
-              }, TIMEOUT_DURATION);
-              
-              // Store timeout ID for cleanup
-              jobTimeoutRef.current[jobId] = timeoutId;
 
               if (isCurrentSession()) {
                 setRedlinedDocuments(prev => {
@@ -1621,13 +1521,6 @@ const SessionWorkspace = ({ session }) => {
             }
 
             if (finalResult?.processing === false) {
-              // Clear timeout since job completed
-              const jobId = reviewResponse.job_id;
-              if (jobTimeoutRef.current[jobId]) {
-                clearTimeout(jobTimeoutRef.current[jobId]);
-                delete jobTimeoutRef.current[jobId];
-              }
-              
               const transformedEntry = {
                 ...processingEntry,
                 processing: false,
@@ -2529,12 +2422,12 @@ const SessionWorkspace = ({ session }) => {
           </div>
         )}
         
-        {/* Redlined Documents Results - Only show completed documents */}
+        {/* Redlined Documents Results - Show completed and failed documents */}
         {(() => {
-          const completedDocs = redlinedDocuments.filter(doc => doc.success && !doc.processing);
+          const completedDocs = redlinedDocuments.filter(doc => !doc.processing && (doc.success || doc.status === 'failed'));
           return completedDocs.length > 0 && (
             <div style={{ marginTop: '20px' }}>
-              <h3>Generated Redlined Documents</h3>
+              <h3>Document Processing Results</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {completedDocs.map((result, index) => (
                     <div key={index} style={{ 

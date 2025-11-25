@@ -246,6 +246,114 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 # Initialize Lambda client for notifications
                 lambda_client = boto3.client('lambda')
                 
+                # Set up timeout handler to trigger cleanup before Lambda times out
+                # Lambda timeout is 15 minutes, trigger cleanup at 14 minutes
+                import threading
+                cleanup_triggered = threading.Event()
+                timeout_timer = None
+                
+                def timeout_cleanup_handler():
+                    """Trigger cleanup and send timeout notification when approaching Lambda timeout."""
+                    # Use double-check pattern to prevent race condition with successful completion
+                    if not cleanup_triggered.is_set():
+                        cleanup_triggered.set()
+                        
+                        # Check if job is already completed before marking as failed (prevents race condition)
+                        try:
+                            table = dynamodb.Table(JOB_STATUS_TABLE)
+                            response = table.get_item(
+                                Key={'analysis_id': f"job_{job_id}"}
+                            )
+                            
+                            if 'Item' in response:
+                                current_status = response['Item'].get('status')
+                                # If job is already completed or failed, don't overwrite it
+                                if current_status in ('completed', 'failed'):
+                                    logger.info(f"Job {job_id} already has status '{current_status}', skipping timeout handler")
+                                    return
+                        except Exception as check_error:
+                            logger.warning(f"Could not check job status before timeout handler: {check_error}")
+                            # Continue with timeout handling if we can't check status
+                        
+                        logger.warning("Approaching Lambda timeout, triggering cleanup and sending timeout notification")
+                        
+                        # Save job status as failed with timeout error
+                        timeout_error_message = "Task timed out after 15 minutes"
+                        try:
+                            save_job_status(
+                                job_id,
+                                document_s3_key,
+                                user_id,
+                                session_id,
+                                "failed",
+                                error=timeout_error_message,
+                                terms_profile=resolved_terms_profile,
+                                knowledge_base_id=knowledge_base_id
+                            )
+                            logger.info(f"Saved timeout failure status for job {job_id}")
+                        except Exception as save_error:
+                            logger.error(f"Failed to save timeout status: {save_error}")
+                        
+                        # Send WebSocket notification for timeout failure
+                        try:
+                            notification_function_name = f"{os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '').replace('-document-review', '-websocket-notification')}"
+                            timeout_notification_payload = {
+                                'notification_type': 'job_completed',
+                                'job_id': job_id,
+                                'user_id': user_id,
+                                'session_id': session_id,
+                                'data': {
+                                    'status': 'failed',
+                                    'error': timeout_error_message,
+                                    'redlined_document': {
+                                        'success': False,
+                                        'error': timeout_error_message
+                                    },
+                                    'message': 'Document processing timed out'
+                                }
+                            }
+                            
+                            lambda_client.invoke(
+                                FunctionName=notification_function_name,
+                                InvocationType='Event',  # Async call
+                                Payload=json.dumps(timeout_notification_payload)
+                            )
+                            logger.info(f"Sent timeout notification for job {job_id}")
+                        except Exception as notify_error:
+                            logger.error(f"Failed to send timeout notification: {notify_error}")
+                        
+                        # Cleanup session documents (critical - must complete before Lambda times out)
+                        if session_id and user_id:
+                            try:
+                                from agent_api.agent.tools import _cleanup_session_documents
+                                # Cleanup is synchronous and should complete within the 2-minute buffer
+                                # If it fails, log error but don't block timeout notification
+                                cleanup_result = _cleanup_session_documents(session_id, user_id)
+                                if cleanup_result.get('success'):
+                                    logger.info(f"Timeout cleanup completed successfully: {cleanup_result.get('message', '')}")
+                                else:
+                                    logger.error(f"Timeout cleanup failed: {cleanup_result.get('error', 'Unknown error')}")
+                                    # Note: Documents may not be deleted, but timeout notification was sent
+                            except Exception as cleanup_error:
+                                logger.error(f"Timeout cleanup error (documents may not be deleted): {cleanup_error}")
+                                # Continue - timeout notification already sent, cleanup failure is logged
+                    else:
+                        # Cleanup already triggered (likely by successful completion)
+                        logger.info(f"Timeout handler skipped - cleanup already triggered for job {job_id}")
+                
+                # Schedule cleanup 2 minutes before timeout (13 minutes) to ensure cleanup completes
+                # Only set up timer if context is available
+                if context and hasattr(context, 'get_remaining_time_in_millis'):
+                    # Calculate remaining time and schedule cleanup 120 seconds before timeout
+                    # This gives us 2 minutes buffer to ensure cleanup completes before Lambda is killed
+                    remaining_ms = context.get_remaining_time_in_millis()
+                    remaining_seconds = remaining_ms / 1000.0
+                    cleanup_delay = max(120.0, remaining_seconds - 120.0)  # At least 120 seconds before timeout
+                    timeout_timer = threading.Timer(cleanup_delay, timeout_cleanup_handler)
+                    timeout_timer.daemon = True
+                    timeout_timer.start()
+                    logger.info(f"Scheduled timeout cleanup in {cleanup_delay} seconds (2 minutes before Lambda timeout)")
+                
                 # Clear knowledge base cache for fresh document review session
                 from agent_api.agent.tools import clear_knowledge_base_cache
                 clear_knowledge_base_cache()
@@ -291,6 +399,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 review_result = agent.review_document(bucket_type, document_s3_key)
                 
                 if not review_result.get('success', False):
+                    # Cancel timeout cleanup timer if it exists
+                    if timeout_timer is not None:
+                        timeout_timer.cancel()
+                    
+                    # Cleanup reference documents on review failure
+                    if session_id and user_id:
+                        try:
+                            from agent_api.agent.tools import _cleanup_session_documents
+                            cleanup_result = _cleanup_session_documents(session_id, user_id)
+                            logger.info(f"Cleanup after review failure: {cleanup_result}")
+                        except Exception as cleanup_error:
+                            logger.error(f"Session cleanup error after review failure: {cleanup_error}")
+                    
                     save_job_status(
                         job_id,
                         document_s3_key,
@@ -337,13 +458,41 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     pass
                 
                 # Create redlined document using agent (handles all document operations internally)
-                redlined_result = agent.create_redlined_document(
-                    analysis_data=review_result.get('analysis', ''),
-                    document_s3_key=document_s3_key,
-                    bucket_type=bucket_type,
-                    session_id=session_id,
-                    user_id=user_id
-                )
+                try:
+                    redlined_result = agent.create_redlined_document(
+                        analysis_data=review_result.get('analysis', ''),
+                        document_s3_key=document_s3_key,
+                        bucket_type=bucket_type,
+                        session_id=session_id,
+                        user_id=user_id
+                    )
+                except Exception as redline_error:
+                    logger.error(f"Error creating redlined document: {str(redline_error)}", exc_info=True)
+                    
+                    # Cancel timeout cleanup timer if it exists
+                    if timeout_timer is not None:
+                        timeout_timer.cancel()
+                    
+                    # Cleanup reference documents on redline failure
+                    if session_id and user_id:
+                        try:
+                            from agent_api.agent.tools import _cleanup_session_documents
+                            cleanup_result = _cleanup_session_documents(session_id, user_id)
+                            logger.info(f"Cleanup after redline failure: {cleanup_result}")
+                        except Exception as cleanup_error:
+                            logger.error(f"Session cleanup error after redline failure: {cleanup_error}")
+                    
+                    save_job_status(
+                        job_id,
+                        document_s3_key,
+                        user_id,
+                        session_id,
+                        "failed",
+                        error=f"Failed to create redlined document: {str(redline_error)}",
+                        terms_profile=resolved_terms_profile,
+                        knowledge_base_id=knowledge_base_id
+                    )
+                    return create_success_response(immediate_response)
                 
                 # Generate unique analysis ID and save results to DynamoDB using tools
                 from agent_api.agent.tools import save_analysis_to_dynamodb
@@ -383,6 +532,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     terms_profile=resolved_terms_profile,
                     knowledge_base_id=knowledge_base_id
                 )
+                
+                # Cancel timeout cleanup timer since we completed successfully
+                if timeout_timer is not None:
+                    timeout_timer.cancel()
+                    cleanup_triggered.set()
+                    logger.info("Cancelled timeout cleanup timer - processing completed successfully")
                 
                 # Mark session as having results (processed documents)
                 if session_id and user_id:
@@ -438,6 +593,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 
             except Exception as e:
                 logger.error(f"Error during background processing: {str(e)}", exc_info=True)
+                
+                # Cancel timeout cleanup timer if it exists
+                if 'timeout_timer' in locals() and timeout_timer is not None:
+                    timeout_timer.cancel()
+                
+                # Cleanup reference documents on any processing error
+                if session_id and user_id:
+                    try:
+                        from agent_api.agent.tools import _cleanup_session_documents
+                        cleanup_result = _cleanup_session_documents(session_id, user_id)
+                        logger.info(f"Cleanup after background processing error: {cleanup_result}")
+                    except Exception as cleanup_error:
+                        logger.error(f"Session cleanup error after background processing error: {cleanup_error}")
+                
                 save_job_status(
                     job_id,
                     document_s3_key,
