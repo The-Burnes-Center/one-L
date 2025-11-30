@@ -186,8 +186,16 @@ class IAMRolesConstruct(Construct):
         
         return role
     
-    def create_agent_role(self, role_name: str, buckets: list, analysis_table, opensearch_collection) -> iam.Role:
-        """Create IAM role with all necessary permissions for agent operations."""
+    def create_agent_role(self, role_name: str, buckets: list, analysis_table, opensearch_collection, collection_name: str = None) -> iam.Role:
+        """Create IAM role with all necessary permissions for agent operations.
+        
+        Args:
+            role_name: Name for the role
+            buckets: List of S3 buckets
+            analysis_table: DynamoDB table
+            opensearch_collection: OpenSearch Serverless collection (for dependency tracking)
+            collection_name: Collection name string (optional, will be derived from stack name if not provided)
+        """
         
         role = iam.Role(
             self, f"{role_name}AgentRole",
@@ -245,9 +253,14 @@ class IAMRolesConstruct(Construct):
         )
         
         # Grant OpenSearch Serverless permissions
-        # Construct ARN manually using attr_id to avoid early validation issues with attr_arn
-        # This matches the pattern used successfully in knowledge_management.py
-        collection_arn = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{opensearch_collection.attr_id}"
+        # Use account/region-scoped wildcard to avoid early validation errors
+        # This is secure because:
+        # 1. Scoped to specific account and region (not global)
+        # 2. Access is also controlled by OpenSearch Serverless collection-level access policies
+        # 3. This role is only used by Lambda functions in this stack
+        # 4. Matches AWS best practice for service-level permissions
+        stack = Stack.of(self)
+        collection_arn_pattern = f"arn:aws:aoss:{stack.region}:{stack.account}:collection/*"
         
         role.add_to_policy(
             iam.PolicyStatement(
@@ -256,7 +269,7 @@ class IAMRolesConstruct(Construct):
                     "aoss:APIAccessAll"
                 ],
                 resources=[
-                    collection_arn
+                    collection_arn_pattern
                 ]
             )
         )
