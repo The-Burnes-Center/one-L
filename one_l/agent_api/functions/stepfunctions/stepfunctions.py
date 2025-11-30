@@ -243,6 +243,13 @@ class StepFunctionsConstruct(Construct):
     def create_state_machine(self):
         """Create Step Functions state machine with complete workflow."""
         
+        # Error handler (define early so it can be used in catch blocks)
+        handle_error = tasks.LambdaInvoke(
+            self, "HandleError",
+            lambda_function=self.handle_error_fn,
+            output_path="$.Payload"
+        )
+        
         # Initialize job
         initialize_job = tasks.LambdaInvoke(
             self, "InitializeJob",
@@ -465,13 +472,6 @@ class StepFunctionsConstruct(Construct):
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
-        )
-        
-        # Error handler
-        handle_error = tasks.LambdaInvoke(
-            self, "HandleError",
-            lambda_function=self.handle_error_fn,
-            output_path="$.Payload"
         )
         
         # Define workflow with proper branching
