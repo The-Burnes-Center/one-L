@@ -13,7 +13,8 @@ from aws_cdk import (
     aws_opensearchserverless as aoss,
     aws_logs as logs,
     Duration,
-    Stack
+    Stack,
+    RemovalPolicy
 )
 
 # Google Document AI configuration removed - reverted to PyMuPDF-based conversion
@@ -68,9 +69,17 @@ class AgentConstruct(Construct):
         
         # Instance variables for Lambda functions
         self.document_review_function = None
+        self.stepfunctions_construct = None
+        
+        # Check if Step Functions should be enabled
+        self._use_stepfunctions = os.environ.get('USE_STEP_FUNCTIONS', 'false').lower() == 'true'
         
         # Create agent functions
         self.create_functions()
+        
+        # Optionally create Step Functions construct
+        if self._use_stepfunctions:
+            self._create_stepfunctions_construct()
     
     def create_functions(self):
         """Create agent Lambda functions."""
@@ -115,6 +124,24 @@ class AgentConstruct(Construct):
             }
         )
     
+    def _create_stepfunctions_construct(self):
+        """Create Step Functions construct if enabled."""
+        try:
+            from ..stepfunctions.stepfunctions import StepFunctionsConstruct
+            
+            self.stepfunctions_construct = StepFunctionsConstruct(
+                self, "StepFunctions",
+                knowledge_bucket=self.knowledge_bucket,
+                user_documents_bucket=self.user_documents_bucket,
+                agent_processing_bucket=self.agent_processing_bucket,
+                analysis_table=self.analysis_table,
+                opensearch_collection=self.opensearch_collection,
+                knowledge_base_id=self.knowledge_base_id,
+                iam_roles=self.iam_roles
+            )
+        except ImportError as e:
+            print(f"Warning: Could not import StepFunctionsConstruct: {e}")
+    
     def get_function_routes(self) -> dict:
         """
         Get function routing metadata for API Gateway.
@@ -122,6 +149,18 @@ class AgentConstruct(Construct):
         Returns a dictionary defining available functions and their routing configurations.
         """
         
+        # If Step Functions is enabled, return state machine route
+        if self.stepfunctions_construct:
+            return {
+                "review": {
+                    "state_machine": self.stepfunctions_construct.state_machine,
+                    "path": "review",
+                    "methods": ["POST"],
+                    "description": "AI-powered document review with Step Functions workflow"
+                }
+            }
+        
+        # Default: Lambda function route
         return {
             "review": {
                 "function": self.document_review_function,
