@@ -94,7 +94,19 @@ jobs:
       env:
         USE_STEP_FUNCTIONS: "true"
       run: |
-        cdk deploy --require-approval never
+        cdk deploy --require-approval never || {
+          echo "=== CDK Deploy Failed - Getting detailed error information ==="
+          echo ""
+          echo "=== Stack Events (most recent first) ==="
+          aws cloudformation describe-stack-events --stack-name OneL-DV2 --max-items 50 --query 'StackEvents[*].{Time:Timestamp,Resource:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}' --output table 2>/dev/null || echo "Could not get stack events"
+          echo ""
+          echo "=== Change Set Details ==="
+          aws cloudformation describe-change-set --stack-name OneL-DV2 --change-set-name cdk-deploy-change-set --query '{Status:Status,StatusReason:StatusReason,Changes:Changes[0:10]}' --output json 2>/dev/null || echo "Could not get change set details"
+          echo ""
+          echo "=== Stack Status ==="
+          aws cloudformation describe-stacks --stack-name OneL-DV2 --query 'Stacks[0].{Status:StackStatus,Reason:StackStatusReason}' --output table 2>/dev/null || echo "Stack does not exist yet"
+          exit 1
+        }
 
     - name: Get stack outputs
       id: stack-outputs
