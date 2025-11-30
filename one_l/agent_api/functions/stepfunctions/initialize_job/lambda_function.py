@@ -39,15 +39,17 @@ def lambda_handler(event, context):
         
         # Save initial status to DynamoDB
         table_name = os.environ.get('ANALYSES_TABLE_NAME')
+        timestamp = datetime.utcnow().isoformat()
         if table_name:
             table = dynamodb.Table(table_name)
             table.put_item(
                 Item={
                     'analysis_id': job_id,
+                    'timestamp': timestamp,  # Required sort key
                     'session_id': session_id,
                     'user_id': user_id,
                     'status': 'initialized',
-                    'created_at': datetime.utcnow().isoformat(),
+                    'created_at': timestamp,
                     'document_s3_key': document_s3_key
                 }
             )
@@ -57,12 +59,18 @@ def lambda_handler(event, context):
         output = JobInitializationOutput(
             job_id=job_id,
             status='initialized',
-            created_at=datetime.utcnow().isoformat()
+            created_at=timestamp
         )
         
+        # Return full context for downstream functions (not wrapped in body)
         return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
+            "job_id": job_id,
+            "timestamp": timestamp,  # DynamoDB sort key for updates
+            "session_id": session_id,
+            "user_id": user_id,
+            "document_s3_key": document_s3_key,
+            "status": "initialized",
+            "terms_profile": event.get('terms_profile', 'general')
         }
         
     except Exception as e:

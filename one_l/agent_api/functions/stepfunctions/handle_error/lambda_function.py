@@ -33,20 +33,39 @@ def lambda_handler(event, context):
         
         # Update job status in DynamoDB
         table_name = os.environ.get('ANALYSES_TABLE_NAME')
+        timestamp = event.get('timestamp')  # Get timestamp from workflow context
+        
         if table_name and job_id:
             try:
                 table = dynamodb.Table(table_name)
-                table.update_item(
-                    Key={'analysis_id': job_id},
-                    UpdateExpression='SET #status = :status, error_message = :error, updated_at = :timestamp',
-                    ExpressionAttributeNames={'#status': 'status'},
-                    ExpressionAttributeValues={
-                        ':status': 'failed',
-                        ':error': error_message,
-                        ':timestamp': datetime.utcnow().isoformat()
-                    }
-                )
-                logger.info(f"Job {job_id} status updated to failed")
+                
+                # If we don't have timestamp, try to query for the item first
+                if not timestamp:
+                    try:
+                        response = table.query(
+                            KeyConditionExpression='analysis_id = :aid',
+                            ExpressionAttributeValues={':aid': job_id},
+                            Limit=1
+                        )
+                        if response.get('Items'):
+                            timestamp = response['Items'][0].get('timestamp')
+                    except Exception as query_error:
+                        logger.warning(f"Could not query for timestamp: {query_error}")
+                
+                if timestamp:
+                    table.update_item(
+                        Key={'analysis_id': job_id, 'timestamp': timestamp},
+                        UpdateExpression='SET #status = :status, error_message = :error, updated_at = :updated',
+                        ExpressionAttributeNames={'#status': 'status'},
+                        ExpressionAttributeValues={
+                            ':status': 'failed',
+                            ':error': error_message,
+                            ':updated': datetime.utcnow().isoformat()
+                        }
+                    )
+                    logger.info(f"Job {job_id} status updated to failed")
+                else:
+                    logger.warning(f"Could not update job {job_id}: timestamp not found")
             except Exception as db_error:
                 logger.warning(f"Could not update DynamoDB: {db_error}")
         
