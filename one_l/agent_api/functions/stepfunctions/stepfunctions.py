@@ -53,6 +53,9 @@ class StepFunctionsConstruct(Construct):
         self.iam_roles = iam_roles
         self._stack_name = Stack.of(self).stack_name
         
+        # Store Lambda function references for later updates
+        self.lambda_functions = []
+        
         # Create all Lambda functions
         self.create_lambda_functions()
         
@@ -228,7 +231,7 @@ class StepFunctionsConstruct(Construct):
                 )
             )
         
-        return _lambda.Function(
+        func = _lambda.Function(
             self, f"{function_name}Function",
             function_name=f"{self._stack_name}-stepfunctions-{function_name.lower()}",
             runtime=_lambda.Runtime.PYTHON_3_12,
@@ -241,6 +244,11 @@ class StepFunctionsConstruct(Construct):
             # Keep using log_retention (deprecated but stable) to avoid creating new LogGroup resources
             log_retention=logs.RetentionDays.ONE_WEEK
         )
+        
+        # Store reference for later updates
+        self.lambda_functions.append(func)
+        
+        return func
     
     def create_state_machine(self):
         """Create Step Functions state machine with complete workflow."""
@@ -533,4 +541,9 @@ class StepFunctionsConstruct(Construct):
                 level=sfn.LogLevel.ALL
             )
         )
+    
+    def update_knowledge_base_id(self, knowledge_base_id: str):
+        """Update all Lambda functions with the real Knowledge Base ID."""
+        for func in self.lambda_functions:
+            func.add_environment("KNOWLEDGE_BASE_ID", knowledge_base_id)
 

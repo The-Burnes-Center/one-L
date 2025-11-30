@@ -127,6 +127,12 @@ class AgentApiConstruct(Construct):
                 "KNOWLEDGE_BASE_ID", 
                 self.knowledge_base.get_knowledge_base_id()
             )
+            
+            # Update Step Functions Lambda functions if Step Functions is enabled
+            if hasattr(self.functions.agent, 'stepfunctions_construct') and self.functions.agent.stepfunctions_construct:
+                self.functions.agent.stepfunctions_construct.update_knowledge_base_id(
+                    self.knowledge_base.get_knowledge_base_id()
+                )
     
     def create_agent(self):
         """Create the Agent business logic following composition pattern."""
