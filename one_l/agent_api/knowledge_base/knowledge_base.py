@@ -106,6 +106,9 @@ class KnowledgeBaseConstruct(Construct):
     def create_knowledge_base(self):
         """Create the Bedrock Knowledge Base."""
         
+        # Construct ARN manually to avoid early validation issues with attr_arn
+        collection_arn_for_kb = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
+        
         self.knowledge_base = bedrock.CfnKnowledgeBase(
             self, "KnowledgeBase",
             name=self._kb_name,
@@ -121,9 +124,6 @@ class KnowledgeBaseConstruct(Construct):
             ),
             
             # Storage configuration for OpenSearch Serverless
-            # Construct ARN manually to avoid early validation issues with attr_arn
-            collection_arn_for_kb = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
-            
             storage_configuration=bedrock.CfnKnowledgeBase.StorageConfigurationProperty(
                 type="OPENSEARCH_SERVERLESS",
                 opensearch_serverless_configuration=bedrock.CfnKnowledgeBase.OpenSearchServerlessConfigurationProperty(
