@@ -91,8 +91,6 @@ jobs:
         cdk synth
 
     - name: CDK Deploy
-      env:
-        USE_STEP_FUNCTIONS: "true"
       run: |
         cdk deploy --require-approval never || {
           echo "=== CDK Deploy Failed - Getting detailed error information ==="
