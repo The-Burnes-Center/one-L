@@ -64,6 +64,9 @@ class KnowledgeBaseConstruct(Construct):
         self.user_documents_bucket.grant_read(self.knowledge_base_role)
         
         # Grant access to OpenSearch Serverless collection
+        # Construct ARN manually to avoid early validation issues with attr_arn
+        collection_arn = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
+        
         self.knowledge_base_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -81,8 +84,8 @@ class KnowledgeBaseConstruct(Construct):
                     "aoss:DescribeCollectionItems"
                 ],
                 resources=[
-                    self.opensearch_collection.attr_arn,
-                    f"{self.opensearch_collection.attr_arn}/*"
+                    collection_arn,
+                    f"{collection_arn}/*"
                 ]
             )
         )
@@ -118,10 +121,13 @@ class KnowledgeBaseConstruct(Construct):
             ),
             
             # Storage configuration for OpenSearch Serverless
+            # Construct ARN manually to avoid early validation issues with attr_arn
+            collection_arn_for_kb = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
+            
             storage_configuration=bedrock.CfnKnowledgeBase.StorageConfigurationProperty(
                 type="OPENSEARCH_SERVERLESS",
                 opensearch_serverless_configuration=bedrock.CfnKnowledgeBase.OpenSearchServerlessConfigurationProperty(
-                    collection_arn=self.opensearch_collection.attr_arn,
+                    collection_arn=collection_arn_for_kb,
                     vector_index_name="knowledge-base-index",
                     field_mapping=bedrock.CfnKnowledgeBase.OpenSearchServerlessFieldMappingProperty(
                         vector_field="vector_field",

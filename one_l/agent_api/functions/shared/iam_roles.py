@@ -8,6 +8,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_opensearchservice as opensearch,
     aws_dynamodb as dynamodb,
+    Stack,
 )
 
 
@@ -244,6 +245,10 @@ class IAMRolesConstruct(Construct):
         )
         
         # Grant OpenSearch Serverless permissions
+        # Construct ARN manually to avoid early validation issues with attr_arn
+        stack = Stack.of(self)
+        collection_arn = f"arn:aws:aoss:{stack.region}:{stack.account}:collection/{opensearch_collection.attr_id}"
+        
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -251,7 +256,7 @@ class IAMRolesConstruct(Construct):
                     "aoss:APIAccessAll"
                 ],
                 resources=[
-                    opensearch_collection.attr_arn
+                    collection_arn
                 ]
             )
         )
