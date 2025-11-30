@@ -120,6 +120,8 @@ class AgentApiConstruct(Construct):
             "KNOWLEDGE_BASE_ID", 
             self.knowledge_base.get_knowledge_base_id()
         )
+        # Ensure explicit dependency to help with validation
+        self.functions.knowledge_management.sync_knowledge_base_function.node.add_dependency(self.knowledge_base.knowledge_base)
         
         # Update the knowledge base ID in agent functions after creation
         if hasattr(self.functions, 'agent') and self.functions.agent:
@@ -127,6 +129,8 @@ class AgentApiConstruct(Construct):
                 "KNOWLEDGE_BASE_ID", 
                 self.knowledge_base.get_knowledge_base_id()
             )
+            # Ensure explicit dependency to help with validation
+            self.functions.agent.document_review_function.node.add_dependency(self.knowledge_base.knowledge_base)
             
             # Update Step Functions Lambda functions if Step Functions is enabled
             if hasattr(self.functions.agent, 'stepfunctions_construct') and self.functions.agent.stepfunctions_construct:
