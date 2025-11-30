@@ -13,6 +13,21 @@ from agent_api.agent.tools import retrieve_from_knowledge_base
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+def get_kb_id_by_name(name: str) -> str:
+    """Resolve Knowledge Base ID from Name."""
+    try:
+        client = boto3.client('bedrock-agent')
+        paginator = client.get_paginator('list_knowledge_bases')
+        for page in paginator.paginate(MaxResults=100):
+            for kb in page.get('knowledgeBaseSummaries', []):
+                if kb.get('name') == name:
+                    logger.info(f"Resolved Knowledge Base ID {kb.get('knowledgeBaseId')} for name {name}")
+                    return kb.get('knowledgeBaseId')
+        logger.warning(f"Knowledge Base with name {name} not found")
+    except Exception as e:
+        logger.error(f"Error resolving KB ID for name {name}: {e}")
+    return None
+
 def lambda_handler(event, context):
     """
     Execute single KB query and return validated result.
@@ -29,6 +44,11 @@ def lambda_handler(event, context):
         query_id = event.get('query_id', 0)
         max_results = event.get('max_results', 50)
         knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
+        
+        # Fallback to name lookup
+        if (not knowledge_base_id or knowledge_base_id == "placeholder") and os.environ.get('KNOWLEDGE_BASE_NAME'):
+             knowledge_base_id = get_kb_id_by_name(os.environ.get('KNOWLEDGE_BASE_NAME'))
+             
         region = event.get('region') or os.environ.get('REGION')
         
         if not query:

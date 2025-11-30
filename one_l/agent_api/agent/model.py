@@ -487,6 +487,22 @@ def _split_document_into_chunks(doc, chunk_size_characters=100000, chunk_overlap
     return chunks
 
 
+
+def get_kb_id_by_name(name: str) -> str:
+    """Resolve Knowledge Base ID from Name."""
+    try:
+        client = boto3.client('bedrock-agent')
+        paginator = client.get_paginator('list_knowledge_bases')
+        for page in paginator.paginate(MaxResults=100):
+            for kb in page.get('knowledgeBaseSummaries', []):
+                if kb.get('name') == name:
+                    logger.info(f"Resolved Knowledge Base ID {kb.get('knowledgeBaseId')} for name {name}")
+                    return kb.get('knowledgeBaseId')
+        logger.warning(f"Knowledge Base with name {name} not found")
+    except Exception as e:
+        logger.error(f"Error resolving KB ID for name {name}: {e}")
+    return None
+
 class Model:
     """
     Handles document review using Claude 4 Sonnet thinking with tool calling.
@@ -495,6 +511,16 @@ class Model:
     def __init__(self, knowledge_base_id: str, region: str):
         self.knowledge_base_id = knowledge_base_id
         self.region = region
+        
+        # Resolve Knowledge Base ID if it is missing or a placeholder
+        if (not self.knowledge_base_id or self.knowledge_base_id == "placeholder") and os.environ.get('KNOWLEDGE_BASE_NAME'):
+            resolved_id = get_kb_id_by_name(os.environ.get('KNOWLEDGE_BASE_NAME'))
+            if resolved_id:
+                self.knowledge_base_id = resolved_id
+                logger.info(f"Model initialized with resolved KB ID: {self.knowledge_base_id}")
+            else:
+                logger.warning(f"Failed to resolve KB ID from name: {os.environ.get('KNOWLEDGE_BASE_NAME')}")
+        
         self.tools = get_tool_definitions()
     
 
