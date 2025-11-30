@@ -249,7 +249,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.initialize_job_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=3
         )
         
@@ -259,7 +259,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.split_document_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=2
         )
         
@@ -274,7 +274,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.analyze_chunk_structure_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=2
         )
         
@@ -291,7 +291,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.retrieve_kb_query_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=3
         )
         
@@ -303,7 +303,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.analyze_chunk_with_kb_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=2
         )
         
@@ -337,7 +337,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.analyze_document_structure_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=2
         )
         
@@ -354,7 +354,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.retrieve_kb_query_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=3
         )
         
@@ -366,7 +366,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.analyze_document_with_kb_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=2
         )
         
@@ -383,7 +383,7 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.generate_redline_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASK_FAILED],
+            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             max_attempts=2
         )
         
