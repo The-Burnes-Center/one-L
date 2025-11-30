@@ -183,22 +183,23 @@ class AgentConstruct(Construct):
         Returns a dictionary defining available functions and their routing configurations.
         """
         
-        routes = {
-            "review": {
-                "function": self.document_review_function,
-                "path": "review",
-                "methods": ["POST"],
-                "description": "AI-powered document review with conflict detection"
-            }
-        }
-        
-        # Add Step Functions route if enabled
+        # If Step Functions is enabled, use that route instead of Lambda
         if self.stepfunctions_construct:
-            routes["review-stepfunctions"] = {
-                "state_machine": self.stepfunctions_construct.state_machine,
-                "path": "review",
-                "methods": ["POST"],
-                "description": "AI-powered document review with Step Functions workflow"
+            return {
+                "review": {
+                    "state_machine": self.stepfunctions_construct.state_machine,
+                    "path": "review",
+                    "methods": ["POST"],
+                    "description": "AI-powered document review with Step Functions workflow"
+                }
             }
-        
-        return routes 
+        else:
+            # Use regular Lambda function route
+            return {
+                "review": {
+                    "function": self.document_review_function,
+                    "path": "review",
+                    "methods": ["POST"],
+                    "description": "AI-powered document review with conflict detection"
+                }
+            } 
