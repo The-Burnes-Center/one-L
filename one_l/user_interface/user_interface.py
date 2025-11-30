@@ -191,6 +191,8 @@ class UserInterfaceConstruct(Construct):
             role=config_role,
             timeout=Duration.seconds(60),
             memory_size=512,
+            # Keep using log_retention (deprecated but stable) to avoid creating new LogGroup resources
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "WEBSITE_BUCKET": self.website_bucket.bucket_name,
                 "API_GATEWAY_URL": self.api_gateway.main_api.url,
@@ -202,7 +204,6 @@ class UserInterfaceConstruct(Construct):
                 "WEBSOCKET_URL": self.agent_api.get_websocket_api_url() if self.agent_api else "",
                 "LOG_LEVEL": "INFO"
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def update_cognito_callback_urls(self, cloudfront_url: str):

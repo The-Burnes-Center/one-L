@@ -105,8 +105,8 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment=env_vars
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_retrieve_from_s3_function(self):
@@ -134,8 +134,8 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment=env_vars
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_delete_from_s3_function(self):
@@ -163,8 +163,8 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment=env_vars
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_sync_knowledge_base_function(self):
@@ -203,11 +203,11 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(300),  # Longer timeout for sync operations
             memory_size=512,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
                 "LOG_LEVEL": "INFO"
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_session_management_function(self):
@@ -296,8 +296,8 @@ class KnowledgeManagementConstruct(Construct):
             role=session_role,
             timeout=Duration.seconds(60),
             memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment=env_vars
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_index_creation(self):
@@ -346,13 +346,13 @@ class KnowledgeManagementConstruct(Construct):
             role=index_function_role,
             timeout=Duration.seconds(120),  # Matching working implementation
             memory_size=512,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "COLLECTION_ENDPOINT": f"{self.opensearch_collection.attr_id}.{Stack.of(self).region}.aoss.amazonaws.com",
                 "INDEX_NAME": "knowledge-base-index",
                 "EMBEDDING_DIM": "1024",
                 "REGION": Stack.of(self).region
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
         
         # Create custom resource provider (matching working implementation)

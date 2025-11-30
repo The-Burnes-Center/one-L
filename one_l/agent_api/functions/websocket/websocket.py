@@ -111,11 +111,11 @@ class WebSocketConstruct(Construct):
             role=role,
             timeout=Duration.seconds(30),
             memory_size=128,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_disconnect_function(self):
@@ -137,11 +137,11 @@ class WebSocketConstruct(Construct):
             role=role,
             timeout=Duration.seconds(30),
             memory_size=128,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_message_function(self):
@@ -163,11 +163,11 @@ class WebSocketConstruct(Construct):
             role=role,
             timeout=Duration.seconds(30),
             memory_size=128,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_notification_function(self):
@@ -189,11 +189,11 @@ class WebSocketConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
             }
-            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_websocket_api(self):

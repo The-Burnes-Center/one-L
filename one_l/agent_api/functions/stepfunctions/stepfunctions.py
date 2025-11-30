@@ -237,8 +237,9 @@ class StepFunctionsConstruct(Construct):
             role=role,
             timeout=timeout,
             memory_size=memory_size,
-            environment=environment
-            # Note: Not specifying log_group to avoid conflict with existing log groups
+            environment=environment,
+            # Keep using log_retention (deprecated but stable) to avoid creating new LogGroup resources
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def create_state_machine(self):
