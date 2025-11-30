@@ -101,14 +101,6 @@ class WebSocketConstruct(Construct):
             self.connections_table
         )
         
-        # Create log group with retention
-        connect_log_group = logs.LogGroup(
-            self, "WebSocketConnectLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-websocket-connect",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
-        )
-        
         # Create Lambda function
         self.connect_function = _lambda.Function(
             self, "WebSocketConnectFunction",
@@ -122,8 +114,8 @@ class WebSocketConstruct(Construct):
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
-            },
-            log_group=connect_log_group
+            }
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_disconnect_function(self):
@@ -133,14 +125,6 @@ class WebSocketConstruct(Construct):
         role = self.iam_roles.create_websocket_role(
             "WebSocketDisconnect", 
             self.connections_table
-        )
-        
-        # Create log group with retention
-        disconnect_log_group = logs.LogGroup(
-            self, "WebSocketDisconnectLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-websocket-disconnect",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
         )
         
         # Create Lambda function
@@ -156,8 +140,8 @@ class WebSocketConstruct(Construct):
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
-            },
-            log_group=disconnect_log_group
+            }
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_message_function(self):
@@ -167,14 +151,6 @@ class WebSocketConstruct(Construct):
         role = self.iam_roles.create_websocket_role(
             "WebSocketMessage", 
             self.connections_table
-        )
-        
-        # Create log group with retention
-        message_log_group = logs.LogGroup(
-            self, "WebSocketMessageLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-websocket-message",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
         )
         
         # Create Lambda function
@@ -190,8 +166,8 @@ class WebSocketConstruct(Construct):
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
-            },
-            log_group=message_log_group
+            }
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_notification_function(self):
@@ -201,14 +177,6 @@ class WebSocketConstruct(Construct):
         role = self.iam_roles.create_websocket_role(
             "WebSocketNotification", 
             self.connections_table
-        )
-        
-        # Create log group with retention
-        notification_log_group = logs.LogGroup(
-            self, "WebSocketNotificationLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-websocket-notification",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
         )
         
         # Create Lambda function
@@ -224,8 +192,8 @@ class WebSocketConstruct(Construct):
             environment={
                 "CONNECTIONS_TABLE": self.connections_table.table_name,
                 "LOG_LEVEL": "INFO"
-            },
-            log_group=notification_log_group
+            }
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_websocket_api(self):

@@ -132,14 +132,6 @@ class AgentConstruct(Construct):
                 )
             )
         
-        # Create log group with retention
-        doc_review_log_group = logs.LogGroup(
-            self, "DocumentReviewLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-document-review",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
-        )
-        
         self.document_review_function = _lambda.Function(
             self, "DocumentReviewFunction",
             function_name=f"{self._stack_name}-document-review",
@@ -149,7 +141,8 @@ class AgentConstruct(Construct):
             role=role,
             timeout=Duration.minutes(15),  # Long timeout for AI processing
             memory_size=2048,
-            log_group=doc_review_log_group,
+            # Note: Not specifying log_group to avoid conflict with existing log groups
+            # Lambda will use its default log group /aws/lambda/<function-name>
             environment={
                 "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
                 "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,

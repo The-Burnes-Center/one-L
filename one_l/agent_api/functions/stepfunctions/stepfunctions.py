@@ -228,14 +228,6 @@ class StepFunctionsConstruct(Construct):
                 )
             )
         
-        # Create log group with retention
-        log_group = logs.LogGroup(
-            self, f"{function_name}LogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-stepfunctions-{function_name.lower()}",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
-        )
-        
         return _lambda.Function(
             self, f"{function_name}Function",
             function_name=f"{self._stack_name}-stepfunctions-{function_name.lower()}",
@@ -245,8 +237,8 @@ class StepFunctionsConstruct(Construct):
             role=role,
             timeout=timeout,
             memory_size=memory_size,
-            environment=environment,
-            log_group=log_group
+            environment=environment
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def create_state_machine(self):

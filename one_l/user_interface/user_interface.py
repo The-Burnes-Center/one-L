@@ -181,14 +181,6 @@ class UserInterfaceConstruct(Construct):
         # Create IAM role for config generator Lambda
         config_role = iam_roles.create_website_config_role("ConfigGenerator", self.website_bucket)
         
-        # Create log group with retention
-        config_log_group = logs.LogGroup(
-            self, "ConfigGeneratorLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-config-generator",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
-        )
-        
         # Create Lambda function for config generation
         self.config_generator_function = _lambda.Function(
             self, "ConfigGeneratorFunction",
@@ -209,8 +201,8 @@ class UserInterfaceConstruct(Construct):
                 "STACK_NAME": self._stack_name,
                 "WEBSOCKET_URL": self.agent_api.get_websocket_api_url() if self.agent_api else "",
                 "LOG_LEVEL": "INFO"
-            },
-            log_group=config_log_group
+            }
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
     
     def update_cognito_callback_urls(self, cloudfront_url: str):

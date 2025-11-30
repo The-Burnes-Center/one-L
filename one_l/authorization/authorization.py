@@ -168,14 +168,6 @@ class AuthorizationConstruct(Construct):
     
     def create_auth_lambda(self):
         """Create the authentication Lambda function."""
-        # Create log group with retention
-        auth_log_group = logs.LogGroup(
-            self, "AuthLambdaLogGroup",
-            log_group_name=f"/aws/lambda/{self._stack_name}-auth-lambda",
-            retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY
-        )
-        
         self.auth_lambda = _lambda.Function(
             self, "AuthLambda",
             function_name=f"{self._stack_name}-auth-lambda",
@@ -188,8 +180,8 @@ class AuthorizationConstruct(Construct):
                 "USER_POOL_ID": self.user_pool.user_pool_id,
                 "USER_POOL_CLIENT_ID": self.user_pool_client.user_pool_client_id,
                 "LOG_LEVEL": "INFO"
-            },
-            log_group=auth_log_group
+            }
+            # Note: Not specifying log_group to avoid conflict with existing log groups
         )
         
         # Grant Lambda permissions to access Cognito
