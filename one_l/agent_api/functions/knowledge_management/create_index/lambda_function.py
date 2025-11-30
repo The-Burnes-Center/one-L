@@ -31,9 +31,27 @@ def lambda_handler(event, context):
         
         # Get configuration from environment variables
         host = os.environ.get("COLLECTION_ENDPOINT")
+        collection_name = os.environ.get("COLLECTION_NAME")
         index_name = os.environ.get("INDEX_NAME", "knowledge-base-index")
         embedding_dim = int(os.environ.get("EMBEDDING_DIM", "1024"))
         region = os.environ.get("REGION")
+        
+        # Resolve endpoint from name if not provided
+        if not host and collection_name:
+            try:
+                aoss_client = boto3.client('opensearchserverless')
+                logger.info(f"Resolving endpoint for collection: {collection_name}")
+                response = aoss_client.list_collections(
+                    collectionFilters={'name': collection_name}
+                )
+                for collection in response.get('collectionSummaries', []):
+                    if collection.get('name') == collection_name:
+                        collection_id = collection.get('id')
+                        host = f"{collection_id}.{region}.aoss.amazonaws.com"
+                        logger.info(f"Resolved endpoint: {host}")
+                        break
+            except Exception as e:
+                logger.error(f"Failed to resolve endpoint for collection {collection_name}: {e}")
         
         logger.info(f"Collection Endpoint: {host}")
         logger.info(f"Index name: {index_name}")

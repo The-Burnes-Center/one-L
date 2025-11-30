@@ -315,6 +315,7 @@ class KnowledgeManagementConstruct(Construct):
         )
         
         # Add OpenSearch Serverless permissions
+        # Use wildcard ARN to avoid EarlyValidation issues with attr_id during stack updates
         index_function_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -322,8 +323,19 @@ class KnowledgeManagementConstruct(Construct):
                     "aoss:*"
                 ],
                 resources=[
-                    f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
+                    f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/*"
                 ]
+            )
+        )
+        
+        # Add ListCollections permission for endpoint resolution
+        index_function_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "aoss:ListCollections"
+                ],
+                resources=["*"]
             )
         )
         
@@ -348,7 +360,7 @@ class KnowledgeManagementConstruct(Construct):
             memory_size=512,
             log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
-                "COLLECTION_ENDPOINT": f"{self.opensearch_collection.attr_id}.{Stack.of(self).region}.aoss.amazonaws.com",
+                "COLLECTION_NAME": self._collection_name,
                 "INDEX_NAME": "knowledge-base-index",
                 "EMBEDDING_DIM": "1024",
                 "REGION": Stack.of(self).region
