@@ -59,6 +59,24 @@ def normalize_terms_profile(value: Optional[str]) -> str:
     return 'it'
 
 
+def get_kb_id_by_name(name: str) -> Optional[str]:
+    """Resolve Knowledge Base ID from Name."""
+    try:
+        client = boto3.client('bedrock-agent')
+        paginator = client.get_paginator('list_knowledge_bases')
+        # Handle both pagination and simple list depending on API version/behavior
+        # Using paginator is safer for large lists
+        for page in paginator.paginate(MaxResults=100):
+            for kb in page.get('knowledgeBaseSummaries', []):
+                if kb.get('name') == name:
+                    logger.info(f"Resolved Knowledge Base ID {kb.get('knowledgeBaseId')} for name {name}")
+                    return kb.get('knowledgeBaseId')
+        logger.warning(f"Knowledge Base with name {name} not found")
+    except Exception as e:
+        logger.error(f"Error resolving KB ID for name {name}: {e}")
+    return None
+
+
 def resolve_terms_profile(requested_profile: Optional[str]) -> Tuple[Optional[str], str, Optional[str], List[str]]:
     """
     Resolve the requested terms profile to a concrete knowledge base ID.
@@ -69,6 +87,16 @@ def resolve_terms_profile(requested_profile: Optional[str]) -> Tuple[Optional[st
     normalized = normalize_terms_profile(requested_profile)
     general_kb = os.environ.get('KNOWLEDGE_BASE_ID_GENERAL') or os.environ.get('GENERAL_TERMS_KNOWLEDGE_BASE_ID')
     it_kb = os.environ.get('KNOWLEDGE_BASE_ID_IT') or os.environ.get('IT_TERMS_KNOWLEDGE_BASE_ID') or os.environ.get('KNOWLEDGE_BASE_ID')
+    
+    # Fallback to name-based lookup if ID is not directly configured
+    # This allows breaking circular dependencies during deployment
+    if not it_kb and os.environ.get('KNOWLEDGE_BASE_NAME'):
+        kb_name = os.environ.get('KNOWLEDGE_BASE_NAME')
+        logger.info(f"KNOWLEDGE_BASE_ID not set, attempting to resolve from name: {kb_name}")
+        it_kb = get_kb_id_by_name(kb_name)
+        if it_kb:
+            # Cache it in environment for this execution context
+            os.environ['KNOWLEDGE_BASE_ID'] = it_kb
     
     available_profiles = []
     if general_kb:

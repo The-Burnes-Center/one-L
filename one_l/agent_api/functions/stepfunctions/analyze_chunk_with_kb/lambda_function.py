@@ -32,8 +32,8 @@ def lambda_handler(event, context):
     try:
         chunk_s3_key = event.get('chunk_s3_key')
         bucket_name = event.get('bucket_name')
-        knowledge_base_id = event.get('knowledge_base_id')
-        region = event.get('region')
+        knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
+        region = event.get('region') or os.environ.get('REGION')
         chunk_num = event.get('chunk_num', 0)
         total_chunks = event.get('total_chunks', 1)
         start_char = event.get('start_char', 0)

@@ -116,27 +116,42 @@ class AgentApiConstruct(Construct):
         
         # Update the knowledge base ID in functions after creation
         # Note: This creates a circular dependency that CDK can handle
-        self.functions.knowledge_management.sync_knowledge_base_function.add_environment(
-            "KNOWLEDGE_BASE_ID", 
-            self.knowledge_base.get_knowledge_base_id()
-        )
+        
+        # Add KNOWLEDGE_BASE_NAME to allow runtime lookup if ID is missing
+        kb_name = f"{self._stack_name}-knowledge-base"
+        self.functions.knowledge_management.sync_knowledge_base_function.add_environment("KNOWLEDGE_BASE_NAME", kb_name)
+        
+        # Temporarily comment out KNOWLEDGE_BASE_ID injection to avoid EarlyValidation error on deployment
+        # The Lambda functions now fall back to looking up the ID by name if the env var is missing
+        # self.functions.knowledge_management.sync_knowledge_base_function.add_environment(
+        #     "KNOWLEDGE_BASE_ID", 
+        #     self.knowledge_base.get_knowledge_base_id()
+        # )
+        
         # Ensure explicit dependency to help with validation
         self.functions.knowledge_management.sync_knowledge_base_function.node.add_dependency(self.knowledge_base.knowledge_base)
         
         # Update the knowledge base ID in agent functions after creation
         if hasattr(self.functions, 'agent') and self.functions.agent:
-            self.functions.agent.document_review_function.add_environment(
-                "KNOWLEDGE_BASE_ID", 
-                self.knowledge_base.get_knowledge_base_id()
-            )
+            self.functions.agent.document_review_function.add_environment("KNOWLEDGE_BASE_NAME", kb_name)
+            
+            # Temporarily comment out KNOWLEDGE_BASE_ID injection
+            # self.functions.agent.document_review_function.add_environment(
+            #     "KNOWLEDGE_BASE_ID", 
+            #     self.knowledge_base.get_knowledge_base_id()
+            # )
+            
             # Ensure explicit dependency to help with validation
             self.functions.agent.document_review_function.node.add_dependency(self.knowledge_base.knowledge_base)
             
             # Update Step Functions Lambda functions if Step Functions is enabled
             if hasattr(self.functions.agent, 'stepfunctions_construct') and self.functions.agent.stepfunctions_construct:
-                self.functions.agent.stepfunctions_construct.update_knowledge_base_id(
-                    self.knowledge_base.get_knowledge_base_id()
-                )
+                self.functions.agent.stepfunctions_construct.update_knowledge_base_name(kb_name)
+                
+                # Temporarily comment out KNOWLEDGE_BASE_ID injection
+                # self.functions.agent.stepfunctions_construct.update_knowledge_base_id(
+                #    self.knowledge_base.get_knowledge_base_id()
+                # )
     
     def create_agent(self):
         """Create the Agent business logic following composition pattern."""

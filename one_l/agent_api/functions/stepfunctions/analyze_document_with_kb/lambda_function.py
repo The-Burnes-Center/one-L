@@ -31,8 +31,8 @@ def lambda_handler(event, context):
     try:
         document_s3_key = event.get('document_s3_key')
         bucket_name = event.get('bucket_name')
-        knowledge_base_id = event.get('knowledge_base_id')
-        region = event.get('region')
+        knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
+        region = event.get('region') or os.environ.get('REGION')
         kb_results = event.get('kb_results', [])
         
         if not document_s3_key or not bucket_name:

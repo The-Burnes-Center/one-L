@@ -15,6 +15,20 @@ logger.setLevel(logging.INFO)
 # Initialize Bedrock client
 bedrock_client = boto3.client('bedrock-agent')
 
+def get_kb_id_by_name(name: str) -> str:
+    """Resolve Knowledge Base ID from Name."""
+    try:
+        paginator = bedrock_client.get_paginator('list_knowledge_bases')
+        for page in paginator.paginate(MaxResults=100):
+            for kb in page.get('knowledgeBaseSummaries', []):
+                if kb.get('name') == name:
+                    logger.info(f"Resolved Knowledge Base ID {kb.get('knowledgeBaseId')} for name {name}")
+                    return kb.get('knowledgeBaseId')
+        logger.warning(f"Knowledge Base with name {name} not found")
+    except Exception as e:
+        logger.error(f"Error resolving KB ID for name {name}: {e}")
+    return None
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda function to manually trigger Knowledge Base synchronization.
@@ -76,6 +90,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Get Knowledge Base ID from environment
         knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
         
+        # Fallback to name lookup if ID not set
+        if not knowledge_base_id and os.environ.get('KNOWLEDGE_BASE_NAME'):
+            kb_name = os.environ.get('KNOWLEDGE_BASE_NAME')
+            logger.info(f"KNOWLEDGE_BASE_ID not set, attempting to resolve from name: {kb_name}")
+            knowledge_base_id = get_kb_id_by_name(kb_name)
+        
         if not knowledge_base_id:
             return create_error_response(500, "Knowledge Base ID not configured")
         
@@ -104,6 +124,11 @@ def handle_s3_event(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get Knowledge Base ID from environment
         knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
+        
+        # Fallback to name lookup if ID not set
+        if not knowledge_base_id and os.environ.get('KNOWLEDGE_BASE_NAME'):
+            kb_name = os.environ.get('KNOWLEDGE_BASE_NAME')
+            knowledge_base_id = get_kb_id_by_name(kb_name)
         
         if not knowledge_base_id:
             return create_error_response(500, "Knowledge Base ID not configured")

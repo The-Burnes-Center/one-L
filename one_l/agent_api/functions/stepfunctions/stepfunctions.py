@@ -547,3 +547,8 @@ class StepFunctionsConstruct(Construct):
         for func in self.lambda_functions:
             func.add_environment("KNOWLEDGE_BASE_ID", knowledge_base_id)
 
+    def update_knowledge_base_name(self, knowledge_base_name: str):
+        """Update all Lambda functions with the Knowledge Base Name."""
+        for func in self.lambda_functions:
+            func.add_environment("KNOWLEDGE_BASE_NAME", knowledge_base_name)
+

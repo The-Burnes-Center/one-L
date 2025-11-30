@@ -243,12 +243,22 @@ class IAMRolesConstruct(Construct):
                 actions=[
                     "bedrock:Retrieve",
                     "bedrock:RetrieveAndGenerate", 
-                    "bedrock:GetKnowledgeBase",
-                    "bedrock:ListKnowledgeBases"
+                    "bedrock:GetKnowledgeBase"
                 ],
                 resources=[
                     "arn:aws:bedrock:*:*:knowledge-base/*"
                 ]
+            )
+        )
+        
+        # Grant ListKnowledgeBases permission separately as it requires * resource
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:ListKnowledgeBases"
+                ],
+                resources=["*"]
             )
         )
         

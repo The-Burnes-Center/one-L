@@ -28,8 +28,8 @@ def lambda_handler(event, context):
         query = event.get('query')
         query_id = event.get('query_id', 0)
         max_results = event.get('max_results', 50)
-        knowledge_base_id = event.get('knowledge_base_id')
-        region = event.get('region')
+        knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
+        region = event.get('region') or os.environ.get('REGION')
         
         if not query:
             raise ValueError("query is required")
