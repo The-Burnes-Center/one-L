@@ -183,14 +183,39 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
         {
             "toolSpec": {
                 "name": "retrieve_from_knowledge_base",
-                "description": "Exhaustively retrieve ALL relevant reference documents for conflict detection. Optimized for maximum coverage with deduplication, relevance filtering, and smart chunking. Use 8-12+ targeted queries to ensure no conflicts are missed. Lowered relevance threshold captures edge cases.",
+                "description": """
+Exhaustively retrieve ALL relevant reference documents for conflict detection.
+
+**When to use:**
+- After analyzing vendor document structure
+- When you need to check vendor language against Massachusetts requirements
+- For each distinct section or topic area in vendor document
+
+**Query Construction Best Practices:**
+- Include specific contract terms from vendor document
+- Add legal phrases and Massachusetts-specific terminology
+- Include synonyms and variations of key terms
+- Target 50-100+ unique terms per query
+- Make queries distinct and non-overlapping
+
+**Examples of Effective Queries:**
+- "liability indemnity insurance Massachusetts ITS Terms and Conditions unlimited coverage"
+- "payment terms invoicing net 30 days Massachusetts Commonwealth requirements"
+- "data ownership intellectual property confidentiality Massachusetts state contracts"
+
+**Output:**
+Returns array of relevant document chunks with text, metadata, and relevance scores.
+Optimized for maximum coverage with deduplication and relevance filtering.
+
+Use 6-12+ targeted queries to ensure no conflicts are missed.
+""",
                 "inputSchema": {
                     "json": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Targeted search query to find reference documents. Use specific contract terms, legal phrases, or vendor-specific language. Try variations of important terms to catch all relevant content."
+                                "description": "Targeted search query to find reference documents. Use specific contract terms, legal phrases, or vendor-specific language. Try variations of important terms to catch all relevant content. Target 50-100+ unique terms per query."
                             },
                             "max_results": {
                                 "type": "integer",

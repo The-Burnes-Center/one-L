@@ -19,9 +19,24 @@ import boto3
 from botocore.config import Config
 import logging
 import time
+import sys
+import os
 from typing import Dict, Any, List
 from .system_prompt import SYSTEM_PROMPT
 from .tools import retrieve_from_knowledge_base, redline_document, get_tool_definitions, save_analysis_to_dynamodb, parse_conflicts_for_redlining
+
+# Import constants - add parent directories to path
+_parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+try:
+    import constants
+except ImportError:
+    # Fallback if constants not available
+    class Constants:
+        CHUNK_SIZE_CHARACTERS = 100000
+        CHUNK_OVERLAP_CHARACTERS = 5000
+    constants = Constants()
 
 # Import PDF utilities if available
 try:
@@ -327,62 +342,147 @@ def _extract_json_only(content: str) -> str:
     logger.warning(f"Could not extract valid JSON from response. Response preview: {content[:200]}...")
     return '{"explanation": "", "conflicts": []}'
 
-def _split_document_into_chunks(doc, chunk_size=100, overlap=5):
+def _split_document_into_chunks(doc, chunk_size_characters=100000, chunk_overlap_characters=5000, is_pdf=False, pdf_bytes=None):
     """
-    Split a document into chunks for better processing.
-    Uses simple paragraph slicing - each chunk becomes its own smaller document.
+    Split a document into chunks using character-based chunking.
     
     Args:
-        doc: python-docx Document object
-        chunk_size: Number of paragraphs per chunk (~5 pages)
-        overlap: Number of paragraphs to overlap between chunks
+        doc: python-docx Document object (for DOCX) or None (for PDF)
+        chunk_size_characters: Number of characters per chunk
+        chunk_overlap_characters: Number of characters to overlap between chunks
+        is_pdf: Whether this is a PDF document
+        pdf_bytes: PDF file content as bytes (required if is_pdf=True)
         
     Returns:
-        List of (start_idx, end_idx, chunk_doc) tuples
+        List of chunk dictionaries with bytes, chunk_num, start_char, end_char, is_pdf
     """
     from docx import Document
-    from docx.oxml import OxmlElement
     import io
     
-    chunks = []
-    total_paragraphs = len(doc.paragraphs)
-    start_idx = 0
-    chunk_num = 0
+    # Import constants
+    try:
+        import constants
+        chunk_size = getattr(constants, 'CHUNK_SIZE_CHARACTERS', chunk_size_characters)
+        overlap = getattr(constants, 'CHUNK_OVERLAP_CHARACTERS', chunk_overlap_characters)
+    except (ImportError, AttributeError):
+        # Fallback to function parameters
+        chunk_size = chunk_size_characters
+        overlap = chunk_overlap_characters
     
-    while start_idx < total_paragraphs:
-        end_idx = min(start_idx + chunk_size, total_paragraphs)
+    chunks = []
+    
+    if is_pdf and pdf_bytes:
+        # For PDFs: Extract text and chunk by characters
+        try:
+            from .pdf_processor import PDFProcessor
+            pdf_processor = PDFProcessor()
+            full_text = pdf_processor.extract_text(pdf_bytes)
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF: {e}")
+            # Fallback: return entire PDF as single chunk
+            chunks.append({
+                'bytes': pdf_bytes,
+                'chunk_num': 0,
+                'start_char': 0,
+                'end_char': len(pdf_bytes),  # Approximate for PDF
+                'is_pdf': True
+            })
+            return chunks
         
-        # Create a new document for this chunk
-        chunk_doc = Document()
+        total_chars = len(full_text)
+        start_char = 0
+        chunk_num = 0
         
-        # Copy paragraphs with their content
-        for i in range(start_idx, end_idx):
-            src_para = doc.paragraphs[i]
-            new_para = chunk_doc.add_paragraph()
+        while start_char < total_chars:
+            end_char = min(start_char + chunk_size, total_chars)
             
-            # Copy the paragraph text
-            para_text = src_para.text
-            if para_text.strip():  # Only add non-empty paragraphs
-                new_para.add_run(para_text)
+            # Extract chunk text
+            chunk_text = full_text[start_char:end_char]
+            
+            # For PDFs, we'll create a DOCX chunk from the text
+            chunk_doc = Document()
+            # Split text into paragraphs (by newlines)
+            for para_text in chunk_text.split('\n'):
+                if para_text.strip():
+                    chunk_doc.add_paragraph(para_text.strip())
+            
+            # Save to bytes
+            buffer = io.BytesIO()
+            chunk_doc.save(buffer)
+            chunk_bytes = buffer.getvalue()
+            
+            chunks.append({
+                'bytes': chunk_bytes,
+                'chunk_num': chunk_num,
+                'start_char': start_char,
+                'end_char': end_char,
+                'is_pdf': False  # Chunk is DOCX even if source was PDF
+            })
+            
+            chunk_num += 1
+            # Move start position with overlap
+            start_char = end_char - overlap
+            if start_char >= total_chars - overlap:
+                break
+    else:
+        # For DOCX: Extract full text and chunk by characters
+        # Extract all text from document
+        full_text_parts = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                full_text_parts.append(para.text)
         
-        # Save to bytes
-        buffer = io.BytesIO()
-        chunk_doc.save(buffer)
-        chunk_bytes = buffer.getvalue()
+        full_text = '\n\n'.join(full_text_parts)
+        total_chars = len(full_text)
         
-        chunks.append({
-            'bytes': chunk_bytes,
-            'start_para': start_idx,
-            'end_para': end_idx,
-            'num_paragraphs': end_idx - start_idx,
-            'chunk_num': chunk_num
-        })
+        if total_chars == 0:
+            # Empty document - return single empty chunk
+            buffer = io.BytesIO()
+            doc.save(buffer)
+            chunks.append({
+                'bytes': buffer.getvalue(),
+                'chunk_num': 0,
+                'start_char': 0,
+                'end_char': 0,
+                'is_pdf': False
+            })
+            return chunks
         
-        chunk_num += 1
-        start_idx += chunk_size - overlap
+        start_char = 0
+        chunk_num = 0
         
-        if start_idx >= total_paragraphs - overlap:
-            break
+        while start_char < total_chars:
+            end_char = min(start_char + chunk_size, total_chars)
+            
+            # Extract chunk text
+            chunk_text = full_text[start_char:end_char]
+            
+            # Create a new document for this chunk
+            chunk_doc = Document()
+            
+            # Split chunk text into paragraphs and add to document
+            for para_text in chunk_text.split('\n\n'):
+                if para_text.strip():
+                    chunk_doc.add_paragraph(para_text.strip())
+            
+            # Save to bytes
+            buffer = io.BytesIO()
+            chunk_doc.save(buffer)
+            chunk_bytes = buffer.getvalue()
+            
+            chunks.append({
+                'bytes': chunk_bytes,
+                'chunk_num': chunk_num,
+                'start_char': start_char,
+                'end_char': end_char,
+                'is_pdf': False
+            })
+            
+            chunk_num += 1
+            # Move start position with overlap
+            start_char = end_char - overlap
+            if start_char >= total_chars - overlap:
+                break
     
     return chunks
 
@@ -556,8 +656,8 @@ class Model:
         try:
             logger.info(f"Starting chunked document review")
             
-            # Split document into chunks
-            chunks = _split_document_into_chunks(doc, chunk_size=100, overlap=5)
+            # Split document into chunks using character-based chunking
+            chunks = _split_document_into_chunks(doc, is_pdf=False)
             logger.info(f"Split document into {len(chunks)} chunks for analysis")
             
             all_content = []
@@ -571,19 +671,18 @@ class Model:
             # Process each chunk
             for chunk_info in chunks:
                 chunk_num = chunk_info['chunk_num']
-                start_para = chunk_info['start_para']
-                end_para = chunk_info['end_para']
+                start_char = chunk_info['start_char']
+                end_char = chunk_info['end_char']
                 chunk_bytes = chunk_info['bytes']
                 
-                logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (paragraphs {start_para}-{end_para})")
+                logger.info(f"Analyzing chunk {chunk_num + 1}/{len(chunks)} (characters {start_char}-{end_char})")
                 
                 # Create instruction for this specific chunk with Additional counter context
-                approx_pages = f"(approximately pages {start_para//15 + 1}-{end_para//15 + 1})"
                 additional_context = ""
                 if chunk_num > 0:  # Not the first chunk
                     additional_context = f" IMPORTANT: For conflicts that don't have a vendor-provided ID, use 'Additional-{additional_counter + 1}', 'Additional-{additional_counter + 2}', etc. (continuing from previous sections)."
                 
-                instruction_text = f"Analyze this vendor submission section {approx_pages} for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters.{additional_context} Output ONLY a JSON object with 'explanation' and 'conflicts' fields (empty conflicts array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
+                instruction_text = f"You are analyzing chunk {chunk_num + 1} of {len(chunks)} (characters {start_char}-{end_char}). Analyze this vendor submission section for MATERIAL conflicts with Massachusetts Commonwealth requirements. Focus on issues that have real business or legal impact - changes to obligations, risk allocation, financial terms, service delivery, or compliance requirements. Look for substantive differences that create actual risk or modify important rights. Do NOT flag minor language differences that don't change meaning. For each conflict you find, explain the practical business impact in the rationale field - what risk it creates and why it matters.{additional_context} Output ONLY a JSON object with 'explanation' and 'conflicts' fields (empty conflicts array [] if no conflicts found). Do not include any explanatory text or markdown formatting."
                 
                 messages = [
                     {
@@ -616,7 +715,7 @@ class Model:
                             chunk_text_content.append(para.text.strip())
                     chunk_full_text = '\n\n'.join(chunk_text_content)
                     
-                    logger.info(f"=== CHUNK {chunk_num + 1}/{len(chunks)} CONTENT (paragraphs {start_para}-{end_para}) ===")
+                    logger.info(f"=== CHUNK {chunk_num + 1}/{len(chunks)} CONTENT (characters {start_char}-{end_char}) ===")
                     logger.info(f"Chunk size: {len(chunk_bytes)} bytes, {len(chunk_text_content)} paragraphs")
                     logger.info(f"Chunk text length: {len(chunk_full_text)} characters")
                     logger.info(f"--- CHUNK {chunk_num + 1} FULL TEXT ---")

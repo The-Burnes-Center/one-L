@@ -91,6 +91,8 @@ jobs:
         cdk synth
 
     - name: CDK Deploy
+      env:
+        USE_STEP_FUNCTIONS: "true"
       run: |
         cdk deploy --require-approval never
 

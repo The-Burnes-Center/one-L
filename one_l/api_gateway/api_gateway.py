@@ -7,10 +7,13 @@ from constructs import Construct
 from aws_cdk import (
     aws_apigateway as apigateway,
     aws_lambda as _lambda,
+    aws_stepfunctions as sfn,
+    aws_iam as iam,
     Stack,
     CfnOutput,
     Duration
 )
+import os
 
 
 class ApiGatewayConstruct(Construct):
@@ -111,13 +114,23 @@ class ApiGatewayConstruct(Construct):
         
         # Create routes for each function in the category
         for func_name, func_config in functions.items():
-            self.create_function_route(
-                category_resource,
-                func_name,
-                func_config["function"],
-                func_config["methods"],
-                func_config["path"]
-            )
+            # Check if this is a Step Functions route or Lambda route
+            if "state_machine" in func_config:
+                self.create_stepfunctions_route(
+                    category_resource,
+                    func_name,
+                    func_config["state_machine"],
+                    func_config["methods"],
+                    func_config["path"]
+                )
+            else:
+                self.create_function_route(
+                    category_resource,
+                    func_name,
+                    func_config["function"],
+                    func_config["methods"],
+                    func_config["path"]
+                )
     
     def create_function_route(
         self,
@@ -148,6 +161,70 @@ class ApiGatewayConstruct(Construct):
             )
         
         # Note: OPTIONS method is automatically added by default_cors_preflight_options
+    
+    def create_stepfunctions_route(
+        self,
+        parent_resource: apigateway.Resource,
+        function_name: str,
+        state_machine: sfn.StateMachine,
+        methods: list,
+        path: str
+    ):
+        """Create a route for a Step Functions state machine."""
+        
+        # Create function resource
+        function_resource = parent_resource.add_resource(path)
+        
+        # Create IAM role for API Gateway to invoke Step Functions
+        stepfunctions_role = iam.Role(
+            self, f"{function_name}StepFunctionsRole",
+            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                )
+            ]
+        )
+        
+        # Grant permission to start Step Functions execution
+        state_machine.grant_start_execution(stepfunctions_role)
+        
+        # Create Step Functions integration
+        # Note: API Gateway doesn't have native Step Functions integration,
+        # so we'll need to use AWS service integration
+        integration = apigateway.AwsIntegration(
+            service="states",
+            action="StartExecution",
+            options=apigateway.IntegrationOptions(
+                credentials_role=stepfunctions_role,
+                integration_responses=[
+                    apigateway.IntegrationResponse(
+                        status_code="200",
+                        response_parameters={
+                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                        }
+                    )
+                ],
+                request_templates={
+                    "application/json": f'{{"stateMachineArn": "{state_machine.state_machine_arn}", "input": "$util.escapeJavaScript($input.body)"}}'
+                }
+            )
+        )
+        
+        # Add methods to the resource
+        for method in methods:
+            method_response = apigateway.MethodResponse(
+                status_code="200",
+                response_parameters={
+                    "method.response.header.Access-Control-Allow-Origin": True
+                }
+            )
+            
+            function_resource.add_method(
+                method,
+                integration,
+                method_responses=[method_response]
+            )
     
     def create_outputs(self):
         """Create CloudFormation outputs."""

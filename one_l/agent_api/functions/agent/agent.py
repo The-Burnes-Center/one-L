@@ -68,9 +68,17 @@ class AgentConstruct(Construct):
         
         # Instance variables for Lambda functions
         self.document_review_function = None
+        self.stepfunctions_construct = None
+        
+        # Check if Step Functions should be enabled
+        use_stepfunctions = os.environ.get('USE_STEP_FUNCTIONS', 'false').lower() == 'true'
         
         # Create agent functions
         self.create_functions()
+        
+        # Optionally create Step Functions construct
+        if use_stepfunctions:
+            self.create_stepfunctions_construct()
     
     def create_functions(self):
         """Create agent Lambda functions."""
@@ -87,13 +95,48 @@ class AgentConstruct(Construct):
             self.opensearch_collection
         )
         
-        # Create Lambda function using pre-compiled wheels for lxml to avoid compilation issues
+        # Create Lambda function
+        # CDK will automatically build the Lambda package during deployment
+        # If build/lambda-deployment.zip exists, use it (for CI/CD or manual builds)
+        # Otherwise, CDK will use bundling to build automatically
+        lambda_code = None
+        if os.path.exists("build/lambda-deployment.zip"):
+            # Use pre-built package if available (useful for CI/CD)
+            lambda_code = _lambda.Code.from_asset("build/lambda-deployment.zip")
+        else:
+            # CDK will automatically bundle using Docker for native dependencies
+            # This requires Docker to be running during cdk deploy
+            lambda_code = _lambda.Code.from_asset(
+                ".",
+                bundling=_lambda.BundlingOptions(
+                    image=_lambda.DockerImage.from_registry("public.ecr.aws/lambda/python:3.12"),
+                    command=[
+                        "bash", "-c",
+                        """
+                        # Install system dependencies for native packages
+                        dnf update -y && dnf install -y gcc gcc-c++ libxml2-devel libxslt-devel python3-devel zip && \
+                        # Install Python dependencies
+                        pip install --upgrade pip setuptools wheel && \
+                        pip install --no-cache-dir -r one_l/agent_api/functions/agent/document_review/requirements.txt -t /asset-output && \
+                        # Copy Lambda function
+                        cp one_l/agent_api/functions/agent/document_review/lambda_function.py /asset-output/ && \
+                        # Copy agent modules
+                        mkdir -p /asset-output/agent_api/agent && \
+                        cp -r one_l/agent_api/agent/* /asset-output/agent_api/agent/ && \
+                        # Copy constants if needed
+                        cp constants.py /asset-output/ 2>/dev/null || true
+                        """
+                    ],
+                    user="root"
+                )
+            )
+        
         self.document_review_function = _lambda.Function(
             self, "DocumentReviewFunction",
             function_name=f"{self._stack_name}-document-review",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset("build/lambda-deployment.zip"),
+            code=lambda_code,
             role=role,
             timeout=Duration.minutes(15),  # Long timeout for AI processing
             memory_size=2048,
@@ -115,6 +158,24 @@ class AgentConstruct(Construct):
             }
         )
     
+    def create_stepfunctions_construct(self):
+        """Create Step Functions construct if enabled."""
+        try:
+            from ..stepfunctions.stepfunctions import StepFunctionsConstruct
+            
+            self.stepfunctions_construct = StepFunctionsConstruct(
+                self, "StepFunctions",
+                knowledge_bucket=self.knowledge_bucket,
+                user_documents_bucket=self.user_documents_bucket,
+                agent_processing_bucket=self.agent_processing_bucket,
+                analysis_table=self.analysis_table,
+                opensearch_collection=self.opensearch_collection,
+                knowledge_base_id=self.knowledge_base_id,
+                iam_roles=self.iam_roles
+            )
+        except ImportError as e:
+            print(f"Warning: Could not import StepFunctionsConstruct: {e}")
+    
     def get_function_routes(self) -> dict:
         """
         Get function routing metadata for API Gateway.
@@ -122,11 +183,22 @@ class AgentConstruct(Construct):
         Returns a dictionary defining available functions and their routing configurations.
         """
         
-        return {
+        routes = {
             "review": {
                 "function": self.document_review_function,
                 "path": "review",
                 "methods": ["POST"],
                 "description": "AI-powered document review with conflict detection"
             }
-        } 
+        }
+        
+        # Add Step Functions route if enabled
+        if self.stepfunctions_construct:
+            routes["review-stepfunctions"] = {
+                "state_machine": self.stepfunctions_construct.state_machine,
+                "path": "review",
+                "methods": ["POST"],
+                "description": "AI-powered document review with Step Functions workflow"
+            }
+        
+        return routes 
