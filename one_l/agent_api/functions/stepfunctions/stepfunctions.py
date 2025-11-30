@@ -248,9 +248,13 @@ class StepFunctionsConstruct(Construct):
             self, "InitializeJob",
             lambda_function=self.initialize_job_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=3
+            retry_on_service_exceptions=True
+        )
+        initialize_job.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=3,
+            backoff_rate=2.0
         )
         
         # Split document
@@ -258,9 +262,13 @@ class StepFunctionsConstruct(Construct):
             self, "SplitDocument",
             lambda_function=self.split_document_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=2
+            retry_on_service_exceptions=True
+        )
+        split_document.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Check chunk count
@@ -273,9 +281,13 @@ class StepFunctionsConstruct(Construct):
             self, "AnalyzeChunkStructure",
             lambda_function=self.analyze_chunk_structure_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=2
+            retry_on_service_exceptions=True
+        )
+        analyze_chunk_structure.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Retrieve KB queries in parallel
@@ -290,9 +302,13 @@ class StepFunctionsConstruct(Construct):
             self, "RetrieveKBQuery",
             lambda_function=self.retrieve_kb_query_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=3
+            retry_on_service_exceptions=True
+        )
+        retrieve_kb_query.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=3,
+            backoff_rate=2.0
         )
         
         retrieve_kb_queries_map.iterator(retrieve_kb_query)
@@ -302,9 +318,13 @@ class StepFunctionsConstruct(Construct):
             self, "AnalyzeChunkWithKB",
             lambda_function=self.analyze_chunk_with_kb_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=2
+            retry_on_service_exceptions=True
+        )
+        analyze_chunk_with_kb.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Chunk workflow: structure -> queries -> analysis
@@ -329,6 +349,12 @@ class StepFunctionsConstruct(Construct):
             output_path="$.Payload",
             retry_on_service_exceptions=True
         )
+        merge_chunk_results.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
+        )
         
         # ===== SINGLE DOCUMENT PATH (chunks = 1) =====
         
@@ -336,9 +362,13 @@ class StepFunctionsConstruct(Construct):
             self, "AnalyzeDocumentStructure",
             lambda_function=self.analyze_document_structure_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=2
+            retry_on_service_exceptions=True
+        )
+        analyze_doc_structure.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Retrieve KB queries in parallel
@@ -353,9 +383,13 @@ class StepFunctionsConstruct(Construct):
             self, "RetrieveDocKBQuery",
             lambda_function=self.retrieve_kb_query_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=3
+            retry_on_service_exceptions=True
+        )
+        retrieve_doc_kb_query.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=3,
+            backoff_rate=2.0
         )
         
         retrieve_doc_kb_queries_map.iterator(retrieve_doc_kb_query)
@@ -365,9 +399,13 @@ class StepFunctionsConstruct(Construct):
             self, "AnalyzeDocumentWithKB",
             lambda_function=self.analyze_document_with_kb_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=2
+            retry_on_service_exceptions=True
+        )
+        analyze_document_with_kb.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Single document workflow
@@ -382,9 +420,13 @@ class StepFunctionsConstruct(Construct):
             self, "GenerateRedline",
             lambda_function=self.generate_redline_fn,
             output_path="$.Payload",
-            retry_on_service_exceptions=True,
-            retry_on_exceptions=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            max_attempts=2
+            retry_on_service_exceptions=True
+        )
+        generate_redline.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Save results
@@ -394,6 +436,12 @@ class StepFunctionsConstruct(Construct):
             output_path="$.Payload",
             retry_on_service_exceptions=True
         )
+        save_results.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
+        )
         
         # Cleanup session
         cleanup_session = tasks.LambdaInvoke(
@@ -401,6 +449,12 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.cleanup_session_fn,
             output_path="$.Payload",
             retry_on_service_exceptions=True
+        )
+        cleanup_session.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
         )
         
         # Error handler
