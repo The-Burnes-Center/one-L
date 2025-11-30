@@ -14,7 +14,8 @@ from aws_cdk import (
     aws_iam as iam,
     Duration,
     Stack,
-    CustomResource
+    CustomResource,
+    RemovalPolicy
 )
 
 
@@ -94,6 +95,14 @@ class KnowledgeManagementConstruct(Construct):
         if self.agent_processing_bucket:
             env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
         
+        # Create log group with retention
+        upload_log_group = logs.LogGroup(
+            self, "UploadToS3LogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-upload-to-s3",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function
         self.upload_to_s3_function = _lambda.Function(
             self, "UploadToS3Function",
@@ -105,7 +114,7 @@ class KnowledgeManagementConstruct(Construct):
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=env_vars,
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=upload_log_group
         )
     
     def create_retrieve_from_s3_function(self):
@@ -123,6 +132,14 @@ class KnowledgeManagementConstruct(Construct):
         if self.agent_processing_bucket:
             env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
         
+        # Create log group with retention
+        retrieve_log_group = logs.LogGroup(
+            self, "RetrieveFromS3LogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-retrieve-from-s3",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function
         self.retrieve_from_s3_function = _lambda.Function(
             self, "RetrieveFromS3Function",
@@ -134,7 +151,7 @@ class KnowledgeManagementConstruct(Construct):
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=env_vars,
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=retrieve_log_group
         )
     
     def create_delete_from_s3_function(self):
@@ -152,6 +169,14 @@ class KnowledgeManagementConstruct(Construct):
         if self.agent_processing_bucket:
             env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
         
+        # Create log group with retention
+        delete_log_group = logs.LogGroup(
+            self, "DeleteFromS3LogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-delete-from-s3",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function
         self.delete_from_s3_function = _lambda.Function(
             self, "DeleteFromS3Function",
@@ -163,7 +188,7 @@ class KnowledgeManagementConstruct(Construct):
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=env_vars,
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=delete_log_group
         )
     
     def create_sync_knowledge_base_function(self):
@@ -192,6 +217,14 @@ class KnowledgeManagementConstruct(Construct):
             )
         )
         
+        # Create log group with retention
+        sync_log_group = logs.LogGroup(
+            self, "SyncKnowledgeBaseLogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-sync-knowledge-base",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function
         self.sync_knowledge_base_function = _lambda.Function(
             self, "SyncKnowledgeBaseFunction",
@@ -206,7 +239,7 @@ class KnowledgeManagementConstruct(Construct):
                 "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
                 "LOG_LEVEL": "INFO"
             },
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=sync_log_group
         )
     
     def create_session_management_function(self):
@@ -285,6 +318,14 @@ class KnowledgeManagementConstruct(Construct):
         if self.authorization and self.authorization.user_pool:
             env_vars["USER_POOL_ID"] = self.authorization.user_pool.user_pool_id
         
+        # Create log group with retention
+        session_log_group = logs.LogGroup(
+            self, "SessionManagementLogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-session-management",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function
         self.session_management_function = _lambda.Function(
             self, "SessionManagementFunction",
@@ -296,7 +337,7 @@ class KnowledgeManagementConstruct(Construct):
             timeout=Duration.seconds(60),
             memory_size=256,
             environment=env_vars,
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=session_log_group
         )
     
     def create_index_creation(self):
@@ -326,6 +367,14 @@ class KnowledgeManagementConstruct(Construct):
             )
         )
         
+        # Create log group with retention
+        create_index_log_group = logs.LogGroup(
+            self, "CreateIndexLogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-create-index",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function for index creation with bundling for dependencies
         self.create_index_function = _lambda.Function(
             self, "CreateIndexFunction",
@@ -351,7 +400,7 @@ class KnowledgeManagementConstruct(Construct):
                 "EMBEDDING_DIM": "1024",
                 "REGION": Stack.of(self).region
             },
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=create_index_log_group
         )
         
         # Create custom resource provider (matching working implementation)

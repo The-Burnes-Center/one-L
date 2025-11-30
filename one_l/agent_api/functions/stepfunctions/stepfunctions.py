@@ -16,7 +16,8 @@ from aws_cdk import (
     aws_opensearchserverless as aoss,
     aws_logs as logs,
     Duration,
-    Stack
+    Stack,
+    RemovalPolicy
 )
 
 
@@ -227,6 +228,14 @@ class StepFunctionsConstruct(Construct):
                 )
             )
         
+        # Create log group with retention
+        log_group = logs.LogGroup(
+            self, f"{function_name}LogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-stepfunctions-{function_name.lower()}",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         return _lambda.Function(
             self, f"{function_name}Function",
             function_name=f"{self._stack_name}-stepfunctions-{function_name.lower()}",
@@ -237,7 +246,7 @@ class StepFunctionsConstruct(Construct):
             timeout=timeout,
             memory_size=memory_size,
             environment=environment,
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=log_group
         )
     
     def create_state_machine(self):
@@ -328,7 +337,7 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         
-        retrieve_kb_queries_map.iterator(retrieve_kb_query)
+        retrieve_kb_queries_map.item_processor(retrieve_kb_query)
         
         # Analyze chunk with KB results
         analyze_chunk_with_kb = tasks.LambdaInvoke(
@@ -357,7 +366,7 @@ class StepFunctionsConstruct(Construct):
             result_path="$.chunk_analyses"
         )
         
-        analyze_chunks_map.iterator(chunk_workflow)
+        analyze_chunks_map.item_processor(chunk_workflow)
         
         # Merge chunk results
         merge_chunk_results = tasks.LambdaInvoke(
@@ -409,7 +418,7 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         
-        retrieve_doc_kb_queries_map.iterator(retrieve_doc_kb_query)
+        retrieve_doc_kb_queries_map.item_processor(retrieve_doc_kb_query)
         
         # Analyze document with KB results
         analyze_document_with_kb = tasks.LambdaInvoke(
@@ -512,18 +521,22 @@ class StepFunctionsConstruct(Construct):
             )
         )
         
+        # Create state machine log group
+        state_machine_log_group = logs.LogGroup(
+            self, "StateMachineLogGroup",
+            log_group_name=f"/aws/vendedlogs/states/{self._stack_name}-document-review",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create state machine
         self.state_machine = sfn.StateMachine(
             self, "DocumentReviewStateMachine",
             state_machine_name=f"{self._stack_name}-document-review",
-            definition=definition,
+            definition_body=sfn.DefinitionBody.from_chainable(definition),
             timeout=Duration.hours(2),
             logs=sfn.LogOptions(
-                destination=logs.LogGroup(
-                    self, "StateMachineLogGroup",
-                    log_group_name=f"/aws/vendedlogs/states/{self._stack_name}-document-review",
-                    retention=logs.RetentionDays.ONE_WEEK
-                ),
+                destination=state_machine_log_group,
                 level=sfn.LogLevel.ALL
             )
         )

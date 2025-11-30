@@ -74,23 +74,14 @@ class UserInterfaceConstruct(Construct):
     def create_cloudfront_distribution(self):
         """Create CloudFront distribution for the website."""
         
-        # Create Origin Access Identity for CloudFront (legacy but reliable approach)
-        origin_access_identity = cloudfront.OriginAccessIdentity(
-            self, "WebsiteOAI",
-            comment=f"OAI for {self._stack_name} website"
-        )
-        
-        # Grant read permissions to CloudFront
-        self.website_bucket.grant_read(origin_access_identity)
-        
-        # Create CloudFront distribution
+        # Create CloudFront distribution using S3BucketOrigin with Origin Access Control (OAC)
+        # This is the modern approach replacing S3Origin with OAI
         self.cloudfront_distribution = cloudfront.Distribution(
             self, "WebsiteDistribution",
             default_root_object="index.html",
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.S3Origin(
-                    bucket=self.website_bucket,
-                    origin_access_identity=origin_access_identity
+                origin=origins.S3BucketOrigin.with_origin_access_control(
+                    self.website_bucket
                 ),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
@@ -190,6 +181,14 @@ class UserInterfaceConstruct(Construct):
         # Create IAM role for config generator Lambda
         config_role = iam_roles.create_website_config_role("ConfigGenerator", self.website_bucket)
         
+        # Create log group with retention
+        config_log_group = logs.LogGroup(
+            self, "ConfigGeneratorLogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-config-generator",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         # Create Lambda function for config generation
         self.config_generator_function = _lambda.Function(
             self, "ConfigGeneratorFunction",
@@ -211,7 +210,7 @@ class UserInterfaceConstruct(Construct):
                 "WEBSOCKET_URL": self.agent_api.get_websocket_api_url() if self.agent_api else "",
                 "LOG_LEVEL": "INFO"
             },
-            log_retention=logs.RetentionDays.ONE_WEEK
+            log_group=config_log_group
         )
     
     def update_cognito_callback_urls(self, cloudfront_url: str):

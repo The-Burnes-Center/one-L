@@ -13,7 +13,8 @@ from aws_cdk import (
     aws_opensearchserverless as aoss,
     aws_logs as logs,
     Duration,
-    Stack
+    Stack,
+    RemovalPolicy
 )
 
 # Google Document AI configuration removed - reverted to PyMuPDF-based conversion
@@ -131,6 +132,14 @@ class AgentConstruct(Construct):
                 )
             )
         
+        # Create log group with retention
+        doc_review_log_group = logs.LogGroup(
+            self, "DocumentReviewLogGroup",
+            log_group_name=f"/aws/lambda/{self._stack_name}-document-review",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+        
         self.document_review_function = _lambda.Function(
             self, "DocumentReviewFunction",
             function_name=f"{self._stack_name}-document-review",
@@ -140,7 +149,7 @@ class AgentConstruct(Construct):
             role=role,
             timeout=Duration.minutes(15),  # Long timeout for AI processing
             memory_size=2048,
-            log_retention=logs.RetentionDays.ONE_WEEK,
+            log_group=doc_review_log_group,
             environment={
                 "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
                 "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
