@@ -256,6 +256,11 @@ class StepFunctionsConstruct(Construct):
             max_attempts=3,
             backoff_rate=2.0
         )
+        initialize_job.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
+        )
         
         # Split document
         split_document = tasks.LambdaInvoke(
@@ -269,6 +274,11 @@ class StepFunctionsConstruct(Construct):
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
+        )
+        split_document.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
         )
         
         # Check chunk count
@@ -468,15 +478,25 @@ class StepFunctionsConstruct(Construct):
         chunked_path = analyze_chunks_map.next(merge_chunk_results)
         single_path = single_doc_workflow
         
-        # Both paths converge to final steps
-        final_steps = generate_redline.next(save_results).next(cleanup_session)
-        
-        # Add error handling to final steps
-        final_steps.add_catch(
+        # Add error handling to individual states (not chains)
+        generate_redline.add_catch(
             handle_error,
             errors=["States.ALL"],
             result_path="$.error"
         )
+        save_results.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
+        )
+        cleanup_session.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
+        )
+        
+        # Both paths converge to final steps
+        final_steps = generate_redline.next(save_results).next(cleanup_session)
         
         # Complete workflow definition
         definition = initialize_job.next(
@@ -490,13 +510,6 @@ class StepFunctionsConstruct(Construct):
                         single_path.next(final_steps)
                     )
             )
-        )
-        
-        # Add error handling to main workflow
-        definition.add_catch(
-            handle_error,
-            errors=["States.ALL"],
-            result_path="$.error"
         )
         
         # Create state machine
