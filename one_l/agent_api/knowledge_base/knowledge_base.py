@@ -64,9 +64,6 @@ class KnowledgeBaseConstruct(Construct):
         self.user_documents_bucket.grant_read(self.knowledge_base_role)
         
         # Grant access to OpenSearch Serverless collection
-        # Construct ARN manually to avoid early validation issues with attr_arn
-        collection_arn = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
-        
         self.knowledge_base_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -84,8 +81,8 @@ class KnowledgeBaseConstruct(Construct):
                     "aoss:DescribeCollectionItems"
                 ],
                 resources=[
-                    collection_arn,
-                    f"{collection_arn}/*"
+                    self.opensearch_collection.attr_arn,
+                    f"{self.opensearch_collection.attr_arn}/*"
                 ]
             )
         )
@@ -106,9 +103,6 @@ class KnowledgeBaseConstruct(Construct):
     def create_knowledge_base(self):
         """Create the Bedrock Knowledge Base."""
         
-        # Construct ARN manually to avoid early validation issues with attr_arn
-        collection_arn_for_kb = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
-        
         self.knowledge_base = bedrock.CfnKnowledgeBase(
             self, "KnowledgeBase",
             name=self._kb_name,
@@ -127,7 +121,7 @@ class KnowledgeBaseConstruct(Construct):
             storage_configuration=bedrock.CfnKnowledgeBase.StorageConfigurationProperty(
                 type="OPENSEARCH_SERVERLESS",
                 opensearch_serverless_configuration=bedrock.CfnKnowledgeBase.OpenSearchServerlessConfigurationProperty(
-                    collection_arn=collection_arn_for_kb,
+                    collection_arn=self.opensearch_collection.attr_arn,
                     vector_index_name="knowledge-base-index",
                     field_mapping=bedrock.CfnKnowledgeBase.OpenSearchServerlessFieldMappingProperty(
                         vector_field="vector_field",

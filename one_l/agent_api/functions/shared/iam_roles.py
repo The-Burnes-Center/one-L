@@ -245,10 +245,6 @@ class IAMRolesConstruct(Construct):
         )
         
         # Grant OpenSearch Serverless permissions
-        # Construct ARN manually to avoid early validation issues with attr_arn
-        stack = Stack.of(self)
-        collection_arn = f"arn:aws:aoss:{stack.region}:{stack.account}:collection/{opensearch_collection.attr_id}"
-        
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -256,7 +252,7 @@ class IAMRolesConstruct(Construct):
                     "aoss:APIAccessAll"
                 ],
                 resources=[
-                    collection_arn
+                    opensearch_collection.attr_arn
                 ]
             )
         )
