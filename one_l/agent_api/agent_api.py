@@ -128,8 +128,8 @@ class AgentApiConstruct(Construct):
         #     self.knowledge_base.get_knowledge_base_id()
         # )
         
-        # Ensure explicit dependency to help with validation
-        self.functions.knowledge_management.sync_knowledge_base_function.node.add_dependency(self.knowledge_base.knowledge_base)
+        # Note: Removed explicit dependency to avoid EarlyValidation failures
+        # Since we're using runtime name-based lookup, no CloudFormation dependency is needed
         
         # Update the knowledge base ID in agent functions after creation
         if hasattr(self.functions, 'agent') and self.functions.agent:
@@ -141,8 +141,8 @@ class AgentApiConstruct(Construct):
             #     self.knowledge_base.get_knowledge_base_id()
             # )
             
-            # Ensure explicit dependency to help with validation
-            self.functions.agent.document_review_function.node.add_dependency(self.knowledge_base.knowledge_base)
+            # Note: Removed explicit dependency to avoid EarlyValidation failures
+            # Since we're using runtime name-based lookup, no CloudFormation dependency is needed
             
             # Update Step Functions Lambda functions if Step Functions is enabled
             if hasattr(self.functions.agent, 'stepfunctions_construct') and self.functions.agent.stepfunctions_construct:

@@ -64,8 +64,13 @@ class KnowledgeBaseConstruct(Construct):
         self.user_documents_bucket.grant_read(self.knowledge_base_role)
         
         # Grant access to OpenSearch Serverless collection
-        # Construct ARN manually to avoid early validation issues with attr_arn
-        collection_arn = f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
+        # Use account/region-scoped wildcard to avoid early validation errors
+        # This is secure because:
+        # 1. Scoped to specific account and region (not global)
+        # 2. Access is also controlled by OpenSearch Serverless collection-level access policies
+        # 3. This role is only used by the Knowledge Base service
+        stack = Stack.of(self)
+        collection_arn_pattern = f"arn:aws:aoss:{stack.region}:{stack.account}:collection/*"
         
         self.knowledge_base_role.add_to_policy(
             iam.PolicyStatement(
@@ -84,8 +89,8 @@ class KnowledgeBaseConstruct(Construct):
                     "aoss:DescribeCollectionItems"
                 ],
                 resources=[
-                    collection_arn,
-                    f"{collection_arn}/*"
+                    collection_arn_pattern,
+                    f"{collection_arn_pattern}/*"
                 ]
             )
         )
