@@ -176,13 +176,12 @@ class AuthorizationConstruct(Construct):
             code=_lambda.Code.from_asset("one_l/authorization"),
             timeout=Duration.seconds(30),
             memory_size=128,
-            # Keep using log_retention (deprecated but stable) to avoid creating new LogGroup resources
-            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "USER_POOL_ID": self.user_pool.user_pool_id,
                 "USER_POOL_CLIENT_ID": self.user_pool_client.user_pool_client_id,
                 "LOG_LEVEL": "INFO"
-            }
+            },
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
         
         # Grant Lambda permissions to access Cognito

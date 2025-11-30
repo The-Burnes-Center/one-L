@@ -74,14 +74,23 @@ class UserInterfaceConstruct(Construct):
     def create_cloudfront_distribution(self):
         """Create CloudFront distribution for the website."""
         
-        # Create CloudFront distribution using S3BucketOrigin with Origin Access Control (OAC)
-        # This is the modern approach replacing S3Origin with OAI
+        # Create Origin Access Identity for CloudFront (legacy but reliable approach)
+        origin_access_identity = cloudfront.OriginAccessIdentity(
+            self, "WebsiteOAI",
+            comment=f"OAI for {self._stack_name} website"
+        )
+        
+        # Grant read permissions to CloudFront
+        self.website_bucket.grant_read(origin_access_identity)
+        
+        # Create CloudFront distribution
         self.cloudfront_distribution = cloudfront.Distribution(
             self, "WebsiteDistribution",
             default_root_object="index.html",
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.S3BucketOrigin.with_origin_access_control(
-                    self.website_bucket
+                origin=origins.S3Origin(
+                    bucket=self.website_bucket,
+                    origin_access_identity=origin_access_identity
                 ),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
@@ -191,8 +200,6 @@ class UserInterfaceConstruct(Construct):
             role=config_role,
             timeout=Duration.seconds(60),
             memory_size=512,
-            # Keep using log_retention (deprecated but stable) to avoid creating new LogGroup resources
-            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "WEBSITE_BUCKET": self.website_bucket.bucket_name,
                 "API_GATEWAY_URL": self.api_gateway.main_api.url,
@@ -203,7 +210,8 @@ class UserInterfaceConstruct(Construct):
                 "STACK_NAME": self._stack_name,
                 "WEBSOCKET_URL": self.agent_api.get_websocket_api_url() if self.agent_api else "",
                 "LOG_LEVEL": "INFO"
-            }
+            },
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def update_cognito_callback_urls(self, cloudfront_url: str):

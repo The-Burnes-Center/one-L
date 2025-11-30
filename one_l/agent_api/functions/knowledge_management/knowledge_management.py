@@ -14,8 +14,7 @@ from aws_cdk import (
     aws_iam as iam,
     Duration,
     Stack,
-    CustomResource,
-    RemovalPolicy
+    CustomResource
 )
 
 
@@ -105,8 +104,8 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            log_retention=logs.RetentionDays.ONE_WEEK,
-            environment=env_vars
+            environment=env_vars,
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def create_retrieve_from_s3_function(self):
@@ -134,8 +133,8 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            log_retention=logs.RetentionDays.ONE_WEEK,
-            environment=env_vars
+            environment=env_vars,
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def create_delete_from_s3_function(self):
@@ -163,8 +162,8 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            log_retention=logs.RetentionDays.ONE_WEEK,
-            environment=env_vars
+            environment=env_vars,
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def create_sync_knowledge_base_function(self):
@@ -203,11 +202,11 @@ class KnowledgeManagementConstruct(Construct):
             role=role,
             timeout=Duration.seconds(300),  # Longer timeout for sync operations
             memory_size=512,
-            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
                 "LOG_LEVEL": "INFO"
-            }
+            },
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def create_session_management_function(self):
@@ -296,8 +295,8 @@ class KnowledgeManagementConstruct(Construct):
             role=session_role,
             timeout=Duration.seconds(60),
             memory_size=256,
-            log_retention=logs.RetentionDays.ONE_WEEK,
-            environment=env_vars
+            environment=env_vars,
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
     
     def create_index_creation(self):
@@ -315,7 +314,6 @@ class KnowledgeManagementConstruct(Construct):
         )
         
         # Add OpenSearch Serverless permissions
-        # Use wildcard ARN to avoid EarlyValidation issues with attr_id during stack updates
         index_function_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -323,19 +321,8 @@ class KnowledgeManagementConstruct(Construct):
                     "aoss:*"
                 ],
                 resources=[
-                    f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/*"
+                    f"arn:aws:aoss:{Stack.of(self).region}:{Stack.of(self).account}:collection/{self.opensearch_collection.attr_id}"
                 ]
-            )
-        )
-        
-        # Add ListCollections permission for endpoint resolution
-        index_function_role.add_to_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "aoss:ListCollections"
-                ],
-                resources=["*"]
             )
         )
         
@@ -358,13 +345,13 @@ class KnowledgeManagementConstruct(Construct):
             role=index_function_role,
             timeout=Duration.seconds(120),  # Matching working implementation
             memory_size=512,
-            log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
-                "COLLECTION_NAME": self._collection_name,
+                "COLLECTION_ENDPOINT": f"{self.opensearch_collection.attr_id}.{Stack.of(self).region}.aoss.amazonaws.com",
                 "INDEX_NAME": "knowledge-base-index",
                 "EMBEDDING_DIM": "1024",
                 "REGION": Stack.of(self).region
-            }
+            },
+            log_retention=logs.RetentionDays.ONE_WEEK
         )
         
         # Create custom resource provider (matching working implementation)
