@@ -237,13 +237,15 @@ const SessionSidebar = ({
               updated[session_id].activeJobs.push(jobStatus);
             }
             
-            // If completed, remove from active jobs and reload documents
-            // Keep failed jobs visible so user can see the failure
+            // If completed or failed, stop polling this job
+            // Keep failed jobs visible so user can see the failure, but don't poll them anymore
             if (status === 'completed') {
               updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.jobId !== jobId);
               // Reload session statuses to get updated document list (use ref to avoid dependency)
               setTimeout(() => loadSessionStatusesRef.current(), 1000);
             }
+            // If failed, keep it in activeJobs but stop polling (status is already 'failed')
+            // The job will remain visible but won't be polled anymore
             
             return updated;
           });
@@ -274,43 +276,46 @@ const SessionSidebar = ({
     }
   }, [sessions, currentUserId, loadSessionStatuses]);
 
-  // Poll active jobs for real-time updates
+  // Poll active jobs for real-time updates (only for processing jobs)
   useEffect(() => {
     if (sessions.length === 0) return;
     
     const pollInterval = setInterval(() => {
-      // Get active job IDs from current state (use ref to avoid stale closure)
-      // Include both processing and failed jobs (failed jobs should still be visible)
-      const activeJobIds = [];
+      // Get only processing job IDs from current state (use ref to avoid stale closure)
+      // Only poll jobs that are actively processing, not failed or completed
+      const processingJobIds = [];
       Object.values(sessionStatusesRef.current).forEach(status => {
         if (status.activeJobs && status.activeJobs.length > 0) {
           status.activeJobs.forEach(job => {
-            // Poll processing jobs for updates, and failed jobs to ensure they're displayed
-            if ((job.status === 'processing' || job.status === 'failed') && job.jobId) {
-              activeJobIds.push(job.jobId);
+            // Only poll jobs that are actively processing
+            if (job.status === 'processing' && job.jobId) {
+              processingJobIds.push(job.jobId);
             }
           });
         }
       });
       
-      // Also check window state for active jobs
+      // Also check window state for active processing jobs
       if (window.processingSessionFlags) {
         Object.values(window.processingSessionFlags).forEach(details => {
-          if (details.jobId && !activeJobIds.includes(details.jobId)) {
-            activeJobIds.push(details.jobId);
+          if (details.jobId && !processingJobIds.includes(details.jobId)) {
+            // Only add if we don't know its status yet (might be processing)
+            processingJobIds.push(details.jobId);
           }
         });
       }
       
-      // Poll each active job
-      activeJobIds.forEach(jobId => {
-        pollJobStatus(jobId);
-      });
-      
-      // Reload session statuses periodically to catch new jobs
-      if (activeJobIds.length > 0) {
+      // Only poll if there are actually processing jobs
+      if (processingJobIds.length > 0) {
+        // Poll each processing job
+        processingJobIds.forEach(jobId => {
+          pollJobStatus(jobId);
+        });
+        
+        // Reload session statuses periodically to catch new jobs and updates
         loadSessionStatusesRef.current();
       }
+      // If no processing jobs, don't make any API calls
     }, 5000); // Poll every 5 seconds
     
     return () => clearInterval(pollInterval);
