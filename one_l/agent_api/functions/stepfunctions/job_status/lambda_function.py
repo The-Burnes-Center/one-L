@@ -148,8 +148,23 @@ def lambda_handler(event, context):
         
         item = response['Items'][0]
         
-        # Get stage info
-        current_stage = item.get('stage', item.get('status', 'initialized'))
+        # Check status field first (it's the source of truth)
+        # Status takes precedence over stage for terminal states
+        item_status = item.get('status', '').lower()
+        item_stage = item.get('stage', '').lower()
+        
+        # Determine the actual status: failed/completed status takes precedence
+        if item_status == 'failed':
+            current_stage = 'failed'
+            status = 'failed'
+        elif item_status == 'completed':
+            current_stage = 'completed'
+            status = 'completed'
+        else:
+            # Use stage for processing states
+            current_stage = item_stage or item_status or 'initialized'
+            status = 'processing'
+        
         stage_info = WORKFLOW_STAGES.get(current_stage, WORKFLOW_STAGES['initialized'])
         
         # Build response
@@ -157,12 +172,13 @@ def lambda_handler(event, context):
             'success': True,
             'job_id': job_id,
             'stage': current_stage,
-            'progress': stage_info['progress'],
+            'progress': stage_info['progress'] if status != 'failed' else 0,  # Failed jobs show 0% progress
             'label': stage_info['label'],
-            'description': item.get('stage_message') or stage_info['description'],
-            'status': 'completed' if current_stage == 'completed' else ('failed' if current_stage == 'failed' else 'processing'),
+            'description': item.get('stage_message') or item.get('error_message') or stage_info['description'],
+            'status': status,  # Use the determined status
             'updated_at': item.get('updated_at') or item.get('timestamp'),
             'session_id': item.get('session_id'),
+            'document_s3_key': item.get('document_s3_key'),  # Include document key for frontend
             'chunks_processed': item.get('chunks_processed', 0),
             'total_chunks': item.get('total_chunks', 0)
         }
@@ -177,8 +193,9 @@ def lambda_handler(event, context):
             }
         
         # Add error info if failed
-        if current_stage == 'failed':
-            result['error'] = item.get('error_message') or 'Unknown error occurred'
+        if status == 'failed':
+            result['error'] = item.get('error_message') or item.get('stage_message') or 'Unknown error occurred'
+            result['error_message'] = item.get('error_message') or item.get('stage_message') or 'Unknown error occurred'
         
         return {
             'statusCode': 200,

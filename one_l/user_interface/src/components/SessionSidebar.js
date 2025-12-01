@@ -218,11 +218,16 @@ const SessionSidebar = ({
             
             // Update or add job status
             const jobIndex = updated[session_id].activeJobs.findIndex(j => j.jobId === jobId);
+            
+            // Preserve existing job data (especially documentS3Key) when updating
+            const existingJob = jobIndex >= 0 ? updated[session_id].activeJobs[jobIndex] : null;
             const jobStatus = {
               jobId,
               status: status || 'processing',
               stage: stage || 'initialized',
-              progress: progress || 0
+              progress: progress || 0,
+              // Preserve documentS3Key from existing job or get from response
+              documentS3Key: existingJob?.documentS3Key || jobData.document_s3_key || null
             };
             
             if (jobIndex >= 0) {

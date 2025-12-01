@@ -900,29 +900,55 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
             stage = item.get('stage', '').lower()
             has_redlines = bool(item.get('redlined_document_s3_key'))
             
-            # Check if this is an active job (not completed)
+            # Check if this is a completed result (has redlines)
+            if has_redlines:
+                # This is a completed analysis result
+                if not item.get('analysis_id', '').startswith('job_'):
+                    analysis_results.append(item)
+                continue
+            
+            # Check if this is a failed job (status takes precedence over stage)
+            if status == 'failed':
+                # Failed job - include in active_jobs so UI can display it
+                active_jobs.append({
+                    'job_id': item.get('analysis_id'),
+                    'status': 'failed',  # Explicitly set to failed
+                    'stage': stage or 'failed',
+                    'progress': item.get('progress', 0),
+                    'document_s3_key': item.get('document_s3_key'),
+                    'timestamp': item.get('timestamp'),
+                    'updated_at': item.get('updated_at'),
+                    'stage_message': item.get('stage_message') or item.get('error_message', 'Processing failed'),
+                    'error_message': item.get('error_message', '')
+                })
+                continue
+            
+            # Check if this is a completed job (status is completed)
+            if status == 'completed':
+                # Completed job - should have redlines, but if not, treat as completed result
+                if not item.get('analysis_id', '').startswith('job_'):
+                    analysis_results.append(item)
+                continue
+            
+            # Check if this is an active/processing job
             is_active = (
                 status in ['processing', 'initialized', 'starting'] or
-                (stage not in ['completed', 'failed'] and not has_redlines)
+                (status not in ['completed', 'failed'] and stage not in ['completed', 'failed'] and not has_redlines)
             )
             
             if is_active:
                 # This is an active job
                 active_jobs.append({
                     'job_id': item.get('analysis_id'),
-                    'status': status,
-                    'stage': stage,
+                    'status': status or 'processing',
+                    'stage': stage or 'initialized',
                     'progress': item.get('progress', 0),
                     'document_s3_key': item.get('document_s3_key'),
                     'timestamp': item.get('timestamp'),
                     'updated_at': item.get('updated_at'),
                     'stage_message': item.get('stage_message', '')
                 })
-            else:
-                # This is a completed analysis result
-                # Filter out entries that look like job status entries (those starting with "job_")
-                if not item.get('analysis_id', '').startswith('job_'):
-                    analysis_results.append(item)
+            # Remaining items are completed analysis results (already handled above)
         
         # Sort by timestamp descending (most recent first)
         analysis_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
