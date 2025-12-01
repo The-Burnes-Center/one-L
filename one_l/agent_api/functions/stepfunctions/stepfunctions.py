@@ -581,6 +581,7 @@ class StepFunctionsConstruct(Construct):
             payload=sfn.TaskInput.from_object({
                 "conflicts_result": sfn.JsonPath.object_at("$.conflicts_result"),  # From analyze step
                 "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
+                "bucket_type": sfn.JsonPath.string_at("$.bucket_type"),  # Pass bucket_type for correct S3 bucket lookup
                 "session_id": sfn.JsonPath.string_at("$.session_id"),
                 "user_id": sfn.JsonPath.string_at("$.user_id"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
@@ -712,12 +713,27 @@ class StepFunctionsConstruct(Construct):
         # Grant permission to start Step Functions execution
         self.state_machine.grant_start_execution(role)
         
+        # Grant permission to update sessions table (for updating session title with document filename)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "dynamodb:UpdateItem",
+                    "dynamodb:GetItem"
+                ],
+                resources=[
+                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/{self._stack_name}-sessions"
+                ]
+            )
+        )
+        
         # Environment variables
         env = {
             "ANALYSES_TABLE_NAME": self.analysis_table.table_name,
             "STATE_MACHINE_ARN": self.state_machine.state_machine_arn,
             "REGION": Stack.of(self).region,
             "KNOWLEDGE_BASE_ID": self.knowledge_base_id,  # Required for passing to Step Functions
+            "SESSIONS_TABLE": f"{self._stack_name}-sessions",  # Sessions table name (matches knowledge_management construct)
             "LOG_LEVEL": "INFO"
         }
         

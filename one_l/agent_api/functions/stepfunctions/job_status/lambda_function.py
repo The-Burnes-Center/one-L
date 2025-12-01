@@ -277,31 +277,72 @@ def lambda_handler(event, context):
             status = 'failed'
             logger.info(f"Job {job_id} status determined from Step Functions: FAILED (sfn_status={sfn_status})")
         elif sfn_status == 'SUCCEEDED':
-            # Step Functions succeeded - mark as completed
-            # Even if DynamoDB hasn't been updated yet, Step Functions completion is definitive
-            current_stage = 'completed'
-            status = 'completed'
+            # Step Functions succeeded - BUT check output for internal failures
+            # Some Lambdas return success=false without raising exceptions, which Step Functions treats as success
+            # CRITICAL: Check the execution output for redline_result.success == false or save_result.success == false
+            execution_output = None
+            has_internal_failure = False
+            internal_error = None
             
-            # CRITICAL: Update DynamoDB to reflect completion if not already updated
-            if item_status != 'completed':
+            try:
+                execution_output_raw = sfn_response.get('output')
+                if execution_output_raw:
+                    execution_output = json.loads(execution_output_raw)
+                    
+                    # Check redline_result for failures
+                    redline_result = execution_output.get('redline_result', {})
+                    if isinstance(redline_result, dict) and redline_result.get('success') is False:
+                        has_internal_failure = True
+                        internal_error = redline_result.get('error', 'Redline generation failed')
+                        logger.warning(f"Job {job_id} Step Functions SUCCEEDED but redline_result.success=false: {internal_error}")
+                    
+                    # Check save_result for failures
+                    save_result = execution_output.get('save_result', {})
+                    if isinstance(save_result, dict) and save_result.get('success') is False:
+                        has_internal_failure = True
+                        save_error = save_result.get('error', 'Save results failed')
+                        if internal_error:
+                            internal_error = f"{internal_error}; {save_error}"
+                        else:
+                            internal_error = save_error
+                        logger.warning(f"Job {job_id} Step Functions SUCCEEDED but save_result.success=false: {save_error}")
+            except (json.JSONDecodeError, TypeError, AttributeError) as parse_error:
+                logger.warning(f"Could not parse Step Functions output for job {job_id}: {parse_error}")
+                # If we can't parse output, assume success (may be incomplete execution)
+            
+            if has_internal_failure:
+                # Internal failure detected - mark as failed
+                current_stage = 'failed'
+                status = 'failed'
+                sfn_error = internal_error or 'An internal error occurred during document processing'
+                sfn_error_details = f"Step Functions execution completed but internal step failed: {internal_error}"
+                
+                logger.warning(f"Job {job_id} has internal failure despite Step Functions SUCCEEDED: {sfn_error}")
+                
+                # Update DynamoDB to reflect the failed status
                 try:
                     item_timestamp = item.get('timestamp')
                     if item_timestamp:
+                        full_error_message = sfn_error
+                        if sfn_error_details and sfn_error_details != sfn_error:
+                            full_error_message = f"{sfn_error} (Technical details: {sfn_error_details})"
+                        
                         table.update_item(
                             Key={
                                 'analysis_id': job_id,
                                 'timestamp': item_timestamp
                             },
-                            UpdateExpression='SET #status = :status, stage = :stage, progress = :progress, updated_at = :updated',
+                            UpdateExpression='SET #status = :status, stage = :stage, error_message = :error, updated_at = :updated, progress = :progress',
                             ExpressionAttributeNames={'#status': 'status'},
                             ExpressionAttributeValues={
-                                ':status': 'completed',
-                                ':stage': 'completed',
-                                ':progress': 100,
-                                ':updated': datetime.utcnow().isoformat()
+                                ':status': 'failed',
+                                ':stage': 'failed',
+                                ':error': full_error_message,
+                                ':updated': datetime.utcnow().isoformat(),
+                                ':progress': 0
                             }
                         )
-                        logger.info(f"Updated DynamoDB for job {job_id} to completed status based on Step Functions SUCCEEDED")
+                        logger.info(f"Updated DynamoDB for job {job_id} to failed status based on internal failure in Step Functions output")
                         
                         # Re-read the item to get updated values
                         updated_response = table.get_item(
@@ -312,11 +353,49 @@ def lambda_handler(event, context):
                         )
                         if updated_response.get('Item'):
                             item = updated_response['Item']
-                            item_status = 'completed'
+                            item_status = 'failed'
                 except Exception as update_error:
-                    logger.warning(f"Could not update DynamoDB with completed status: {update_error}")
-            
-            logger.info(f"Job {job_id} status determined from Step Functions: SUCCEEDED -> COMPLETED")
+                    logger.error(f"CRITICAL: Could not update DynamoDB with failed status: {update_error}")
+            else:
+                # Step Functions succeeded and no internal failures - mark as completed
+                current_stage = 'completed'
+                status = 'completed'
+                
+                # CRITICAL: Update DynamoDB to reflect completion if not already updated
+                if item_status != 'completed':
+                    try:
+                        item_timestamp = item.get('timestamp')
+                        if item_timestamp:
+                            table.update_item(
+                                Key={
+                                    'analysis_id': job_id,
+                                    'timestamp': item_timestamp
+                                },
+                                UpdateExpression='SET #status = :status, stage = :stage, progress = :progress, updated_at = :updated',
+                                ExpressionAttributeNames={'#status': 'status'},
+                                ExpressionAttributeValues={
+                                    ':status': 'completed',
+                                    ':stage': 'completed',
+                                    ':progress': 100,
+                                    ':updated': datetime.utcnow().isoformat()
+                                }
+                            )
+                            logger.info(f"Updated DynamoDB for job {job_id} to completed status based on Step Functions SUCCEEDED")
+                            
+                            # Re-read the item to get updated values
+                            updated_response = table.get_item(
+                                Key={
+                                    'analysis_id': job_id,
+                                    'timestamp': item_timestamp
+                                }
+                            )
+                            if updated_response.get('Item'):
+                                item = updated_response['Item']
+                                item_status = 'completed'
+                    except Exception as update_error:
+                        logger.warning(f"Could not update DynamoDB with completed status: {update_error}")
+                
+                logger.info(f"Job {job_id} status determined from Step Functions: SUCCEEDED -> COMPLETED")
         elif sfn_status == 'RUNNING':
             # Step Functions is still running - use DynamoDB status/stage for progress
             if item_status == 'failed':

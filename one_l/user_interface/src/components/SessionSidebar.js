@@ -92,10 +92,10 @@ const SessionSidebar = ({
     
     for (const session of sessions) {
       try {
-        // Get session results (completed documents) and active jobs
-        const resultsResponse = await sessionAPI.getSessionResults(session.session_id, currentUserId);
-        const results = resultsResponse?.success ? (resultsResponse.results || []) : [];
-        const activeJobsFromAPI = resultsResponse?.success ? (resultsResponse.active_jobs || []) : [];
+        // UNIFIED API: Use data already included in session from getUserSessions
+        // Backend now includes active_jobs and results in the session object
+        const results = session.results || [];
+        const activeJobsFromAPI = session.active_jobs || [];
         
         // Extract document info
         const documents = results.map(result => {

@@ -595,26 +595,20 @@ const SessionWorkspace = ({ session }) => {
         console.log(`Session ${session.session_id} has recent WebSocket updates. Prioritizing localStorage data.`);
       }
       
-      // Always try to load results - the backend will return empty if none exist
-      const response = await sessionAPI.getSessionResults(session.session_id, userId);
+      // UNIFIED API: Use data already included in session from getUserSessions
+      // Backend now includes active_jobs and results in the session object
+      // No need to make a separate API call
+      const results = session.results || [];
+      const activeJobs = session.active_jobs || [];
       
-      // Handle response structure (wrapped in body or direct)
-      let responseData = response;
-      if (response && response.body) {
-        try {
-          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-        } catch (e) {
-          console.error('Error parsing session results response body:', e);
-          responseData = response;
-        }
-      }
+      // Always set session results (even if empty) for consistency
+      setSessionResults(results);
       
-      if (responseData.success && responseData.results) {
-        setSessionResults(responseData.results);
+      if (results && results.length > 0) {
         
         // Convert sessionResults to redlinedDocuments format for display
         // This allows existing sessions to show their redline documents
-        const redlinedDocsFromResults = responseData.results
+        const redlinedDocsFromResults = results
           .filter(result => result.redlined_document_s3_key && 
                            typeof result.redlined_document_s3_key === 'string' && 
                            result.redlined_document_s3_key.trim() !== '')

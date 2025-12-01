@@ -69,13 +69,16 @@ def lambda_handler(event, context):
             "conflicts": conflicts_list
         })
         
+        # Get bucket_type from event (defaults to user_documents for backward compatibility)
+        bucket_type = event.get('bucket_type', 'user_documents')
+        
         # Call redline_document
         # CRITICAL: Function signature expects 'analysis_data', not 'analysis'
-        logger.info(f"Generating redline for {len(conflicts_list)} conflicts")
+        logger.info(f"Generating redline for {len(conflicts_list)} conflicts, bucket_type={bucket_type}")
         result = redline_document(
             analysis_data=analysis_json,  # Fixed: was 'analysis=', should be 'analysis_data='
             document_s3_key=document_s3_key,
-            bucket_type="user_documents",
+            bucket_type=bucket_type,  # Use bucket_type from event, not hardcoded
             session_id=session_id,
             user_id=user_id
         )
@@ -97,16 +100,15 @@ def lambda_handler(event, context):
                     job_id, timestamp, 'generating_redlines',
                     f'Generated redlined document with {len(conflicts_list)} conflicts...'
                 )
+            
+            # Return plain result (Step Functions merges via result_path)
+            return output.model_dump()
         else:
+            # CRITICAL: Raise exception when redline fails so Step Functions treats it as a failure
+            # This ensures the execution status is FAILED, not SUCCEEDED
             error_msg = result.get('error', 'Unknown error')
-            output = RedlineOutput(
-                success=False,
-                redlined_document_s3_key=None,
-                error=error_msg
-            )
-        
-        # Return plain result (Step Functions merges via result_path)
-        return output.model_dump()
+            logger.error(f"Redline generation failed: {error_msg}")
+            raise Exception(f"Failed to generate redlined document: {error_msg}")
         
     except Exception as e:
         logger.error(f"Error in generate_redline: {e}")
