@@ -41,8 +41,12 @@ def lambda_handler(event, context):
     """
     try:
         query = event.get('query')
-        query_id = event.get('query_id', 0)
-        max_results = event.get('max_results', 50)
+        # Handle query_id - can be None, string, or int from Step Functions
+        query_id_raw = event.get('query_id')
+        query_id = int(query_id_raw) if query_id_raw is not None and str(query_id_raw).strip() else 0
+        # Handle max_results - can be None, string, or int from Step Functions
+        max_results_raw = event.get('max_results')
+        max_results = int(max_results_raw) if max_results_raw is not None and str(max_results_raw).strip() else 50
         knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
         
         # Fallback to name lookup

@@ -340,11 +340,21 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Retrieve KB queries in parallel
+        # itemSelector constructs input for each Map iteration
+        # Each query is a QueryModel object with: query (required), query_id (optional), max_results (defaults to 50), section
+        # JsonPath methods extract values - if optional fields are None/missing, they'll be None, Lambda handles with defaults
         retrieve_kb_queries_map = sfn.Map(
             self, "RetrieveKBQueriesParallel",
             items_path="$.structure_result.queries",
             max_concurrency=20,
-            result_path="$.kb_results"
+            result_path="$.kb_results",
+            item_selector=sfn.TaskInput.from_object({
+                "query": sfn.JsonPath.string_at("$$.Map.Item.Value.query"),
+                "query_id": sfn.JsonPath.string_at("$$.Map.Item.Value.query_id"),  # Optional, Lambda uses event.get('query_id', 0)
+                "max_results": sfn.JsonPath.string_at("$$.Map.Item.Value.max_results"),  # Optional, Lambda uses event.get('max_results', 50)
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region")
+            })
         )
         
         retrieve_kb_query = tasks.LambdaInvoke(
@@ -383,27 +393,30 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Process all chunks in parallel
-        # Use parameters to pass both chunk item AND parent context to each iteration
+        # Use itemSelector to pass both chunk item AND parent context to each iteration
         analyze_chunks_map = sfn.Map(
             self, "AnalyzeChunksParallel",
             items_path="$.split_result.chunks",
             max_concurrency=10,
             result_path="$.chunk_analyses",
-            parameters={
+            item_selector=sfn.TaskInput.from_object({
                 # Chunk-specific data (from the iterated item)
-                "chunk_s3_key.$": "$$.Map.Item.Value.s3_key",
-                "chunk_num.$": "$$.Map.Item.Value.chunk_num",
-                "start_char.$": "$$.Map.Item.Value.start_char",
-                "end_char.$": "$$.Map.Item.Value.end_char",
+                "chunk_s3_key": sfn.JsonPath.string_at("$$.Map.Item.Value.s3_key"),
+                "chunk_num": sfn.JsonPath.number_at("$$.Map.Item.Value.chunk_num"),
+                "start_char": sfn.JsonPath.number_at("$$.Map.Item.Value.start_char"),
+                "end_char": sfn.JsonPath.number_at("$$.Map.Item.Value.end_char"),
                 # Context from parent state (preserved)
-                "bucket_name.$": "$.split_result.bucket_name",
-                "total_chunks.$": "$.split_result.chunk_count",
-                "job_id.$": "$.job_id",
-                "session_id.$": "$.session_id",
-                "user_id.$": "$.user_id",
-                "document_s3_key.$": "$.document_s3_key",
-                "terms_profile.$": "$.terms_profile"
-            }
+                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
+                "total_chunks": sfn.JsonPath.number_at("$.split_result.chunk_count"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "user_id": sfn.JsonPath.string_at("$.user_id"),
+                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
+                "terms_profile": sfn.JsonPath.string_at("$.terms_profile"),
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+            })
         )
         
         analyze_chunks_map.item_processor(chunk_workflow)
@@ -440,11 +453,21 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Retrieve KB queries in parallel
+        # itemSelector constructs input for each Map iteration
+        # Each query is a QueryModel object with: query (required), query_id (optional), max_results (defaults to 50), section
+        # JsonPath methods extract values - if optional fields are None/missing, they'll be None, Lambda handles with defaults
         retrieve_doc_kb_queries_map = sfn.Map(
             self, "RetrieveDocKBQueriesParallel",
             items_path="$.structure_result.queries",
             max_concurrency=20,
-            result_path="$.kb_results"
+            result_path="$.kb_results",
+            item_selector=sfn.TaskInput.from_object({
+                "query": sfn.JsonPath.string_at("$$.Map.Item.Value.query"),
+                "query_id": sfn.JsonPath.string_at("$$.Map.Item.Value.query_id"),  # Optional, Lambda uses event.get('query_id', 0)
+                "max_results": sfn.JsonPath.string_at("$$.Map.Item.Value.max_results"),  # Optional, Lambda uses event.get('max_results', 50)
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region")
+            })
         )
         
         retrieve_doc_kb_query = tasks.LambdaInvoke(
@@ -469,12 +492,12 @@ class StepFunctionsConstruct(Construct):
             payload_response_only=True,
             result_path="$.kb_storage",
             retry_on_service_exceptions=True,
-            parameters={
-                "kb_results.$": "$.kb_results",
-                "job_id.$": "$.job_id",
-                "session_id.$": "$.session_id",
-                "bucket_name.$": "$.bucket_name"
-            }
+            payload=sfn.TaskInput.from_object({
+                "kb_results": sfn.JsonPath.string_at("$.kb_results"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name")
+            })
         )
         
         # Analyze document with KB results (will read from S3 if stored)
@@ -484,16 +507,16 @@ class StepFunctionsConstruct(Construct):
             payload_response_only=True,
             result_path="$.conflicts_result",
             retry_on_service_exceptions=True,
-            parameters={
-                "document_s3_key.$": "$.document_s3_key",
-                "bucket_name.$": "$.bucket_name",
-                "knowledge_base_id.$": "$.knowledge_base_id",
-                "region.$": "$.region",
-                "job_id.$": "$.job_id",
-                "timestamp.$": "$.timestamp",
-                "kb_results_s3_key.$": "$.kb_storage.s3_key"
+            payload=sfn.TaskInput.from_object({
+                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp"),
+                "kb_results_s3_key": sfn.JsonPath.string_at("$.kb_storage.s3_key")
                 # Don't pass kb_results in state - read from S3 instead to avoid payload limits
-            }
+            })
         )
         analyze_document_with_kb.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
