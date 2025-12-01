@@ -348,13 +348,13 @@ class StepFunctionsConstruct(Construct):
             items_path="$.structure_result.queries",
             max_concurrency=20,
             result_path="$.kb_results",
-            item_selector=sfn.TaskInput.from_object({
-                "query": sfn.JsonPath.string_at("$$.Map.Item.Value.query"),
-                "query_id": sfn.JsonPath.string_at("$$.Map.Item.Value.query_id"),  # Optional, Lambda uses event.get('query_id', 0)
-                "max_results": sfn.JsonPath.string_at("$$.Map.Item.Value.max_results"),  # Optional, Lambda uses event.get('max_results', 50)
-                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
-                "region": sfn.JsonPath.string_at("$.region")
-            })
+            item_selector={
+                "query.$": "$$.Map.Item.Value.query",
+                "query_id.$": "$$.Map.Item.Value.query_id",  # Optional, Lambda uses event.get('query_id', 0)
+                "max_results.$": "$$.Map.Item.Value.max_results",  # Optional, Lambda uses event.get('max_results', 50)
+                "knowledge_base_id.$": "$.knowledge_base_id",
+                "region.$": "$.region"
+            }
         )
         
         retrieve_kb_query = tasks.LambdaInvoke(
@@ -399,24 +399,24 @@ class StepFunctionsConstruct(Construct):
             items_path="$.split_result.chunks",
             max_concurrency=10,
             result_path="$.chunk_analyses",
-            item_selector=sfn.TaskInput.from_object({
+            item_selector={
                 # Chunk-specific data (from the iterated item)
-                "chunk_s3_key": sfn.JsonPath.string_at("$$.Map.Item.Value.s3_key"),
-                "chunk_num": sfn.JsonPath.number_at("$$.Map.Item.Value.chunk_num"),
-                "start_char": sfn.JsonPath.number_at("$$.Map.Item.Value.start_char"),
-                "end_char": sfn.JsonPath.number_at("$$.Map.Item.Value.end_char"),
+                "chunk_s3_key.$": "$$.Map.Item.Value.s3_key",
+                "chunk_num.$": "$$.Map.Item.Value.chunk_num",
+                "start_char.$": "$$.Map.Item.Value.start_char",
+                "end_char.$": "$$.Map.Item.Value.end_char",
                 # Context from parent state (preserved)
-                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
-                "total_chunks": sfn.JsonPath.number_at("$.split_result.chunk_count"),
-                "job_id": sfn.JsonPath.string_at("$.job_id"),
-                "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "user_id": sfn.JsonPath.string_at("$.user_id"),
-                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
-                "terms_profile": sfn.JsonPath.string_at("$.terms_profile"),
-                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
-                "region": sfn.JsonPath.string_at("$.region"),
-                "timestamp": sfn.JsonPath.string_at("$.timestamp")
-            })
+                "bucket_name.$": "$.split_result.bucket_name",
+                "total_chunks.$": "$.split_result.chunk_count",
+                "job_id.$": "$.job_id",
+                "session_id.$": "$.session_id",
+                "user_id.$": "$.user_id",
+                "document_s3_key.$": "$.document_s3_key",
+                "terms_profile.$": "$.terms_profile",
+                "knowledge_base_id.$": "$.knowledge_base_id",
+                "region.$": "$.region",
+                "timestamp.$": "$.timestamp"
+            }
         )
         
         analyze_chunks_map.item_processor(chunk_workflow)
@@ -461,13 +461,13 @@ class StepFunctionsConstruct(Construct):
             items_path="$.structure_result.queries",
             max_concurrency=20,
             result_path="$.kb_results",
-            item_selector=sfn.TaskInput.from_object({
-                "query": sfn.JsonPath.string_at("$$.Map.Item.Value.query"),
-                "query_id": sfn.JsonPath.string_at("$$.Map.Item.Value.query_id"),  # Optional, Lambda uses event.get('query_id', 0)
-                "max_results": sfn.JsonPath.string_at("$$.Map.Item.Value.max_results"),  # Optional, Lambda uses event.get('max_results', 50)
-                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
-                "region": sfn.JsonPath.string_at("$.region")
-            })
+            item_selector={
+                "query.$": "$$.Map.Item.Value.query",
+                "query_id.$": "$$.Map.Item.Value.query_id",  # Optional, Lambda uses event.get('query_id', 0)
+                "max_results.$": "$$.Map.Item.Value.max_results",  # Optional, Lambda uses event.get('max_results', 50)
+                "knowledge_base_id.$": "$.knowledge_base_id",
+                "region.$": "$.region"
+            }
         )
         
         retrieve_doc_kb_query = tasks.LambdaInvoke(
