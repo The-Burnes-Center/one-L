@@ -571,12 +571,21 @@ class StepFunctionsConstruct(Construct):
         # ===== COMMON FINAL STEPS =====
         
         # Generate redline
+        # CRITICAL: Pass required parameters explicitly to avoid missing data
         generate_redline = tasks.LambdaInvoke(
             self, "GenerateRedline",
             lambda_function=self.generate_redline_fn,
             payload_response_only=True,
             result_path="$.redline_result",
-            retry_on_service_exceptions=True
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "conflicts_result": sfn.JsonPath.object_at("$.conflicts_result"),  # From analyze step
+                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "user_id": sfn.JsonPath.string_at("$.user_id"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+            })
         )
         generate_redline.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
@@ -586,12 +595,22 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Save results
+        # CRITICAL: Pass required parameters explicitly (analysis_json from conflicts_result, redlined_s3_key from redline_result)
         save_results = tasks.LambdaInvoke(
             self, "SaveResults",
             lambda_function=self.save_results_fn,
             payload_response_only=True,
             result_path="$.save_result",
-            retry_on_service_exceptions=True
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "analysis_json": sfn.JsonPath.object_at("$.conflicts_result"),  # Convert conflicts_result to analysis_json
+                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
+                "redlined_s3_key": sfn.JsonPath.string_at("$.redline_result.redlined_document_s3_key"),  # From generate_redline
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "user_id": sfn.JsonPath.string_at("$.user_id"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+            })
         )
         save_results.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
