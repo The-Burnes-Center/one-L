@@ -36,117 +36,17 @@ const SessionSidebar = ({
     }
   }, [sessionId]);
 
-  // Load user sessions
-  useEffect(() => {
-    if (currentUserId && isVisible) {
-      loadSessions();
-    }
-  }, [currentUserId, isVisible, loadSessions]);
+  // Define helper functions first
+  const extractDocumentName = (s3Key) => {
+    if (!s3Key) return 'Unknown Document';
+    const parts = s3Key.split('/');
+    const filename = parts[parts.length - 1];
+    // Remove UUID prefix if present (format: uuid_filename.pdf)
+    const match = filename.match(/^[a-f0-9-]+_(.+)$/i);
+    return match ? match[1] : filename;
+  };
 
-  // Load session statuses (documents and active jobs) for all sessions
-  useEffect(() => {
-    if (sessions.length > 0 && currentUserId) {
-      loadSessionStatuses();
-    }
-  }, [sessions, currentUserId, loadSessionStatuses]);
-
-  // Use ref to access latest sessionStatuses without causing re-renders
-  const sessionStatusesRef = useRef(sessionStatuses);
-  useEffect(() => {
-    sessionStatusesRef.current = sessionStatuses;
-  }, [sessionStatuses]);
-
-  // Poll active jobs for real-time updates
-  useEffect(() => {
-    if (sessions.length === 0) return;
-    
-    const pollInterval = setInterval(() => {
-      // Get active job IDs from current state (use ref to avoid stale closure)
-      const activeJobIds = [];
-      Object.values(sessionStatusesRef.current).forEach(status => {
-        if (status.activeJobs && status.activeJobs.length > 0) {
-          status.activeJobs.forEach(job => {
-            if (job.status === 'processing' && job.jobId) {
-              activeJobIds.push(job.jobId);
-            }
-          });
-        }
-      });
-      
-      // Also check window state for active jobs
-      if (window.processingSessionFlags) {
-        Object.values(window.processingSessionFlags).forEach(details => {
-          if (details.jobId && !activeJobIds.includes(details.jobId)) {
-            activeJobIds.push(details.jobId);
-          }
-        });
-      }
-      
-      // Poll each active job
-      activeJobIds.forEach(jobId => {
-        pollJobStatus(jobId);
-      });
-      
-      // Reload session statuses periodically to catch new jobs
-      if (activeJobIds.length > 0) {
-        loadSessionStatuses();
-      }
-    }, 5000); // Poll every 5 seconds
-    
-    return () => clearInterval(pollInterval);
-  }, [sessions.length, pollJobStatus, loadSessionStatuses]);
-
-  // Refresh sessions when sessionId changes
-  useEffect(() => {
-    if (currentUserId && isVisible && sessionId) {
-      loadSessions();
-      
-      let retryCount = 0;
-      const maxRetries = 5;
-      let consecutiveServerErrors = 0;
-      
-      const retryInterval = setInterval(async () => {
-        retryCount++;
-        
-        if (retryCount >= maxRetries) {
-          clearInterval(retryInterval);
-          return;
-        }
-        
-        const result = await loadSessions();
-        
-        if (result && result.isServerError) {
-          consecutiveServerErrors++;
-          if (consecutiveServerErrors >= 2) {
-            clearInterval(retryInterval);
-            return;
-          }
-        } else if (result && result.success) {
-          consecutiveServerErrors = 0;
-        }
-      }, 1500);
-      
-      return () => clearInterval(retryInterval);
-    }
-  }, [sessionId, currentUserId, isVisible, loadSessions]);
-
-  // Refresh sessions periodically
-  useEffect(() => {
-    if (!currentUserId || !isVisible) return;
-    
-    const refreshInterval = setInterval(() => {
-      loadSessions();
-    }, 30000);
-
-    return () => clearInterval(refreshInterval);
-  }, [currentUserId, isVisible, loadSessions]);
-
-  useEffect(() => {
-    if (onRefreshRequest) {
-      loadSessions();
-    }
-  }, [onRefreshRequest]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Define main functions with useCallback
   const loadSessions = useCallback(async () => {
     try {
       setLoading(true);
@@ -251,7 +151,13 @@ const SessionSidebar = ({
     }
     
     setSessionStatuses(statusMap);
-  }, [sessions, currentUserId]);
+  }, [sessions, currentUserId, extractDocumentName]);
+
+  // Use ref for loadSessionStatuses to avoid circular dependency
+  const loadSessionStatusesRef = useRef(loadSessionStatuses);
+  useEffect(() => {
+    loadSessionStatusesRef.current = loadSessionStatuses;
+  }, [loadSessionStatuses]);
 
   const pollJobStatus = useCallback(async (jobId) => {
     try {
@@ -287,8 +193,8 @@ const SessionSidebar = ({
             // If completed or failed, remove from active jobs and reload documents
             if (status === 'completed' || status === 'failed') {
               updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.jobId !== jobId);
-              // Reload session statuses to get updated document list
-              setTimeout(() => loadSessionStatuses(), 1000);
+              // Reload session statuses to get updated document list (use ref to avoid dependency)
+              setTimeout(() => loadSessionStatusesRef.current(), 1000);
             }
             
             return updated;
@@ -300,14 +206,116 @@ const SessionSidebar = ({
     }
   }, []);
 
-  const extractDocumentName = (s3Key) => {
-    if (!s3Key) return 'Unknown Document';
-    const parts = s3Key.split('/');
-    const filename = parts[parts.length - 1];
-    // Remove UUID prefix if present (format: uuid_filename.pdf)
-    const match = filename.match(/^[a-f0-9-]+_(.+)$/i);
-    return match ? match[1] : filename;
-  };
+  // Use ref to access latest sessionStatuses without causing re-renders
+  const sessionStatusesRef = useRef(sessionStatuses);
+  useEffect(() => {
+    sessionStatusesRef.current = sessionStatuses;
+  }, [sessionStatuses]);
+
+  // Load user sessions
+  useEffect(() => {
+    if (currentUserId && isVisible) {
+      loadSessions();
+    }
+  }, [currentUserId, isVisible, loadSessions]);
+
+  // Load session statuses (documents and active jobs) for all sessions
+  useEffect(() => {
+    if (sessions.length > 0 && currentUserId) {
+      loadSessionStatuses();
+    }
+  }, [sessions, currentUserId, loadSessionStatuses]);
+
+  // Poll active jobs for real-time updates
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    
+    const pollInterval = setInterval(() => {
+      // Get active job IDs from current state (use ref to avoid stale closure)
+      const activeJobIds = [];
+      Object.values(sessionStatusesRef.current).forEach(status => {
+        if (status.activeJobs && status.activeJobs.length > 0) {
+          status.activeJobs.forEach(job => {
+            if (job.status === 'processing' && job.jobId) {
+              activeJobIds.push(job.jobId);
+            }
+          });
+        }
+      });
+      
+      // Also check window state for active jobs
+      if (window.processingSessionFlags) {
+        Object.values(window.processingSessionFlags).forEach(details => {
+          if (details.jobId && !activeJobIds.includes(details.jobId)) {
+            activeJobIds.push(details.jobId);
+          }
+        });
+      }
+      
+      // Poll each active job
+      activeJobIds.forEach(jobId => {
+        pollJobStatus(jobId);
+      });
+      
+      // Reload session statuses periodically to catch new jobs
+      if (activeJobIds.length > 0) {
+        loadSessionStatusesRef.current();
+      }
+    }, 5000); // Poll every 5 seconds
+    
+    return () => clearInterval(pollInterval);
+  }, [sessions.length, pollJobStatus]);
+
+  // Refresh sessions when sessionId changes
+  useEffect(() => {
+    if (currentUserId && isVisible && sessionId) {
+      loadSessions();
+      
+      let retryCount = 0;
+      const maxRetries = 5;
+      let consecutiveServerErrors = 0;
+      
+      const retryInterval = setInterval(async () => {
+        retryCount++;
+        
+        if (retryCount >= maxRetries) {
+          clearInterval(retryInterval);
+          return;
+        }
+        
+        const result = await loadSessions();
+        
+        if (result && result.isServerError) {
+          consecutiveServerErrors++;
+          if (consecutiveServerErrors >= 2) {
+            clearInterval(retryInterval);
+            return;
+          }
+        } else if (result && result.success) {
+          consecutiveServerErrors = 0;
+        }
+      }, 1500);
+      
+      return () => clearInterval(retryInterval);
+    }
+  }, [sessionId, currentUserId, isVisible, loadSessions]);
+
+  // Refresh sessions periodically
+  useEffect(() => {
+    if (!currentUserId || !isVisible) return;
+    
+    const refreshInterval = setInterval(() => {
+      loadSessions();
+    }, 30000);
+
+    return () => clearInterval(refreshInterval);
+  }, [currentUserId, isVisible, loadSessions]);
+
+  useEffect(() => {
+    if (onRefreshRequest) {
+      loadSessions();
+    }
+  }, [onRefreshRequest, loadSessions]);
 
   const formatDate = (dateString) => {
     if (!dateString) return '';
