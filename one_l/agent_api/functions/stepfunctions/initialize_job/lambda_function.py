@@ -81,6 +81,19 @@ def lambda_handler(event, context):
         
         logger.info(f"Job {job_id} initialized successfully")
         
+        # Map bucket_type to actual bucket name from environment
+        bucket_map = {
+            'agent_processing': os.environ.get('AGENT_PROCESSING_BUCKET'),
+            'user_documents': os.environ.get('USER_DOCUMENTS_BUCKET'),
+            'knowledge': os.environ.get('KNOWLEDGE_BUCKET')
+        }
+        bucket_name = bucket_map.get(bucket_type, os.environ.get('AGENT_PROCESSING_BUCKET'))
+        
+        if not bucket_name:
+            raise ValueError(f"Could not resolve bucket name for bucket_type: {bucket_type}")
+        
+        logger.info(f"Resolved bucket_type '{bucket_type}' to bucket_name '{bucket_name}'")
+        
         # Return full context for downstream functions
         return {
             "job_id": job_id,
@@ -89,6 +102,7 @@ def lambda_handler(event, context):
             "user_id": user_id,
             "document_s3_key": document_s3_key,
             "bucket_type": bucket_type,
+            "bucket_name": bucket_name,  # Actual S3 bucket name
             "terms_profile": terms_profile,
             "status": "processing"
         }

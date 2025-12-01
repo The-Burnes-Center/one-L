@@ -3100,9 +3100,7 @@ const AppContent = () => {
       />
       
       {/* Main Content Area */}
-      <div style={{ marginLeft: '280px', marginTop: '60px', minHeight: 'calc(100vh - 60px)', overflow: 'auto' }}>
-        {renderMainContent()}
-      </div>
+      {renderMainContent()}
     </div>
   );
 };

@@ -151,13 +151,15 @@
         color: #64748b;
       }
       
-      /* Main Content Area - Full width usage */
+      /* Main Content Area */
       .main-content {
         flex: 1;
         margin-left: var(--sidebar-width);
+        margin-top: 60px; /* Account for header */
         padding: 24px 32px;
-        min-height: 100vh;
+        min-height: calc(100vh - 60px);
         background: var(--color-bg);
+        overflow: auto;
       }
       
       .sidebar.collapsed + .main-content {

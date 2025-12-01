@@ -27,9 +27,29 @@ def lambda_handler(event, context):
         ErrorOutput with error, error_type, timestamp
     """
     try:
-        job_id = event.get('job_id') or event.get('Error', {}).get('Cause', {}).get('job_id')
-        error_message = event.get('error') or event.get('Error', {}).get('Error', 'Unknown error')
-        error_type = event.get('error_type') or event.get('Error', {}).get('Type', 'LambdaError')
+        logger.info(f"handle_error received event: {json.dumps(event, default=str)}")
+        
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        
+        # Extract error info - handle both dict and string formats
+        error_obj = event.get('error', {})
+        if isinstance(error_obj, dict):
+            # Step Functions error format: {"Error": "...", "Cause": "..."}
+            error_type = error_obj.get('Error', 'UnknownError')
+            cause = error_obj.get('Cause', '')
+            # Try to parse the Cause as JSON to get the actual error message
+            if isinstance(cause, str):
+                try:
+                    cause_obj = json.loads(cause)
+                    error_message = cause_obj.get('errorMessage', str(cause))
+                except:
+                    error_message = cause
+            else:
+                error_message = str(cause)
+        else:
+            error_message = str(error_obj) if error_obj else 'Unknown error'
+            error_type = event.get('error_type', 'UnknownError')
         
         # Update job status in DynamoDB
         table_name = os.environ.get('ANALYSES_TABLE_NAME')
@@ -55,15 +75,17 @@ def lambda_handler(event, context):
                 if timestamp:
                     table.update_item(
                         Key={'analysis_id': job_id, 'timestamp': timestamp},
-                        UpdateExpression='SET #status = :status, error_message = :error, updated_at = :updated',
+                        UpdateExpression='SET #status = :status, stage = :stage, error_message = :error, updated_at = :updated, progress = :progress',
                         ExpressionAttributeNames={'#status': 'status'},
                         ExpressionAttributeValues={
                             ':status': 'failed',
+                            ':stage': 'failed',
                             ':error': error_message,
-                            ':updated': datetime.utcnow().isoformat()
+                            ':updated': datetime.utcnow().isoformat(),
+                            ':progress': 0
                         }
                     )
-                    logger.info(f"Job {job_id} status updated to failed")
+                    logger.info(f"Job {job_id} status updated to failed: {error_message}")
                 else:
                     logger.warning(f"Could not update job {job_id}: timestamp not found")
             except Exception as db_error:
