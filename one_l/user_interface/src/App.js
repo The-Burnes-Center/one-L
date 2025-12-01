@@ -1608,6 +1608,12 @@ const SessionWorkspace = ({ session }) => {
                 sessionId: sessionIdAtStart
               };
 
+              // Clear processing flag on old documents before adding new one
+              setRedlinedDocuments(prev => prev.map(doc => ({
+                ...doc,
+                processing: false  // Clear old processing flags
+              })));
+              
               // Add job to tracking with initial progress
               processingEntry = {
                 originalFile: vendorFile,
@@ -2285,15 +2291,28 @@ const SessionWorkspace = ({ session }) => {
     <div className="main-content">
       {/* Processing Overlay */}
       {generating && (() => {
-        const processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
+        // Find the current processing job - prefer the one matching currentProcessingJob, then most recent
+        const currentJobId = window.currentProcessingJob?.jobId;
+        let processingDoc = null;
+        
+        if (currentJobId) {
+          // Try to find by current jobId first
+          processingDoc = redlinedDocuments.find(d => d.jobId === currentJobId);
+        }
+        
+        // If not found, find any processing document (fallback)
+        if (!processingDoc) {
+          processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
+        }
+        
         const currentProgress = typeof processingDoc?.progress === 'number' ? processingDoc.progress : 0;
         const currentMessage = processingDoc?.message || workflowMessage || 'Starting document review...';
         
         // Debug logging
         if (processingDoc) {
-          console.log(`Popup: Found processing doc with jobId=${processingDoc.jobId}, progress=${processingDoc.progress}, progressType=${typeof processingDoc.progress}, currentProgress=${currentProgress}`);
+          console.log(`Popup: Found processing doc with jobId=${processingDoc.jobId}, currentJobId=${currentJobId}, progress=${processingDoc.progress}, progressType=${typeof processingDoc.progress}, currentProgress=${currentProgress}`);
         } else {
-          console.log(`Popup: No processing doc found. All docs:`, redlinedDocuments.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status, processing: d.processing })));
+          console.log(`Popup: No processing doc found. currentJobId=${currentJobId}, All docs:`, redlinedDocuments.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status, processing: d.processing })));
         }
         
         return (
@@ -2605,14 +2624,27 @@ const SessionWorkspace = ({ session }) => {
           const showSpinner = !isCompleted;
           
           // Get actual progress from processing document
-          const processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
+          // Find the current processing job - prefer the one matching currentProcessingJob, then most recent
+          const currentJobId = window.currentProcessingJob?.jobId;
+          let processingDoc = null;
+          
+          if (currentJobId) {
+            // Try to find by current jobId first
+            processingDoc = redlinedDocuments.find(d => d.jobId === currentJobId);
+          }
+          
+          // If not found, find any processing document (fallback)
+          if (!processingDoc) {
+            processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
+          }
+          
           const currentProgress = typeof processingDoc?.progress === 'number' ? processingDoc.progress : 0;
           
           // Debug logging
           if (processingDoc) {
-            console.log(`Body: Found processing doc with jobId=${processingDoc.jobId}, progress=${processingDoc.progress}, progressType=${typeof processingDoc.progress}, currentProgress=${currentProgress}`);
+            console.log(`Body: Found processing doc with jobId=${processingDoc.jobId}, currentJobId=${currentJobId}, progress=${processingDoc.progress}, progressType=${typeof processingDoc.progress}, currentProgress=${currentProgress}`);
           } else {
-            console.log(`Body: No processing doc found. All docs:`, redlinedDocuments.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status, processing: d.processing })));
+            console.log(`Body: No processing doc found. currentJobId=${currentJobId}, All docs:`, redlinedDocuments.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status, processing: d.processing })));
           }
 
           return (
