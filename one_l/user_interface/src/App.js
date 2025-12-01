@@ -2238,9 +2238,6 @@ const SessionWorkspace = ({ session }) => {
                 <div className="processing-spinner"></div>
               </div>
               <h2 className="processing-title">Processing Document</h2>
-              <p className="processing-subtitle">
-                {currentMessage}
-              </p>
               <div className="processing-stages">
                 {stageOrder.map((stage, index) => {
                   const isCompleted = completedStages.includes(stage.key);
@@ -2255,19 +2252,43 @@ const SessionWorkspace = ({ session }) => {
                   );
                 })}
               </div>
-              <div className="processing-progress-bar">
-                <div 
-                  className="processing-progress-fill" 
-                  style={{ 
-                    width: `${Math.max(5, currentProgress || (completedStages.length / stageOrder.length) * 100 + (processingStage ? 15 : 0))}%` 
-                  }}
-                ></div>
+              {/* Linear Progress Bar */}
+              <div style={{ marginTop: '20px', marginBottom: '12px' }}>
+                <div style={{
+                  width: '100%',
+                  height: '8px',
+                  backgroundColor: '#e2e8f0',
+                  borderRadius: '4px',
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}>
+                  <div 
+                    style={{ 
+                      width: `${Math.max(2, currentProgress)}%`,
+                      height: '100%',
+                      backgroundColor: '#2563eb',
+                      borderRadius: '4px',
+                      transition: 'width 0.3s ease',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0
+                    }}
+                  ></div>
+                </div>
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  marginTop: '8px'
+                }}>
+                  <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
+                    {currentMessage}
+                  </p>
+                  <p style={{ fontSize: '13px', color: '#2563eb', fontWeight: '600', margin: 0 }}>
+                    {currentProgress}%
+                  </p>
+                </div>
               </div>
-              {currentProgress > 0 && (
-                <p style={{ fontSize: '13px', color: '#64748b', margin: '8px 0 0' }}>
-                  {currentProgress}% complete
-                </p>
-              )}
               <p className="processing-tip">
                 You can navigate away. Results will be saved automatically.
               </p>
@@ -2517,6 +2538,10 @@ const SessionWorkspace = ({ session }) => {
             ? (workflowMessage || 'Document processing completed successfully!')
             : (workflowMessage || fallbackMessage || 'Please stand by while we process your documents.');
           const showSpinner = !isCompleted;
+          
+          // Get actual progress from processing document
+          const processingDoc = redlinedDocuments.find(d => d.processing);
+          const currentProgress = processingDoc?.progress || 0;
 
           return (
             <div style={{ 
@@ -2562,6 +2587,46 @@ const SessionWorkspace = ({ session }) => {
                 })}
               </div>
 
+              {/* Linear Progress Bar */}
+              {!isCompleted && (
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{
+                    width: '100%',
+                    height: '8px',
+                    backgroundColor: '#e2e8f0',
+                    borderRadius: '4px',
+                    overflow: 'hidden',
+                    position: 'relative'
+                  }}>
+                    <div 
+                      style={{ 
+                        width: `${Math.max(2, currentProgress)}%`,
+                        height: '100%',
+                        backgroundColor: '#2563eb',
+                        borderRadius: '4px',
+                        transition: 'width 0.3s ease',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0
+                      }}
+                    ></div>
+                  </div>
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    marginTop: '8px'
+                  }}>
+                    <span style={{ fontSize: '13px', color: '#64748b' }}>
+                      {displayMessage}
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#2563eb', fontWeight: '600' }}>
+                      {currentProgress}%
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Current Status */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {showSpinner ? (
@@ -2584,7 +2649,7 @@ const SessionWorkspace = ({ session }) => {
                   </div>
                 )}
                 <span style={{ color: '#333' }}>
-                  {displayMessage}
+                  {isCompleted ? displayMessage : (displayMessage.split('(')[0].trim() || displayMessage)}
                   {!isCompleted && activeStage ? ` (${activeStage.label})` : ''}
                 </span>
               </div>

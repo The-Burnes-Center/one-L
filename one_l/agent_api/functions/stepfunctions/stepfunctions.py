@@ -661,6 +661,7 @@ class StepFunctionsConstruct(Construct):
             "ANALYSES_TABLE_NAME": self.analysis_table.table_name,
             "STATE_MACHINE_ARN": self.state_machine.state_machine_arn,
             "REGION": Stack.of(self).region,
+            "KNOWLEDGE_BASE_ID": self.knowledge_base_id,  # Required for passing to Step Functions
             "LOG_LEVEL": "INFO"
         }
         
@@ -696,6 +697,21 @@ class StepFunctionsConstruct(Construct):
         
         # Grant read access to DynamoDB
         self.analysis_table.grant_read_data(role)
+        
+        # Grant permission to describe Step Functions executions
+        # This allows job_status Lambda to check execution status
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    'states:DescribeExecution'
+                ],
+                resources=[self.state_machine.state_machine_arn + '/*']  # All executions of this state machine
+            )
+        )
+        
+        # Grant write access to DynamoDB for updating failed status
+        self.analysis_table.grant_write_data(role)
         
         # Environment variables
         env = {

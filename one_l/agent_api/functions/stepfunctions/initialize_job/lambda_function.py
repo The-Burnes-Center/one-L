@@ -94,6 +94,11 @@ def lambda_handler(event, context):
         
         logger.info(f"Resolved bucket_type '{bucket_type}' to bucket_name '{bucket_name}'")
         
+        # Get knowledge_base_id and region from environment or event
+        # These should be passed from start_workflow Lambda
+        knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
+        region = event.get('region') or os.environ.get('REGION', 'us-east-1')
+        
         # Return full context for downstream functions
         return {
             "job_id": job_id,
@@ -104,6 +109,8 @@ def lambda_handler(event, context):
             "bucket_type": bucket_type,
             "bucket_name": bucket_name,  # Actual S3 bucket name
             "terms_profile": terms_profile,
+            "knowledge_base_id": knowledge_base_id,  # Pass through for KB queries
+            "region": region,  # Pass through for KB queries
             "status": "processing"
         }
         

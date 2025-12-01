@@ -123,6 +123,14 @@ def lambda_handler(event, context):
                 })
             }
         
+        # Get knowledge_base_id and region from environment variables
+        # These are set by the CDK construct when creating the Lambda
+        knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
+        region = os.environ.get('REGION', 'us-east-1')
+        
+        if not knowledge_base_id:
+            logger.warning("KNOWLEDGE_BASE_ID not set in environment, workflow may fail")
+        
         # Prepare Step Functions input
         sfn_input = {
             'job_id': job_id,
@@ -131,7 +139,9 @@ def lambda_handler(event, context):
             'document_s3_key': document_s3_key,
             'bucket_type': bucket_type,
             'terms_profile': terms_profile,
-            'timestamp': timestamp_iso  # Use the same timestamp for DynamoDB key
+            'timestamp': timestamp_iso,  # Use the same timestamp for DynamoDB key
+            'knowledge_base_id': knowledge_base_id,  # Required for KB queries
+            'region': region  # Required for KB queries
         }
         
         logger.info(f"Starting Step Functions execution with input: {json.dumps(sfn_input)}")
@@ -143,7 +153,27 @@ def lambda_handler(event, context):
             input=json.dumps(sfn_input)
         )
         
-        logger.info(f"Step Functions execution started: {execution_response['executionArn']}")
+        execution_arn = execution_response['executionArn']
+        logger.info(f"Step Functions execution started: {execution_arn}")
+        
+        # Update DynamoDB record with execution_arn for job_status Lambda to query Step Functions
+        if table_name:
+            try:
+                table = dynamodb.Table(table_name)
+                table.update_item(
+                    Key={
+                        'analysis_id': job_id,
+                        'timestamp': timestamp_iso
+                    },
+                    UpdateExpression='SET execution_arn = :arn, updated_at = :updated',
+                    ExpressionAttributeValues={
+                        ':arn': execution_arn,
+                        ':updated': timestamp_iso
+                    }
+                )
+                logger.info(f"Updated DynamoDB record with execution_arn for job {job_id}")
+            except Exception as db_error:
+                logger.warning(f"Could not update DynamoDB with execution_arn: {db_error}")
         
         # Return success response in the format the frontend expects
         return {
