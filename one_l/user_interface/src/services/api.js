@@ -364,6 +364,27 @@ const agentAPI = {
       body: JSON.stringify(payload)
     });
   },
+
+  /**
+   * Get the status of a document review job
+   * Used for real-time progress tracking
+   * 
+   * @param {string} jobId - The job ID to check status for
+   * @returns {Promise<Object>} Job status including stage, progress, and result
+   */
+  getJobStatus: async (jobId) => {
+    if (!jobId) {
+      return {
+        success: false,
+        error: 'job_id is required'
+      };
+    }
+    
+    return await apiCall('/agent/job-status', {
+      method: 'POST',
+      body: JSON.stringify({ job_id: jobId })
+    });
+  },
   
   /**
    * Download a file from S3 using a presigned URL

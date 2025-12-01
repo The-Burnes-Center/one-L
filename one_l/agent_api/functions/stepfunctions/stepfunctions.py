@@ -581,6 +581,46 @@ class StepFunctionsConstruct(Construct):
             timeout=Duration.seconds(30),
             memory_size=512
         )
+        
+        # Create job status Lambda for progress polling
+        self.create_job_status_lambda()
+    
+    def create_job_status_lambda(self):
+        """
+        Create the Lambda that returns job status for frontend polling.
+        This provides real-time progress updates to the user.
+        """
+        
+        # Create role for the job status Lambda (read-only access to DynamoDB)
+        role = iam.Role(
+            self, "JobStatusRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                )
+            ]
+        )
+        
+        # Grant read access to DynamoDB
+        self.analysis_table.grant_read_data(role)
+        
+        # Environment variables
+        env = {
+            "ANALYSES_TABLE_NAME": self.analysis_table.table_name,
+            "REGION": Stack.of(self).region,
+            "LOG_LEVEL": "INFO"
+        }
+        
+        # Create the Lambda
+        self.job_status_fn = self._create_lambda(
+            "JobStatus",
+            "job_status/lambda_function.lambda_handler",
+            role,
+            env,
+            timeout=Duration.seconds(10),
+            memory_size=256
+        )
     
     def update_knowledge_base_id(self, knowledge_base_id: str):
         """Update all Lambda functions with the real Knowledge Base ID."""

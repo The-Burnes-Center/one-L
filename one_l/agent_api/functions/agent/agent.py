@@ -157,6 +157,12 @@ class AgentConstruct(Construct):
                     "path": "review",
                     "methods": ["POST"],
                     "description": "AI-powered document review with Step Functions workflow"
+                },
+                "job-status": {
+                    "function": self.stepfunctions_construct.job_status_fn,
+                    "path": "job-status",
+                    "methods": ["GET", "POST"],
+                    "description": "Get real-time status of a document review job"
                 }
             }
         

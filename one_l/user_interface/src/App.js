@@ -1190,54 +1190,99 @@ const SessionWorkspace = ({ session }) => {
     setWorkflowMessageType('error');
   };
 
-  // Add polling function for job status
-  const pollJobStatus = async (jobId, userId, filename) => {
-    /*
-    const maxAttempts = 75; // 10 minutes with 8-second intervals (75 * 8 = 600 seconds = 10 minutes)
+  // Polling function for real-time job status updates
+  const pollJobStatus = async (jobId, sessionIdAtStart, filename, isCurrentSession) => {
+    const maxAttempts = 120; // 10 minutes with 5-second intervals
     let attempts = 0;
+    
+    // Map backend stages to frontend stages
+    const backendToFrontendStage = {
+      'starting': 'kb_sync',
+      'initialized': 'kb_sync',
+      'splitting': 'kb_sync',
+      'processing_chunks': 'document_review',
+      'merging_results': 'document_review',
+      'retrieving_context': 'document_review',
+      'generating_analysis': 'document_review',
+      'identifying_conflicts': 'generating',
+      'generating_redlines': 'generating',
+      'assembling_document': 'generating',
+      'finalizing': 'generating',
+      'completed': 'generating',
+      'failed': ''
+    };
     
     while (attempts < maxAttempts) {
       try {
-        const statusResponse = await sessionAPI.checkJobStatus(jobId, userId);
+        const statusResponse = await agentAPI.getJobStatus(jobId);
         
-        if (statusResponse.success && statusResponse.job) {
-          const { status, result, error } = statusResponse.job;
+        if (statusResponse.success) {
+          const { status, stage, progress, label, description, result, error } = statusResponse;
           
+          // Update UI with real-time progress
+          if (isCurrentSession()) {
+            const frontendStage = backendToFrontendStage[stage] || 'document_review';
+            
+            // Update processing phase with backend's description
+            if (status === 'processing') {
+              setProcessingPhase(frontendStage, `${label}: ${description}`);
+              
+              // Update the redlined documents with progress
+              setRedlinedDocuments(prev => prev.map(doc => {
+                if (doc.jobId === jobId) {
+                  return {
+                    ...doc,
+                    progress: progress || 0,
+                    status: 'processing',
+                    message: `${label} (${progress}%)`
+                  };
+                }
+                return doc;
+              }));
+            }
+          }
+          
+          // Check for completion
           if (status === 'completed' && result) {
             return {
               success: true,
               processing: false,
               redlined_document: result.redlined_document,
-              analysis: result.analysis
+              analysis: result.analysis,
+              has_redlines: result.has_redlines,
+              conflicts_found: result.conflicts_found
             };
-          } else if (status === 'failed') {
+          }
+          
+          // Check for failure
+          if (status === 'failed') {
             return {
               success: false,
               processing: false,
               error: error || 'Processing failed'
             };
-          } else if (status === 'analyzing') {
-            setWorkflowMessage(`Analyzing ${filename} with AI...`);
-          } else if (status === 'generating_redline') {
-            setWorkflowMessage(`Generating redlined version of ${filename}...`);
           }
         }
         
-        await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+        // Wait before next poll (5 seconds)
+        await new Promise(resolve => setTimeout(resolve, 5000));
         attempts++;
-      } catch (error) {
-
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        
+      } catch (pollError) {
+        console.warn('Polling error:', pollError);
+        // Continue polling even on error
+        await new Promise(resolve => setTimeout(resolve, 5000));
         attempts++;
       }
     }
     
+    // Timeout - but job may still be running
     return {
       success: false,
-      processing: false,
-      error: 'Processing timeout - document may still be processing in background'
+      processing: true,
+      error: 'Processing is taking longer than expected. The job will continue in the background.',
+      job_id: jobId
     };
-    */
   };
 
   // Unified stage management without artificial percentage tracking
@@ -1504,16 +1549,17 @@ const SessionWorkspace = ({ session }) => {
 
             }
             
-            // Poll for completion (WebSocket is primary, polling is fallback)
+            // Poll for completion with real-time progress updates
             let finalResult = null;
             try {
               finalResult = await pollJobStatus(
                 reviewResponse.job_id,
-                userIdAtStart,
-                vendorFile.filename
+                sessionIdAtStart,
+                vendorFile.filename,
+                isCurrentSession
               );
             } catch (pollError) {
-              console.warn('pollJobStatus fallback failed', {
+              console.warn('pollJobStatus failed', {
                 jobId: reviewResponse.job_id,
                 filename: vendorFile.filename,
                 error: pollError?.message || pollError
@@ -2131,60 +2177,98 @@ const SessionWorkspace = ({ session }) => {
   return (
     <div className="main-content">
       {/* Processing Overlay - Blocks all interactions during job processing */}
-      {generating && (
-        <div className="processing-overlay">
-          <div className="processing-modal">
-            <div className="processing-spinner-container">
-              <div className="processing-spinner"></div>
-              <div className="processing-spinner-inner">📄</div>
-            </div>
-            <h2 className="processing-title">Analyzing Your Documents</h2>
-            <p className="processing-subtitle">
-              Our AI is carefully reviewing your vendor submission against the reference documents. 
-              This typically takes 1-3 minutes depending on document complexity.
-            </p>
-            <div className="processing-stages">
-              {stageOrder.map((stage, index) => {
-                const isCompleted = completedStages.includes(stage.key);
-                const isActive = processingStage === stage.key;
-                return (
-                  <div key={stage.key} className="processing-stage">
-                    <div className={`processing-stage-dot ${isCompleted ? 'completed' : isActive ? 'active' : 'pending'}`}>
-                      {isCompleted ? '✓' : index + 1}
+      {generating && (() => {
+        // Calculate progress from redlinedDocuments if available
+        const processingDoc = redlinedDocuments.find(d => d.processing);
+        const currentProgress = processingDoc?.progress || 0;
+        const currentMessage = processingDoc?.message || workflowMessage || 'Starting document review...';
+        
+        return (
+          <div className="processing-overlay">
+            <div className="processing-modal">
+              <div className="processing-spinner-container">
+                <div className="processing-spinner"></div>
+                <div className="processing-spinner-inner">📄</div>
+              </div>
+              <h2 className="processing-title">Analyzing Your Documents</h2>
+              <p className="processing-subtitle" style={{ minHeight: '48px' }}>
+                {currentMessage}
+              </p>
+              <div className="processing-stages">
+                {stageOrder.map((stage, index) => {
+                  const isCompleted = completedStages.includes(stage.key);
+                  const isActive = processingStage === stage.key;
+                  return (
+                    <div key={stage.key} className="processing-stage">
+                      <div className={`processing-stage-dot ${isCompleted ? 'completed' : isActive ? 'active' : 'pending'}`}>
+                        {isCompleted ? '✓' : index + 1}
+                      </div>
+                      <span className="processing-stage-label">{stage.label.split(' ')[0]}</span>
                     </div>
-                    <span className="processing-stage-label">{stage.label.split(' ')[0]}</span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+              <div className="processing-progress-bar">
+                <div 
+                  className="processing-progress-fill" 
+                  style={{ 
+                    width: `${Math.max(5, currentProgress || (completedStages.length / stageOrder.length) * 100 + (processingStage ? 15 : 0))}%` 
+                  }}
+                ></div>
+              </div>
+              {currentProgress > 0 && (
+                <p style={{ 
+                  fontSize: '14px', 
+                  color: '#64748b', 
+                  margin: '8px 0 0',
+                  fontWeight: '600'
+                }}>
+                  {currentProgress}% complete
+                </p>
+              )}
+              <p className="processing-tip">
+                💡 Tip: You can navigate away - we'll save your results automatically
+              </p>
             </div>
-            <div className="processing-progress-bar">
-              <div 
-                className="processing-progress-fill" 
-                style={{ 
-                  width: `${Math.max(10, (completedStages.length / stageOrder.length) * 100 + (processingStage ? 15 : 0))}%` 
-                }}
-              ></div>
-            </div>
-            <p className="processing-tip">
-              💡 Tip: You can navigate away - we'll save your results automatically
-            </p>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      <div className="card">
-        <h1>One L</h1>
-        <p>AI-powered intelligent review of vendor submissions</p>
+      <div className="card" style={{ 
+        background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+        borderTop: '4px solid #3b82f6',
+        textAlign: 'center'
+      }}>
+        <h1 style={{ 
+          background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text'
+        }}>One L</h1>
+        <p style={{ fontSize: '17px', maxWidth: '500px', margin: '0 auto' }}>
+          AI-powered intelligent review of vendor submissions
+        </p>
         {session && (
           <div style={{ 
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
             fontSize: '14px', 
-            color: '#666', 
-            marginTop: '8px',
-            padding: '8px',
-            background: '#f8f9fa',
-            borderRadius: '4px'
+            color: '#475569', 
+            marginTop: '16px',
+            padding: '10px 16px',
+            background: '#f1f5f9',
+            borderRadius: '999px',
+            border: '1px solid #e2e8f0'
           }}>
-            <strong>Session:</strong> {session.title}
+            <span style={{ 
+              width: '8px', 
+              height: '8px', 
+              background: '#22c55e', 
+              borderRadius: '50%',
+              boxShadow: '0 0 0 3px rgba(34, 197, 94, 0.2)'
+            }}></span>
+            <span><strong>Session:</strong> {session.title}</span>
           </div>
         )}
       </div>
@@ -2216,9 +2300,38 @@ const SessionWorkspace = ({ session }) => {
 
 
       {/* AI Document Review Workflow */}
-      <div className="card" style={{ marginTop: '20px' }}>
-          <h2>AI Document Review Workflow</h2>
-          <p>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
+      <div className="card" style={{ marginTop: '8px' }}>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '12px',
+            marginBottom: '8px'
+          }}>
+            <div style={{
+              width: '40px',
+              height: '40px',
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+              borderRadius: '10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '20px',
+              boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)'
+            }}>🤖</div>
+            <div>
+              <h2 style={{ 
+                margin: 0, 
+                fontSize: '20px', 
+                fontWeight: 700, 
+                color: '#1e293b' 
+              }}>AI Document Review Workflow</h2>
+              <p style={{ 
+                margin: '2px 0 0', 
+                fontSize: '14px', 
+                color: '#64748b' 
+              }}>Generate redlined documents after uploading both reference documents and vendor submissions.</p>
+            </div>
+          </div>
         <div
           style={{
             margin: '16px 0',
