@@ -68,6 +68,7 @@ const SessionSidebar = ({
       }
       
       if (responseData && responseData.success) {
+        // Backend now automatically filters empty sessions, so we can trust the response
         setSessions(responseData.sessions || []);
         return { success: true };
       } else {

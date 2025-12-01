@@ -2,7 +2,7 @@ import json
 import boto3
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 from typing import Dict, Any
 from decimal import Decimal
@@ -119,8 +119,94 @@ def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, An
             'error': str(e)
         }
 
-def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str, Any]:
-    """Get all sessions for a user, optionally filtered by whether they have results"""
+def cleanup_empty_sessions(user_id: str, max_age_days: int = 7) -> Dict[str, Any]:
+    """Clean up empty sessions older than max_age_days"""
+    try:
+        if not SESSIONS_TABLE or not ANALYSIS_RESULTS_TABLE:
+            logger.warning("Tables not configured, skipping cleanup")
+            return {'success': True, 'deleted_count': 0}
+        
+        sessions_table = dynamodb.Table(SESSIONS_TABLE)
+        analysis_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
+        
+        # Calculate cutoff date
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        cutoff_iso = cutoff_date.isoformat()
+        
+        # Get all user sessions
+        sessions = []
+        last_evaluated_key = None
+        while True:
+            scan_kwargs = {
+                'FilterExpression': 'user_id = :user_id',
+                'ExpressionAttributeValues': {':user_id': user_id}
+            }
+            if last_evaluated_key:
+                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+            response = sessions_table.scan(**scan_kwargs)
+            sessions.extend(response.get('Items', []))
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+        
+        deleted_count = 0
+        for session in sessions:
+            session_id = session.get('session_id')
+            created_at = session.get('created_at', '')
+            has_results = session.get('has_results', False)
+            
+            # Skip if session has results or is too new
+            if has_results or (created_at and created_at > cutoff_iso):
+                continue
+            
+            # Double-check: verify session has no documents in analysis_results
+            try:
+                analysis_response = analysis_table.scan(
+                    FilterExpression='session_id = :session_id AND user_id = :user_id',
+                    ExpressionAttributeValues={
+                        ':session_id': session_id,
+                        ':user_id': user_id
+                    },
+                    Limit=1  # Just check if any exist
+                )
+                
+                # Filter out job status entries
+                actual_results = [
+                    item for item in analysis_response.get('Items', [])
+                    if not item.get('analysis_id', '').startswith('job_')
+                ]
+                
+                # If no actual documents, delete the session
+                if len(actual_results) == 0:
+                    try:
+                        sessions_table.delete_item(
+                            Key={
+                                'session_id': session_id,
+                                'user_id': user_id
+                            }
+                        )
+                        deleted_count += 1
+                        logger.info(f"Deleted empty session {session_id} (created: {created_at})")
+                    except Exception as delete_error:
+                        logger.warning(f"Failed to delete session {session_id}: {delete_error}")
+            except Exception as check_error:
+                logger.warning(f"Error checking documents for session {session_id}: {check_error}")
+        
+        logger.info(f"Cleanup completed: deleted {deleted_count} empty sessions for user {user_id}")
+        return {'success': True, 'deleted_count': deleted_count}
+        
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+        return {'success': False, 'error': str(e), 'deleted_count': 0}
+
+def get_user_sessions(user_id: str, filter_by_results: bool = False, cleanup_empty: bool = True) -> Dict[str, Any]:
+    """Get all sessions for a user, optionally filtered by whether they have results.
+    
+    Args:
+        user_id: User ID to get sessions for
+        filter_by_results: If True, only return sessions with has_results=True
+        cleanup_empty: If True, auto-cleanup empty sessions older than 7 days
+    """
     try:
         # Validate environment variables
         if not SESSIONS_TABLE:
@@ -130,6 +216,13 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str
                 'error': 'Configuration error: Sessions table not configured',
                 'sessions': []
             }
+        
+        # Auto-cleanup empty sessions before listing
+        if cleanup_empty:
+            try:
+                cleanup_empty_sessions(user_id, max_age_days=7)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup failed (non-fatal): {cleanup_error}")
         
         # Try to get from DynamoDB
         try:
@@ -158,6 +251,50 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False) -> Dict[str
             # Filter sessions with results if requested
             if filter_by_results:
                 sessions = [s for s in sessions if s.get('has_results', False)]
+            else:
+                # Always filter out empty sessions (sessions without documents or active jobs)
+                # Verify by checking analysis_results table
+                if ANALYSIS_RESULTS_TABLE:
+                    analysis_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
+                    sessions_with_content = []
+                    for session in sessions:
+                        session_id = session.get('session_id')
+                        # Quick check: if has_results flag is True, include it
+                        if session.get('has_results', False):
+                            sessions_with_content.append(session)
+                            continue
+                        
+                        # Otherwise verify it has documents OR active jobs
+                        try:
+                            analysis_response = analysis_table.scan(
+                                FilterExpression='session_id = :session_id AND user_id = :user_id',
+                                ExpressionAttributeValues={
+                                    ':session_id': session_id,
+                                    ':user_id': user_id
+                                }
+                            )
+                            items = analysis_response.get('Items', [])
+                            
+                            # Check for actual documents (non-job entries)
+                            actual_results = [
+                                item for item in items
+                                if not item.get('analysis_id', '').startswith('job_')
+                            ]
+                            
+                            # Check for active jobs (job entries with processing status)
+                            active_jobs = [
+                                item for item in items
+                                if item.get('analysis_id', '').startswith('job_') and
+                                item.get('status') == 'processing'
+                            ]
+                            
+                            # Keep session if it has documents OR active processing jobs
+                            if len(actual_results) > 0 or len(active_jobs) > 0:
+                                sessions_with_content.append(session)
+                        except Exception:
+                            # On error, include session to be safe (don't filter out on error)
+                            sessions_with_content.append(session)
+                    sessions = sessions_with_content
             
             # Sort by created_at descending (handle missing or invalid dates)
             try:
@@ -501,7 +638,7 @@ def get_admin_metrics() -> Dict[str, Any]:
                 break
         
         # Calculate metrics
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone, timedelta
         
         # Session metrics
         total_sessions = len(all_sessions)
