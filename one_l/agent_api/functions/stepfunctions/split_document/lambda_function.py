@@ -15,6 +15,12 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import update_progress
+except ImportError:
+    update_progress = None
+
 def lambda_handler(event, context):
     """
     Split document into chunks using character-based chunking.
@@ -85,6 +91,13 @@ def lambda_handler(event, context):
             })
         
         logger.info(f"Split document into {len(chunk_s3_keys)} chunks for job {job_id}")
+        
+        # Update progress
+        if update_progress and job_id and timestamp:
+            update_progress(
+                job_id, timestamp, 'splitting',
+                f'Split document into {len(chunk_s3_keys)} chunks for analysis...'
+            )
         
         # Return just split results - context is preserved via result_path merging
         # Step Functions will store this at $.split_result while keeping original context

@@ -18,6 +18,12 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import update_progress
+except ImportError:
+    update_progress = None
+
 def lambda_handler(event, context):
     """
     Analyze chunk with KB results for conflict detection.
@@ -112,6 +118,20 @@ def lambda_handler(event, context):
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e.errors()}")
             raise ValueError(f"Invalid response structure: {e}")
+        
+        # Update progress (for chunk processing)
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        chunk_num = event.get('chunk_num', 0)
+        total_chunks = event.get('total_chunks', 1)
+        if update_progress and job_id and timestamp:
+            # Calculate progress based on chunk number
+            base_progress = 30  # processing_chunks stage
+            chunk_progress = int((chunk_num + 1) / total_chunks * 10)  # 30-40% range
+            update_progress(
+                job_id, timestamp, 'processing_chunks',
+                f'Analyzing chunk {chunk_num + 1} of {total_chunks}, found {len(validated_output.conflicts)} conflicts...'
+            )
         
         # Return plain result
         return validated_output.model_dump()

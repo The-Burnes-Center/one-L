@@ -13,6 +13,12 @@ from agent_api.agent.tools import redline_document
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import update_progress
+except ImportError:
+    update_progress = None
+
 def lambda_handler(event, context):
     """
     Generate redlined document from conflicts.
@@ -81,6 +87,15 @@ def lambda_handler(event, context):
                 redlined_document_s3_key=redlined_s3_key,
                 error=None
             )
+            
+            # Update progress
+            job_id = event.get('job_id')
+            timestamp = event.get('timestamp')
+            if update_progress and job_id and timestamp:
+                update_progress(
+                    job_id, timestamp, 'generating_redlines',
+                    f'Generated redlined document with {len(conflicts_list)} conflicts...'
+                )
         else:
             error_msg = result.get('error', 'Unknown error')
             output = RedlineOutput(

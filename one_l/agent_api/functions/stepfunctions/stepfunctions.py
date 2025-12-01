@@ -177,6 +177,14 @@ class StepFunctionsConstruct(Construct):
             timeout=Duration.seconds(30)
         )
         
+        self.store_large_results_fn = self._create_lambda(
+            "StoreLargeResults",
+            "store_large_results/lambda_function.lambda_handler",
+            role,
+            common_env,
+            timeout=Duration.seconds(30)
+        )
+        
         self.handle_error_fn = self._create_lambda(
             "HandleError",
             "handle_error/lambda_function.lambda_handler",
@@ -454,13 +462,38 @@ class StepFunctionsConstruct(Construct):
         
         retrieve_doc_kb_queries_map.item_processor(retrieve_doc_kb_query)
         
-        # Analyze document with KB results
+        # Store KB results in S3 if they're too large (to avoid payload size limits)
+        store_doc_kb_results = tasks.LambdaInvoke(
+            self, "StoreDocKBResults",
+            lambda_function=self.store_large_results_fn,
+            payload_response_only=True,
+            result_path="$.kb_storage",
+            retry_on_service_exceptions=True,
+            parameters={
+                "kb_results.$": "$.kb_results",
+                "job_id.$": "$.job_id",
+                "session_id.$": "$.session_id",
+                "bucket_name.$": "$.bucket_name"
+            }
+        )
+        
+        # Analyze document with KB results (will read from S3 if stored)
         analyze_document_with_kb = tasks.LambdaInvoke(
             self, "AnalyzeDocumentWithKB",
             lambda_function=self.analyze_document_with_kb_fn,
             payload_response_only=True,
             result_path="$.conflicts_result",
-            retry_on_service_exceptions=True
+            retry_on_service_exceptions=True,
+            parameters={
+                "document_s3_key.$": "$.document_s3_key",
+                "bucket_name.$": "$.bucket_name",
+                "knowledge_base_id.$": "$.knowledge_base_id",
+                "region.$": "$.region",
+                "job_id.$": "$.job_id",
+                "timestamp.$": "$.timestamp",
+                "kb_results_s3_key.$": "$.kb_storage.s3_key"
+                # Don't pass kb_results in state - read from S3 instead to avoid payload limits
+            }
         )
         analyze_document_with_kb.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
@@ -471,7 +504,9 @@ class StepFunctionsConstruct(Construct):
         
         # Single document workflow
         single_doc_workflow = analyze_doc_structure.next(
-            retrieve_doc_kb_queries_map.next(analyze_document_with_kb)
+            retrieve_doc_kb_queries_map.next(
+                store_doc_kb_results.next(analyze_document_with_kb)
+            )
         )
         
         # ===== COMMON FINAL STEPS =====

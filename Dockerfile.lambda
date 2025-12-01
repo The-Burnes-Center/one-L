@@ -58,6 +58,7 @@ COPY one_l/agent_api/functions/stepfunctions/generate_redline/ ./python/generate
 COPY one_l/agent_api/functions/stepfunctions/save_results/ ./python/save_results/
 COPY one_l/agent_api/functions/stepfunctions/cleanup_session/ ./python/cleanup_session/
 COPY one_l/agent_api/functions/stepfunctions/handle_error/ ./python/handle_error/
+COPY one_l/agent_api/functions/stepfunctions/store_large_results/ ./python/store_large_results/
 
 # Copy the agent modules that all Lambda functions import
 COPY one_l/agent_api/agent ./python/agent_api/agent/

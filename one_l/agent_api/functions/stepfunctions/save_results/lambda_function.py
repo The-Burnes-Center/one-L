@@ -12,6 +12,12 @@ from agent_api.agent.tools import save_analysis_to_dynamodb
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import mark_completed
+except ImportError:
+    mark_completed = None
+
 def lambda_handler(event, context):
     """
     Save analysis results to DynamoDB.
@@ -57,6 +63,19 @@ def lambda_handler(event, context):
         )
         
         logger.info(f"Analysis results saved: {analysis_id}")
+        
+        # Mark job as completed
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        if mark_completed and job_id and timestamp:
+            mark_completed(
+                job_id, timestamp,
+                {
+                    'redlined_document_s3_key': redlined_s3_key,
+                    'analysis': analysis_json if isinstance(analysis_json, str) else json.dumps(analysis_json),
+                    'conflicts_count': len(json.loads(analysis_json if isinstance(analysis_json, str) else json.dumps(analysis_json)).get('conflicts', []))
+                }
+            )
         
         # Return plain result
         return output.model_dump()

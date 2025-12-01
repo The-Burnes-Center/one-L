@@ -136,7 +136,7 @@ const SessionSidebar = ({
         
         // Process active jobs from API response (includes both processing and failed jobs)
         // This ensures we detect active jobs even after page refresh
-        const activeJobs = activeJobsFromAPI.map(job => ({
+        let activeJobs = activeJobsFromAPI.map(job => ({
           jobId: job.job_id || job.analysis_id,
           status: job.status || 'processing', // Can be 'processing', 'failed', 'completed'
           progress: job.progress || 0,
@@ -145,6 +145,25 @@ const SessionSidebar = ({
           updatedAt: job.updated_at || job.timestamp,
           errorMessage: job.stage_message || job.error_message
         }));
+        
+        // If there's a processing job, filter out old failed jobs (only keep the most recent failed if no processing)
+        const hasProcessingJob = activeJobs.some(job => job.status === 'processing');
+        if (hasProcessingJob) {
+          // Keep only processing jobs when a new one exists
+          activeJobs = activeJobs.filter(job => job.status === 'processing');
+        } else {
+          // If no processing jobs, keep failed jobs (but only the most recent one)
+          const failedJobs = activeJobs.filter(job => job.status === 'failed');
+          if (failedJobs.length > 0) {
+            // Sort by updatedAt and keep only the most recent failed job
+            failedJobs.sort((a, b) => {
+              const timeA = new Date(a.updatedAt || 0).getTime();
+              const timeB = new Date(b.updatedAt || 0).getTime();
+              return timeB - timeA; // Most recent first
+            });
+            activeJobs = [failedJobs[0]]; // Keep only the most recent failed job
+          }
+        }
         
         // Also check window state for any jobs that might not be in DynamoDB yet (race condition)
         if (window.processingSessionFlags && window.processingSessionFlags[session.session_id]) {
@@ -229,6 +248,12 @@ const SessionSidebar = ({
               // Preserve documentS3Key from existing job or get from response
               documentS3Key: existingJob?.documentS3Key || jobData.document_s3_key || null
             };
+            
+            // If this is a new processing job, remove old failed jobs for this session
+            if (status === 'processing' && jobIndex < 0) {
+              // New processing job started - remove old failed jobs
+              updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.status !== 'failed');
+            }
             
             if (jobIndex >= 0) {
               updated[session_id].activeJobs[jobIndex] = jobStatus;
@@ -396,9 +421,12 @@ const SessionSidebar = ({
     }
     
     // Since each session has only 1 job, check activeJobs first
-    // Active jobs include both processing and failed jobs
+    // Prioritize processing jobs over failed jobs
     if (status.activeJobs && status.activeJobs.length > 0) {
-      const job = status.activeJobs[0]; // Get the first (and only) job
+      // Find processing job first, then fallback to failed job
+      const processingJob = status.activeJobs.find(job => job.status === 'processing');
+      const job = processingJob || status.activeJobs[0]; // Use processing job if exists, otherwise first job
+      
       if (job.documentS3Key) {
         const docName = extractDocumentName(job.documentS3Key);
         return docName.length > 30 ? docName.substring(0, 30) + '...' : docName;
@@ -423,15 +451,16 @@ const SessionSidebar = ({
     if (!status) return { type: 'empty', label: 'Empty', color: '#666' };
     
     // Check activeJobs first (since each session has only 1 job)
+    // Prioritize processing jobs over failed jobs
     if (status.activeJobs && status.activeJobs.length > 0) {
-      const job = status.activeJobs[0]; // Get the first (and only) job
+      // Find processing job first, then fallback to failed job
+      const processingJob = status.activeJobs.find(job => job.status === 'processing');
+      const failedJob = status.activeJobs.find(job => job.status === 'failed');
+      const job = processingJob || failedJob; // Prioritize processing over failed
       
-      // Check for failed job
-      if (job.status === 'failed') {
-        return { type: 'failed', label: 'Failed', color: '#ef4444' };
-      }
+      if (!job) return { type: 'empty', label: 'Empty', color: '#666' };
       
-      // Check for processing job
+      // Check for processing job first (highest priority)
       if (job.status === 'processing') {
         return { 
           type: 'processing', 
@@ -439,6 +468,11 @@ const SessionSidebar = ({
           color: '#3b82f6',
           progress: job.progress || 0
         };
+      }
+      
+      // Check for failed job
+      if (job.status === 'failed') {
+        return { type: 'failed', label: 'Failed', color: '#ef4444' };
       }
     }
     

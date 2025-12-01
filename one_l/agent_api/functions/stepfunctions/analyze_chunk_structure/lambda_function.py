@@ -18,6 +18,12 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import update_progress
+except ImportError:
+    update_progress = None
+
 def lambda_handler(event, context):
     """
     Analyze chunk structure and generate queries.
@@ -100,6 +106,17 @@ def lambda_handler(event, context):
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e.errors()}")
             raise ValueError(f"Invalid response structure: {e}")
+        
+        # Update progress (for chunk structure analysis)
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        chunk_num = event.get('chunk_num', 0)
+        total_chunks = event.get('total_chunks', 1)
+        if update_progress and job_id and timestamp:
+            update_progress(
+                job_id, timestamp, 'analyzing',
+                f'Analyzing chunk {chunk_num + 1} of {total_chunks}, generated {len(validated_output.queries)} queries...'
+            )
         
         # Return plain result (Step Functions uses result_path to merge with state)
         return validated_output.model_dump()

@@ -11,6 +11,12 @@ from agent_api.agent.prompts.models import ConflictDetectionOutput, ConflictMode
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import update_progress
+except ImportError:
+    update_progress = None
+
 def lambda_handler(event, context):
     """
     Merge conflicts from all chunks into single result.
@@ -99,6 +105,15 @@ def lambda_handler(event, context):
         )
         
         logger.info(f"Merged {len(deduplicated_conflicts)} total conflicts from {len(chunk_results)} chunks")
+        
+        # Update progress
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        if update_progress and job_id and timestamp:
+            update_progress(
+                job_id, timestamp, 'merging_results',
+                f'Merged analysis results from {len(chunk_results)} chunks, found {len(deduplicated_conflicts)} conflicts...'
+            )
         
         # Return plain result
         return output.model_dump()

@@ -18,6 +18,12 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
+# Import progress tracker
+try:
+    from shared.progress_tracker import update_progress
+except ImportError:
+    update_progress = None
+
 def lambda_handler(event, context):
     """
     Analyze document structure and generate queries for single document.
@@ -94,6 +100,15 @@ def lambda_handler(event, context):
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e.errors()}")
             raise ValueError(f"Invalid response structure: {e}")
+        
+        # Update progress
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        if update_progress and job_id and timestamp:
+            update_progress(
+                job_id, timestamp, 'analyzing',
+                f'Analyzed document structure, generated {len(validated_output.queries)} queries for knowledge base lookup...'
+            )
         
         # Return plain result (Step Functions uses result_path to merge with state)
         return validated_output.model_dump()
