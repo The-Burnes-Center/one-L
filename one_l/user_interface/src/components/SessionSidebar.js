@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { sessionAPI, agentAPI } from '../services/api';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -41,23 +41,29 @@ const SessionSidebar = ({
     if (currentUserId && isVisible) {
       loadSessions();
     }
-  }, [currentUserId, isVisible]);
+  }, [currentUserId, isVisible, loadSessions]);
 
   // Load session statuses (documents and active jobs) for all sessions
   useEffect(() => {
     if (sessions.length > 0 && currentUserId) {
       loadSessionStatuses();
     }
-  }, [sessions, currentUserId]);
+  }, [sessions, currentUserId, loadSessionStatuses]);
+
+  // Use ref to access latest sessionStatuses without causing re-renders
+  const sessionStatusesRef = useRef(sessionStatuses);
+  useEffect(() => {
+    sessionStatusesRef.current = sessionStatuses;
+  }, [sessionStatuses]);
 
   // Poll active jobs for real-time updates
   useEffect(() => {
     if (sessions.length === 0) return;
     
     const pollInterval = setInterval(() => {
-      // Get active job IDs from current state
+      // Get active job IDs from current state (use ref to avoid stale closure)
       const activeJobIds = [];
-      Object.values(sessionStatuses).forEach(status => {
+      Object.values(sessionStatusesRef.current).forEach(status => {
         if (status.activeJobs && status.activeJobs.length > 0) {
           status.activeJobs.forEach(job => {
             if (job.status === 'processing' && job.jobId) {
@@ -88,7 +94,7 @@ const SessionSidebar = ({
     }, 5000); // Poll every 5 seconds
     
     return () => clearInterval(pollInterval);
-  }, [sessions.length]); // Only depend on sessions length, not the full object
+  }, [sessions.length, pollJobStatus, loadSessionStatuses]);
 
   // Refresh sessions when sessionId changes
   useEffect(() => {
@@ -122,7 +128,7 @@ const SessionSidebar = ({
       
       return () => clearInterval(retryInterval);
     }
-  }, [sessionId, currentUserId, isVisible]);
+  }, [sessionId, currentUserId, isVisible, loadSessions]);
 
   // Refresh sessions periodically
   useEffect(() => {
@@ -133,15 +139,15 @@ const SessionSidebar = ({
     }, 30000);
 
     return () => clearInterval(refreshInterval);
-  }, [currentUserId, isVisible]);
+  }, [currentUserId, isVisible, loadSessions]);
 
   useEffect(() => {
     if (onRefreshRequest) {
       loadSessions();
     }
-  }, [onRefreshRequest]);
+  }, [onRefreshRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     try {
       setLoading(true);
       const response = await sessionAPI.getUserSessions(currentUserId, false);
@@ -178,9 +184,9 @@ const SessionSidebar = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUserId]);
 
-  const loadSessionStatuses = async () => {
+  const loadSessionStatuses = useCallback(async () => {
     const statusMap = {};
     
     for (const session of sessions) {
@@ -245,9 +251,9 @@ const SessionSidebar = ({
     }
     
     setSessionStatuses(statusMap);
-  };
+  }, [sessions, currentUserId]);
 
-  const pollJobStatus = async (jobId) => {
+  const pollJobStatus = useCallback(async (jobId) => {
     try {
       const statusResponse = await agentAPI.getJobStatus(jobId);
       
@@ -292,7 +298,7 @@ const SessionSidebar = ({
     } catch (error) {
       console.warn(`Error polling job status for ${jobId}:`, error);
     }
-  };
+  }, []);
 
   const extractDocumentName = (s3Key) => {
     if (!s3Key) return 'Unknown Document';
