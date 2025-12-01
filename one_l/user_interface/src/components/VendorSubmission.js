@@ -6,9 +6,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { knowledgeManagementAPI, fileUtils } from '../services/api';
 
-const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessionContext = null }) => {
+const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessionContext = null, disabled = false }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  
+  // Combined disabled state
+  const isDisabled = disabled || uploading;
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
   const fileInputRef = useRef(null);
@@ -126,7 +129,7 @@ const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessi
           className="form-control"
           accept=".doc,.docx,.pdf"
           description="DOC, DOCX, PDF (Max 10MB per file)"
-          disabled={uploading}
+          disabled={isDisabled}
         />
       </div>
 
@@ -211,7 +214,7 @@ const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessi
             <button
               type="button"
               onClick={() => setSelectedFiles([])}
-              disabled={uploading || messageType === 'success'}
+              disabled={isDisabled || messageType === 'success'}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -232,9 +235,9 @@ const VendorSubmission = ({ onFilesUploaded, previouslyUploadedFiles = [], sessi
       <div className="form-group">
         <button
           onClick={handleUpload}
-          disabled={uploading || selectedFiles.length === 0 || messageType === 'success'}
+          disabled={isDisabled || selectedFiles.length === 0 || messageType === 'success'}
           className="btn"
-          style={{ opacity: (uploading || messageType === 'success') ? 0.6 : 1 }}
+          style={{ opacity: (isDisabled || messageType === 'success') ? 0.6 : 1 }}
         >
           {uploading ? 'Uploading...' : messageType === 'success' ? 'Document Uploaded' : 'Upload Vendor Document'}
         </button>

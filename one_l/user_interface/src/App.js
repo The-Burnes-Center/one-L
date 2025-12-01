@@ -2130,6 +2130,48 @@ const SessionWorkspace = ({ session }) => {
   // For new sessions or sessions without results, show the main page
   return (
     <div className="main-content">
+      {/* Processing Overlay - Blocks all interactions during job processing */}
+      {generating && (
+        <div className="processing-overlay">
+          <div className="processing-modal">
+            <div className="processing-spinner-container">
+              <div className="processing-spinner"></div>
+              <div className="processing-spinner-inner">📄</div>
+            </div>
+            <h2 className="processing-title">Analyzing Your Documents</h2>
+            <p className="processing-subtitle">
+              Our AI is carefully reviewing your vendor submission against the reference documents. 
+              This typically takes 1-3 minutes depending on document complexity.
+            </p>
+            <div className="processing-stages">
+              {stageOrder.map((stage, index) => {
+                const isCompleted = completedStages.includes(stage.key);
+                const isActive = processingStage === stage.key;
+                return (
+                  <div key={stage.key} className="processing-stage">
+                    <div className={`processing-stage-dot ${isCompleted ? 'completed' : isActive ? 'active' : 'pending'}`}>
+                      {isCompleted ? '✓' : index + 1}
+                    </div>
+                    <span className="processing-stage-label">{stage.label.split(' ')[0]}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="processing-progress-bar">
+              <div 
+                className="processing-progress-fill" 
+                style={{ 
+                  width: `${Math.max(10, (completedStages.length / stageOrder.length) * 100 + (processingStage ? 15 : 0))}%` 
+                }}
+              ></div>
+            </div>
+            <p className="processing-tip">
+              💡 Tip: You can navigate away - we'll save your results automatically
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <h1>One L</h1>
         <p>AI-powered intelligent review of vendor submissions</p>
@@ -2147,11 +2189,12 @@ const SessionWorkspace = ({ session }) => {
         )}
       </div>
       
-      <div className="upload-sections">
+      <div className="upload-sections" style={{ opacity: generating ? 0.5 : 1, pointerEvents: generating ? 'none' : 'auto' }}>
         <VendorSubmission 
           onFilesUploaded={handleFilesUploaded}
-          previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'vendor_submission')} // Show previously uploaded vendor file
-          sessionContext={session} // Pass session context to clear selectedFiles on session change
+          previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'vendor_submission')}
+          sessionContext={session}
+          disabled={generating}
         />
         
         <FileUpload 
@@ -2164,8 +2207,9 @@ const SessionWorkspace = ({ session }) => {
           onFilesUploaded={handleFilesUploaded}
           enableAutoSync={true}
           onSyncStatusChange={handleKbSyncStatusChange}
-          sessionContext={session} //  Pass session context for session-based storage
-          previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'reference_document')} // Show previously uploaded reference documents
+          sessionContext={session}
+          previouslyUploadedFiles={uploadedFiles.filter(f => f.type === 'reference_document')}
+          disabled={generating}
         />
       </div>
       
@@ -2309,20 +2353,67 @@ const SessionWorkspace = ({ session }) => {
             onClick={handleGenerateRedline}
             disabled={!canGenerateRedline || generating}
             style={{
-              background: canGenerateRedline ? '#007bff' : '#6c757d',
+              background: canGenerateRedline && !generating
+                ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)'
+                : '#94a3b8',
               color: 'white',
               border: 'none',
-              padding: '12px 24px',
-              borderRadius: '4px',
+              padding: '16px 32px',
+              borderRadius: '12px',
               cursor: canGenerateRedline && !generating ? 'pointer' : 'not-allowed',
               fontSize: '16px',
-              fontWeight: 'bold',
-              transition: 'background-color 0.2s',
-              opacity: generating ? 0.6 : 1
+              fontWeight: '700',
+              transition: 'all 0.3s ease',
+              opacity: generating ? 0.6 : 1,
+              boxShadow: canGenerateRedline && !generating 
+                ? '0 4px 14px rgba(59, 130, 246, 0.4)' 
+                : 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}
+            onMouseOver={(e) => {
+              if (canGenerateRedline && !generating) {
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 6px 20px rgba(59, 130, 246, 0.5)';
+              }
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = canGenerateRedline && !generating 
+                ? '0 4px 14px rgba(59, 130, 246, 0.4)' 
+                : 'none';
             }}
           >
-            {generating ? 'Generating Redlines...' : 'Generate Redlined Documents'}
+            {generating ? (
+              <>
+                <span style={{
+                  width: '18px',
+                  height: '18px',
+                  border: '2px solid rgba(255,255,255,0.3)',
+                  borderTop: '2px solid white',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite'
+                }}></span>
+                Processing...
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: '18px' }}>⚡</span>
+                Generate Redlined Documents
+              </>
+            )}
           </button>
+          {!canGenerateRedline && !generating && (
+            <p style={{ 
+              marginTop: '12px', 
+              fontSize: '13px', 
+              color: '#64748b',
+              fontStyle: 'italic'
+            }}>
+              📋 Upload both a vendor submission and reference documents to enable analysis
+            </p>
+          )}
         </div>
         
         {/* Unified Status UI */}
@@ -2415,11 +2506,49 @@ const SessionWorkspace = ({ session }) => {
         
         {/* Other Messages (errors, success without progress) */}
         {workflowMessage && workflowMessageType !== 'progress' && !generating && !processingStage && redlinedDocuments.filter(doc => doc.success && !doc.processing).length === 0 && (
-          <div className={`alert ${
-            workflowMessageType === 'success' ? 'alert-success' : 'alert-error'
-          }`}>
-            {workflowMessage}
-          </div>
+          workflowMessageType === 'error' ? (
+            <div className="alert-error-improved">
+              <div className="error-header">
+                <div className="error-icon">⚠️</div>
+                <h4 className="error-title">Document Processing Failed</h4>
+              </div>
+              <p className="error-message">
+                {workflowMessage.includes('failed') 
+                  ? 'We encountered an issue while analyzing your documents. This can happen with complex or scanned PDFs. Please try again or upload a different document format.'
+                  : workflowMessage}
+              </p>
+              <div className="error-actions">
+                <button 
+                  className="btn-retry" 
+                  onClick={() => {
+                    setWorkflowMessage('');
+                    setWorkflowMessageType('');
+                  }}
+                >
+                  Try Again
+                </button>
+                <button 
+                  className="btn-dismiss"
+                  onClick={() => {
+                    setWorkflowMessage('');
+                    setWorkflowMessageType('');
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="alert-success-improved">
+              <div className="success-header">
+                <div className="success-icon">✅</div>
+                <div className="success-content">
+                  <h4>{workflowMessage}</h4>
+                  <p>Your documents have been processed successfully.</p>
+                </div>
+              </div>
+            </div>
+          )
         )}
         
         {/* Redlined Documents Results - Show completed and failed documents */}
@@ -2532,8 +2661,42 @@ const SessionWorkspace = ({ session }) => {
                       </div>
                     </div>
                   ) : (
-                    <div style={{ color: '#dc3545', fontSize: '14px' }}>
-                      Error: {result.error || result.message}
+                    <div style={{ 
+                      background: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      border: '1px solid #fecaca'
+                    }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'flex-start', 
+                        gap: '12px' 
+                      }}>
+                        <span style={{ fontSize: '24px' }}>❌</span>
+                        <div>
+                          <div style={{ 
+                            fontWeight: '600', 
+                            color: '#991b1b', 
+                            marginBottom: '4px' 
+                          }}>
+                            Processing Failed
+                          </div>
+                          <div style={{ 
+                            fontSize: '13px', 
+                            color: '#7f1d1d',
+                            lineHeight: '1.5'
+                          }}>
+                            {result.error || result.message || 'An unexpected error occurred while processing this document.'}
+                          </div>
+                          <div style={{ 
+                            marginTop: '12px',
+                            fontSize: '12px',
+                            color: '#9ca3af'
+                          }}>
+                            💡 Try uploading a different format (PDF, DOCX) or a clearer document
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

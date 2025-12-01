@@ -14,14 +14,18 @@ const FileUpload = ({
   onFilesUploaded = null,
   enableAutoSync = true,
   onSyncComplete = null,
-  onSyncStatusChange = null, // ← NEW PROP
-  sessionContext = null, // ← NEW: Session context for session-based storage
-  acceptedFileTypes = ".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif", // ← NEW: Accepted file types
-  fileTypeDescription = "TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)", // ← NEW: File type description
-  previouslyUploadedFiles = [] // ← NEW: Previously uploaded files for this session
+  onSyncStatusChange = null,
+  sessionContext = null,
+  acceptedFileTypes = ".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif",
+  fileTypeDescription = "TXT, PDF, DOC, DOCX, JPG, PNG, GIF (Max 10MB per file)",
+  previouslyUploadedFiles = [],
+  disabled = false // NEW: Disable component during processing
 }) => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  
+  // Combined disabled state
+  const isDisabled = disabled || uploading;
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
   const fileInputRef = useRef(null);
@@ -354,7 +358,7 @@ const FileUpload = ({
           onChange={handleFileSelect}
           className="form-control"
           accept={acceptedFileTypes}
-          disabled={uploading || (maxFiles && selectedFiles.length >= maxFiles)}
+          disabled={isDisabled || (maxFiles && selectedFiles.length >= maxFiles)}
         />
         <small style={{ color: '#666', fontSize: '14px' }}>
           {fileTypeDescription}
@@ -448,7 +452,7 @@ const FileUpload = ({
                 <button
                   type="button"
                   onClick={() => handleRemoveFile(index)}
-                  disabled={uploading || messageType === 'success'}
+                  disabled={isDisabled || messageType === 'success'}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -471,9 +475,9 @@ const FileUpload = ({
       <div className="form-group">
         <button
           onClick={handleUpload}
-          disabled={uploading || selectedFiles.length === 0 || messageType === 'success'}
+          disabled={isDisabled || selectedFiles.length === 0 || messageType === 'success'}
           className="btn btn-primary"
-          style={{ opacity: (uploading || messageType === 'success') ? 0.6 : 1 }}
+          style={{ opacity: (isDisabled || messageType === 'success') ? 0.6 : 1 }}
         >
           {uploading ? 'Uploading...' : messageType === 'success' ? 'Files Uploaded' : `Upload ${title}`}
         </button>
