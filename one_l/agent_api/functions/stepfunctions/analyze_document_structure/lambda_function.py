@@ -49,6 +49,8 @@ def lambda_handler(event, context):
         is_pdf = document_s3_key.lower().endswith('.pdf')
         doc_format = 'pdf' if is_pdf else 'docx'
         filename = os.path.basename(document_s3_key)
+        # Sanitize filename for Bedrock Converse API requirements
+        sanitized_filename = model._sanitize_filename_for_converse(filename)
         
         # Prepare messages with document
         messages = [
@@ -61,7 +63,7 @@ def lambda_handler(event, context):
                     {
                         "document": {
                             "format": doc_format,
-                            "name": filename,
+                            "name": sanitized_filename,
                             "source": {
                                 "bytes": document_data
                             }

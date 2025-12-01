@@ -170,14 +170,32 @@ def cleanup_empty_sessions(user_id: str, max_age_days: int = 7) -> Dict[str, Any
                     Limit=1  # Just check if any exist
                 )
                 
-                # Filter out job status entries
-                actual_results = [
-                    item for item in analysis_response.get('Items', [])
-                    if not item.get('analysis_id', '').startswith('job_')
-                ]
+                items = analysis_response.get('Items', [])
                 
-                # If no actual documents, delete the session
-                if len(actual_results) == 0:
+                # Separate completed analysis results from active jobs
+                actual_results = []
+                active_jobs = []
+                
+                for item in items:
+                    status = item.get('status', '').lower()
+                    stage = item.get('stage', '').lower()
+                    has_redlines = bool(item.get('redlined_document_s3_key'))
+                    
+                    # Check if this is an active job (not completed)
+                    is_active = (
+                        status in ['processing', 'initialized', 'starting'] or
+                        (stage not in ['completed', 'failed'] and not has_redlines)
+                    )
+                    
+                    if is_active:
+                        active_jobs.append(item)
+                    else:
+                        # Filter out entries that look like job status entries (those starting with "job_")
+                        if not item.get('analysis_id', '').startswith('job_'):
+                            actual_results.append(item)
+                
+                # If no actual documents AND no active jobs, delete the session
+                if len(actual_results) == 0 and len(active_jobs) == 0:
                     try:
                         sessions_table.delete_item(
                             Key={
@@ -275,18 +293,27 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False, cleanup_emp
                             )
                             items = analysis_response.get('Items', [])
                             
-                            # Check for actual documents (non-job entries)
-                            actual_results = [
-                                item for item in items
-                                if not item.get('analysis_id', '').startswith('job_')
-                            ]
+                            # Separate completed analysis results from active jobs
+                            actual_results = []
+                            active_jobs = []
                             
-                            # Check for active jobs (job entries with processing status)
-                            active_jobs = [
-                                item for item in items
-                                if item.get('analysis_id', '').startswith('job_') and
-                                item.get('status') == 'processing'
-                            ]
+                            for item in items:
+                                status = item.get('status', '').lower()
+                                stage = item.get('stage', '').lower()
+                                has_redlines = bool(item.get('redlined_document_s3_key'))
+                                
+                                # Check if this is an active job (not completed)
+                                is_active = (
+                                    status in ['processing', 'initialized', 'starting'] or
+                                    (stage not in ['completed', 'failed'] and not has_redlines)
+                                )
+                                
+                                if is_active:
+                                    active_jobs.append(item)
+                                else:
+                                    # Filter out entries that look like job status entries (those starting with "job_")
+                                    if not item.get('analysis_id', '').startswith('job_'):
+                                        actual_results.append(item)
                             
                             # Keep session if it has documents OR active processing jobs
                             if len(actual_results) > 0 or len(active_jobs) > 0:
@@ -861,14 +888,45 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
         
         items = response.get('Items', [])
         
-        # Filter out job status entries (those with analysis_id starting with "job_")
-        analysis_results = [
-            item for item in items 
-            if not item.get('analysis_id', '').startswith('job_')
-        ]
+        # Separate completed analysis results from active jobs
+        # Active jobs are entries where:
+        # - status is 'processing', 'initialized', 'starting', or stage is not 'completed'/'failed'
+        # - AND they don't have redlined_document_s3_key (completed jobs will have this)
+        active_jobs = []
+        analysis_results = []
+        
+        for item in items:
+            status = item.get('status', '').lower()
+            stage = item.get('stage', '').lower()
+            has_redlines = bool(item.get('redlined_document_s3_key'))
+            
+            # Check if this is an active job (not completed)
+            is_active = (
+                status in ['processing', 'initialized', 'starting'] or
+                (stage not in ['completed', 'failed'] and not has_redlines)
+            )
+            
+            if is_active:
+                # This is an active job
+                active_jobs.append({
+                    'job_id': item.get('analysis_id'),
+                    'status': status,
+                    'stage': stage,
+                    'progress': item.get('progress', 0),
+                    'document_s3_key': item.get('document_s3_key'),
+                    'timestamp': item.get('timestamp'),
+                    'updated_at': item.get('updated_at'),
+                    'stage_message': item.get('stage_message', '')
+                })
+            else:
+                # This is a completed analysis result
+                # Filter out entries that look like job status entries (those starting with "job_")
+                if not item.get('analysis_id', '').startswith('job_'):
+                    analysis_results.append(item)
         
         # Sort by timestamp descending (most recent first)
         analysis_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        active_jobs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
         # Transform the data for frontend consumption
         formatted_results = []
@@ -888,12 +946,13 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
          
             formatted_results.append(formatted_result)
         
-        logger.info(f"Retrieved {len(formatted_results)} analysis results for session {session_id}")
+        logger.info(f"Retrieved {len(formatted_results)} analysis results and {len(active_jobs)} active jobs for session {session_id}")
         
         return {
             'success': True,
             'session_id': session_id,
             'results': formatted_results,
+            'active_jobs': active_jobs,  # Include active jobs in response
             'total_results': len(formatted_results)
         }
         

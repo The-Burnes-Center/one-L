@@ -92,9 +92,10 @@ const SessionSidebar = ({
     
     for (const session of sessions) {
       try {
-        // Get session results (completed documents)
+        // Get session results (completed documents) and active jobs
         const resultsResponse = await sessionAPI.getSessionResults(session.session_id, currentUserId);
         const results = resultsResponse?.success ? (resultsResponse.results || []) : [];
+        const activeJobsFromAPI = resultsResponse?.success ? (resultsResponse.active_jobs || []) : [];
         
         // Extract document info
         const documents = results.map(result => {
@@ -133,30 +134,41 @@ const SessionSidebar = ({
           };
         });
         
-        // Check for active jobs - look for job_ids in the current session's processing state
-        // We'll track active jobs from window state or poll them separately
-        const activeJobs = [];
+        // Process active jobs from API response
+        // This ensures we detect active jobs even after page refresh
+        const activeJobs = activeJobsFromAPI.map(job => ({
+          jobId: job.job_id || job.analysis_id,
+          status: job.status || 'processing',
+          progress: job.progress || 0,
+          stage: job.stage || 'initialized',
+          documentS3Key: job.document_s3_key,
+          updatedAt: job.updated_at || job.timestamp
+        }));
         
-        // Check if there are any active jobs for this session in the global state
+        // Also check window state for any jobs that might not be in DynamoDB yet (race condition)
         if (window.processingSessionFlags && window.processingSessionFlags[session.session_id]) {
           const processingDetails = window.processingSessionFlags[session.session_id];
           if (processingDetails.jobId) {
-            // Poll this job to get current status
-            try {
-              const jobStatus = await agentAPI.getJobStatus(processingDetails.jobId);
-              if (jobStatus.success && jobStatus.job) {
-                const job = jobStatus.job;
-                if (job.status === 'processing') {
-                  activeJobs.push({
-                    jobId: processingDetails.jobId,
-                    status: 'processing',
-                    progress: job.progress || 0,
-                    stage: job.stage
-                  });
+            // Check if this job is already in activeJobs
+            const alreadyTracked = activeJobs.some(j => j.jobId === processingDetails.jobId);
+            if (!alreadyTracked) {
+              // Job not in API response yet, poll it directly
+              try {
+                const jobStatus = await agentAPI.getJobStatus(processingDetails.jobId);
+                if (jobStatus.success && jobStatus.job) {
+                  const job = jobStatus.job;
+                  if (job.status === 'processing') {
+                    activeJobs.push({
+                      jobId: processingDetails.jobId,
+                      status: 'processing',
+                      progress: job.progress || 0,
+                      stage: job.stage || 'initialized'
+                    });
+                  }
                 }
+              } catch (error) {
+                console.warn(`Error checking job status for ${processingDetails.jobId}:`, error);
               }
-            } catch (error) {
-              console.warn(`Error checking job status for ${processingDetails.jobId}:`, error);
             }
           }
         }
@@ -165,7 +177,7 @@ const SessionSidebar = ({
           documents,
           activeJobs,
           documentCount: documents.length,
-          hasResults: documents.length > 0
+          hasResults: documents.length > 0 || activeJobs.length > 0
         };
       } catch (error) {
         console.error(`Error loading status for session ${session.session_id}:`, error);

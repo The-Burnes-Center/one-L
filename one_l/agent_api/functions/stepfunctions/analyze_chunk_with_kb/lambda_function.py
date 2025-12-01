@@ -68,6 +68,8 @@ def lambda_handler(event, context):
         from docx import Document
         doc = Document(io.BytesIO(chunk_data))
         filename = os.path.basename(chunk_s3_key)
+        # Sanitize filename for Bedrock Converse API requirements
+        sanitized_filename = model._sanitize_filename_for_converse(filename)
         
         messages = [
             {
@@ -79,7 +81,7 @@ def lambda_handler(event, context):
                     {
                         "document": {
                             "format": "docx",
-                            "name": filename,
+                            "name": sanitized_filename,
                             "source": {
                                 "bytes": chunk_data
                             }
