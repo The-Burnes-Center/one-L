@@ -88,7 +88,9 @@ def lambda_handler(event, context):
                     'redlined_document_s3_key': redlined_s3_key,
                     'analysis': analysis_json if isinstance(analysis_json, str) else json.dumps(analysis_json),
                     'conflicts_count': len(json.loads(analysis_json if isinstance(analysis_json, str) else json.dumps(analysis_json)).get('conflicts', []))
-                }
+                },
+                session_id=session_id,
+                user_id=user_id
             )
         
         # Return plain result

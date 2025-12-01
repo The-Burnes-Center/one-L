@@ -429,28 +429,43 @@ def lambda_handler(event, context):
         else:
             progress_value = stage_info['progress'] if status != 'failed' else 0
         
-        # Build response
+        # Build consistent response structure (always include all fields)
         # Ensure progress is always an integer (not float from Decimal conversion)
         progress_value_int = int(progress_value) if progress_value is not None else 0
         
+        # Standardize error message (prefer Step Functions error, then DynamoDB, then default)
+        error_message = None
+        if status == 'failed':
+            error_message = sfn_error or item.get('error_message') or item.get('stage_message') or 'Unknown error occurred'
+            if sfn_error:
+                logger.info(f"Job {job_id} error from Step Functions: {sfn_error}")
+            elif item.get('error_message'):
+                logger.info(f"Job {job_id} error from DynamoDB: {item.get('error_message')}")
+            else:
+                logger.warning(f"Job {job_id} failed but no error message found")
+        
+        # Build consistent response - always include all fields
         result = {
             'success': True,
             'job_id': job_id,
-            'stage': current_stage,
-            'progress': progress_value_int,  # Always integer for frontend
-            'label': stage_info['label'],
-            'status': status,  # Use the determined status: 'processing', 'completed', or 'failed'
+            'stage': current_stage or 'initialized',
+            'progress': progress_value_int,  # Always integer (0-100)
+            'label': stage_info.get('label', 'Processing'),
+            'status': status,  # Always: 'processing', 'completed', or 'failed'
+            'message': item.get('stage_message') or stage_info.get('description') or None,
             'updated_at': item.get('updated_at') or item.get('timestamp'),
             'session_id': item.get('session_id'),
-            'document_s3_key': item.get('document_s3_key'),  # Include document key for frontend
+            'document_s3_key': item.get('document_s3_key'),
             'chunks_processed': item.get('chunks_processed', 0),
-            'total_chunks': item.get('total_chunks', 0)
+            'total_chunks': item.get('total_chunks', 0),
+            # Always include result and error fields (null if not applicable)
+            'result': None,
+            'error': error_message,
+            'error_message': error_message
         }
         
-        logger.info(f"Returning job status for {job_id}: status={status}, stage={current_stage}, progress={progress_value_int} (type={type(progress_value_int).__name__})")
-        
         # Add result data if completed
-        if current_stage == 'completed':
+        if status == 'completed':
             result['result'] = {
                 'redlined_document': item.get('redlined_document'),
                 'analysis': item.get('analysis'),
@@ -458,20 +473,7 @@ def lambda_handler(event, context):
                 'has_redlines': bool(item.get('redlined_document'))
             }
         
-        # Add error info if failed
-        if status == 'failed':
-            # Prefer Step Functions error (most accurate), then DynamoDB error_message, then stage_message
-            error_msg = sfn_error or item.get('error_message') or item.get('stage_message') or 'Unknown error occurred'
-            result['error'] = error_msg
-            result['error_message'] = error_msg
-            
-            # Log the error source for debugging
-            if sfn_error:
-                logger.info(f"Job {job_id} error from Step Functions: {sfn_error}")
-            elif item.get('error_message'):
-                logger.info(f"Job {job_id} error from DynamoDB: {item.get('error_message')}")
-            else:
-                logger.warning(f"Job {job_id} failed but no error message found")
+        logger.info(f"Returning job status for {job_id}: status={status}, stage={current_stage}, progress={progress_value_int}%")
         
         return {
             'statusCode': 200,

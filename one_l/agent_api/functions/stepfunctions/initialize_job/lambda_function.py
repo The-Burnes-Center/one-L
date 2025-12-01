@@ -57,7 +57,9 @@ def lambda_handler(event, context):
         if update_progress and timestamp:
             update_progress(
                 job_id, timestamp, 'initialized',
-                'Workflow initialized, preparing document...'
+                'Workflow initialized, preparing document...',
+                session_id=session_id,
+                user_id=user_id
             )
         else:
             # Fallback: direct DynamoDB update
