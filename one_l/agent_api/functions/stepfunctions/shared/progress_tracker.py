@@ -15,17 +15,40 @@ dynamodb = boto3.resource('dynamodb')
 
 
 # Workflow stages in order with their progress percentages
+# These are user-friendly names (internal stages map to these)
 STAGES = {
+    # Initial stages
+    'starting': 2,
     'initialized': 5,
+    
+    # Document preparation (internal: splitting, etc.)
+    'preparing': 10,
     'splitting': 10,
-    'processing_chunks': 25,
+    
+    # Document analysis (internal: processing_chunks, merging)
+    'analyzing': 25,
+    'processing_chunks': 30,
     'merging_results': 40,
+    
+    # Knowledge base lookup
+    'checking_references': 50,
     'retrieving_context': 50,
-    'generating_analysis': 60,
+    
+    # Conflict detection
+    'finding_conflicts': 60,
+    'generating_analysis': 65,
     'identifying_conflicts': 70,
+    
+    # Redline generation
+    'creating_redlines': 80,
     'generating_redlines': 80,
+    
+    # Final assembly
+    'finishing': 90,
     'assembling_document': 90,
     'finalizing': 95,
+    
+    # Terminal states
     'completed': 100,
     'failed': 0
 }

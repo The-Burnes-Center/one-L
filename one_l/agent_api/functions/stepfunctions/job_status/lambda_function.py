@@ -17,19 +17,42 @@ logger.setLevel(logging.INFO)
 
 dynamodb = boto3.resource('dynamodb')
 
-# Define the workflow stages with their progress percentages
+# Define the workflow stages with user-friendly labels and descriptions
+# Internal stages are mapped to user-facing descriptions
 WORKFLOW_STAGES = {
-    'initialized': {'progress': 5, 'label': 'Initializing', 'description': 'Setting up document review...'},
-    'splitting': {'progress': 10, 'label': 'Splitting Document', 'description': 'Breaking document into sections...'},
-    'processing_chunks': {'progress': 25, 'label': 'Processing Sections', 'description': 'Analyzing document sections...'},
-    'merging_results': {'progress': 40, 'label': 'Merging Results', 'description': 'Combining analysis results...'},
-    'retrieving_context': {'progress': 50, 'label': 'Retrieving Context', 'description': 'Searching knowledge base...'},
-    'generating_analysis': {'progress': 60, 'label': 'Generating Analysis', 'description': 'AI is analyzing for conflicts...'},
-    'identifying_conflicts': {'progress': 70, 'label': 'Identifying Conflicts', 'description': 'Finding contract conflicts...'},
-    'generating_redlines': {'progress': 80, 'label': 'Generating Redlines', 'description': 'Creating redlined version...'},
-    'assembling_document': {'progress': 90, 'label': 'Assembling Document', 'description': 'Building final document...'},
-    'finalizing': {'progress': 95, 'label': 'Finalizing', 'description': 'Wrapping up...'},
-    'completed': {'progress': 100, 'label': 'Complete', 'description': 'Document review complete!'},
+    # Initial stages
+    'starting': {'progress': 2, 'label': 'Starting', 'description': 'Initializing document review...'},
+    'initialized': {'progress': 5, 'label': 'Starting', 'description': 'Preparing to analyze your document...'},
+    
+    # Document preparation
+    'preparing': {'progress': 10, 'label': 'Preparing', 'description': 'Preparing your document for analysis...'},
+    'splitting': {'progress': 10, 'label': 'Preparing', 'description': 'Preparing your document for analysis...'},
+    
+    # Document analysis (these are the heavy lifting stages)
+    'analyzing': {'progress': 25, 'label': 'Analyzing', 'description': 'AI is reading through your document...'},
+    'processing_chunks': {'progress': 30, 'label': 'Analyzing', 'description': 'AI is analyzing document content...'},
+    'merging_results': {'progress': 40, 'label': 'Analyzing', 'description': 'Processing analysis results...'},
+    
+    # Knowledge base lookup
+    'checking_references': {'progress': 50, 'label': 'Checking References', 'description': 'Comparing against your reference documents...'},
+    'retrieving_context': {'progress': 50, 'label': 'Checking References', 'description': 'Searching knowledge base for relevant clauses...'},
+    
+    # Conflict detection
+    'finding_conflicts': {'progress': 60, 'label': 'Finding Conflicts', 'description': 'Identifying potential contract issues...'},
+    'generating_analysis': {'progress': 65, 'label': 'Finding Conflicts', 'description': 'AI is detecting conflicts and discrepancies...'},
+    'identifying_conflicts': {'progress': 70, 'label': 'Finding Conflicts', 'description': 'Cataloging all identified conflicts...'},
+    
+    # Redline generation
+    'creating_redlines': {'progress': 80, 'label': 'Creating Redlines', 'description': 'Generating tracked changes for conflicts...'},
+    'generating_redlines': {'progress': 80, 'label': 'Creating Redlines', 'description': 'Creating your redlined document...'},
+    
+    # Final assembly
+    'finishing': {'progress': 90, 'label': 'Finishing', 'description': 'Assembling your final document...'},
+    'assembling_document': {'progress': 90, 'label': 'Finishing', 'description': 'Building the final redlined document...'},
+    'finalizing': {'progress': 95, 'label': 'Finishing', 'description': 'Almost done! Saving your results...'},
+    
+    # Terminal states
+    'completed': {'progress': 100, 'label': 'Complete', 'description': 'Document review complete! Your redlined document is ready.'},
     'failed': {'progress': 0, 'label': 'Failed', 'description': 'An error occurred during processing.'}
 }
 
