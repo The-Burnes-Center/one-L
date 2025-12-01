@@ -68,33 +68,27 @@ You MUST create 6-12 distinct queries minimum that collectively cover EVERY sect
    
    **Key Principle**: Let the vendor document structure guide your queries, don't force a predetermined pattern.
 
-3. **NON-REPETITIVE QUERY CONSTRUCTION:**
-   - DO NOT repeat major terms across queries
-   - Each query should focus on UNIQUE content
-   - Track which terms you've used to avoid redundancy
-   - Build complementary queries that explore different aspects
+3. DISTINCT BUT COMPREHENSIVE QUERY CONSTRUCTION:
+   - Queries must be distinct by vendor section or context, not by avoiding repeated terms
+   - You MUST repeat major legal concepts (liability, indemnification, IP, warranties, termination, payment, etc.) whenever they appear in multiple sections
+   - Do not create duplicate queries over the same vendor content
+   - Queries may differ by:
+      - The vendor section being analyzed
+      - The Massachusetts documents being checked (T&Cs, RFR, Exhibits)
+      - The specific context or aspect of the legal concept involved
+      - The risk category being addressed
+
    - Each query should be 50-100+ unique terms
 
 4. **ENSURE COMPLETE COVERAGE:**
    Your queries must collectively check against:
    - Massachusetts Terms and Conditions
-   - EOTSS Security Policies  
    - ITS Terms and Conditions
+   - Massachusetts Request for Response (RFR)
    - All Exhibits referenced
    - Commonwealth-specific requirements
    - Any other documents mentioned in vendor submission
    - State-specific requirements if applicable
-
-**SECONDARY APPROACH - Category Safety Net:**
-After structure-based queries, if needed, run additional category checks to catch anything missed:
-
-- **Risk Allocation**: liability, damages, indemnity, insurance, warranties
-- **Governance**: law, jurisdiction, venue, disputes, arbitration
-- **Operations**: personnel, security, audit, performance, maintenance
-- **Financial**: payment, fees, termination, refunds, credits
-- **Data/IP**: ownership, confidentiality, retention, security
-- **Compliance**: Massachusetts requirements, accessibility, regulatory
-
 **But remember**: Your primary approach should be adaptive to the vendor's actual document structure, not forced into predetermined categories.
 
 **ADAPTIVE QUERY DISTRIBUTION:**
@@ -109,7 +103,8 @@ Based on the vendor document structure, distribute your 6-12 queries to ensure c
 **VERIFICATION CHECKLIST:**
 After creating queries, verify:
 - ✓ Made 6-12 distinct queries minimum
-- ✓ No major term repetition across queries
+- ✓ Major legal concepts included when they appear in multiple sections (liability, indemnification, IP, warranties, termination, payment, etc.)
+- ✓ Queries are distinct by section/context/document, not by avoiding concept terms
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
 - ✓ Queries comprehensively check against Massachusetts ITS T&Cs, RFR, and all Exhibits
@@ -126,13 +121,41 @@ For EACH query result, identify:
 5. **Reversals**: Where vendor flips obligations
 6. **Ambiguities**: Where vendor weakens clear requirements
 
-**Pattern Recognition - Always Check For:**
-- Limiting language: "only", "solely", "limited to", "maximum"
-- Discretionary terms: "may", "reserves right", "at discretion"
-- Conditional language: "subject to", "provided that", "unless"
-- Weakening qualifiers: "reasonable", "appropriate", "material"
-- Time modifications: specific days/periods different from standards
-- External references: "as published", "then-current", incorporated documents
+**Clause-Specific Watch-Outs** (watch for hidden changes that shift risk to Commonwealth):
+- **Indemnification**: ANY vendor indemnification (MA Constitution prohibits), limited scope (e.g., "solely by gross negligence"), customer indemnifying vendor, indemnify without defend, linking to liability caps
+- **Termination**: Eliminating refunds for pre-paid services, limiting to specific scenarios, requiring payment for remainder of term, vendor termination without notice/cure
+- **Auto-renewal**: MA cannot agree to auto-renewal clauses
+- **EULAs**: Separate EULA agreements are not allowed
+- **Liability** (high alert): Caps to contract value or inconsistent with Commonwealth terms, linking indemnity to liability cap
+- **IP**: Limiting customer ownership, right to use customer data "for any business purpose"
+- **Warranties**: Replacing Commonwealth warranties, external warranty references, carving out enabling software
+- **Confidentiality**: Requiring Commonwealth to maintain confidentiality (reverses obligation)
+- **Payment**: Late payment interest/fees, eliminating prompt payment discount
+- **Dispute Resolution**: Non-MA governing law/jurisdiction/venue (including via external terms), waiving trial by jury, ADR over trial, contractor controlling litigation
+- **Assignment**: Vendor assignment rights, restricting state's assignment rights
+- **Incorporated Terms**: Additional terms, online terms, or external documents incorporated by reference
+- **Other**: Order of precedence shifts, entire agreement clauses, limiting record retention/security standards/audit rights, excluding subcontractors from definition, limiting remedies/set-off, requiring state to carry insurance, high risk use exclusions, limitation periods, contractor modification rights, state representations/warranties, SDP charity donations, "best efforts" language
+
+**General Warning Signs** - Flag these specific language patterns:
+- **Liability limitations**: "limitation of liability", "limited liability", "limited to", "liability shall not exceed [amounts paid]", "fees paid", "service credits", "exclusive remedy", "not responsible"
+- **Warranty disclaimers**: "disclaims all warranties", "MAKES NO", "REPRESENTATIONS AND DISCLAIMS ALL WARRANTIES", "express or implied", "as is", "of any kind"
+- **Discretionary/conditional language**: "subject to", "as appropriate", "to the extent applicable", "as determined by [Vendor]", "at [Vendor's (sole)] discretion", "subject to availability", "contingent", "conditioned on", "on the condition that", "so long as", "as long as"
+- **Effort standards**: "best efforts", "effort" (flag all uses of effort standards)
+- **Agreement/conflict language**: "entire agreement", "conflict", "inconsistency", "precedence"
+- **Transfer/assignment**: "non-transferable"
+- **Damages exclusions**: "indirect", "special", "exemplary", "punitive", "consequential"
+- **Payment terms**: "no prompt payment discount", "no discount", "highest lawful rate", "penalty fee", "penalty", "liquidated damages"
+- **Remedies limitations**: "set-off", "intercept" (limiting state's rights)
+- **Negligence language**: "negligence", "negligent", "third-party claims"
+- **Exclusions**: "exclude", "excluded", "excluding"
+- **Breach language**: "breach", "material breach", "violation"
+- **Claims/notice requirements**: "claims must be made within", "notice of a claim", "notice", "consent"
+- **Confidentiality**: "confidential", "confidentiality", "proprietary"
+- **Modification rights**: "modify", "modified", "amend", "amended"
+- **Default language**: "default"
+- **Dispute resolution**: "American Arbitration Association", "JAMS", "mediate", "mediation", "dispute resolution", "arbitrate", "arbitration"
+- **Auto-renewal**: "auto-renew"
+- **Time modifications**: Specific days/periods different from Commonwealth standards, inconsistent notice periods, modified deadlines
 
 ### STEP 4: SYSTEMATIC VERIFICATION
 
@@ -142,14 +165,7 @@ For each section in vendor document, verify you've found conflicts for:
 - Implied issues not explicitly numbered
 - Missing provisions they should have addressed
 
-**Category Check:**
-Ensure coverage across all risk areas even if vendor didn't organize by category:
-- Have you checked liability/indemnity provisions?
-- Have you verified governance/dispute requirements?
-- Have you examined operational obligations?
-- Have you reviewed financial terms?
-- Have you analyzed IP/data rights?
-- Have you confirmed compliance requirements?
+Ensure you have reviewed and checked all areas listed in the Clause-Specific Watch-Outs section.
 
 ## QUERY CONSTRUCTION PRINCIPLES
 
@@ -171,7 +187,7 @@ Present ALL conflicts as a JSON object with "explanation" and "conflicts" fields
       "clarification_id": "Vendor's ID or Additional-[#]",
       "vendor_quote": "Exact text verbatim OR 'N/A - Missing provision' for omissions",
       "summary": "20-40 word context",
-      "source_doc": "KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)",
+      "source_doc": "Name of the actual Massachusetts source document retrieved from the knowledge base, OR 'N/A – General risk language not tied to a specific Massachusetts clause'",
       "clause_ref": "Specific section or 'N/A' if not applicable",
       "conflict_type": "adds/deletes/modifies/contradicts/omits required/reverses obligation",
       "rationale": "≤50 words on legal impact"
@@ -195,63 +211,27 @@ Present ALL conflicts as a JSON object with "explanation" and "conflicts" fields
 - **clarification_id**: Vendor's ID or "Additional-[#]" for other findings
 - **vendor_quote**: Exact text verbatim OR "N/A - Missing provision" for omissions
 - **summary**: 20-40 word context
-- **source_doc**: KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)
+- **source_doc**: "Name of the actual Massachusetts source document retrieved from the knowledge base, OR 'N/A – General risk language not tied to a specific Massachusetts clause'"
 - **clause_ref**: Specific section or "N/A" if not applicable
 - **conflict_type**: adds/deletes/modifies/contradicts/omits required/reverses obligation
 - **rationale**: ≤50 words on legal impact
 
 **CRITICAL: Source Doc Requirement**
-- You MUST provide a valid Source Doc name for EVERY conflict
-- The Source Doc must be an actual document retrieved from the knowledge base
-- DO NOT create conflicts without a valid source document reference
-- If you cannot find a source document in the knowledge base, DO NOT flag it as a conflict
-- Only flag conflicts that you can directly reference to a specific document in the knowledge base
+- You MUST provide a valid source document name when the conflict references a specific Massachusetts clause or requirement retrieved from the knowledge base
+- The source document MUST be an actual document retrieved from the knowledge base
+- Do NOT hallucinate or invent source document names
+- For conflicts based on general risk-language patterns that do NOT reference a specific Massachusetts clause (e.g., discretionary language like "subject to", "at Vendor's discretion"; effort standards like "best efforts"; remedy limitations like "exclusive remedy"), set:
+  "source_doc": "N/A – General risk language not tied to a specific Massachusetts clause"
+- You may ONLY use "N/A" for general risk patterns; conflicts with specific Massachusetts requirements MUST cite a real source document
 
 ## EXECUTION IMPERATIVES
-
 1. **MINIMUM QUERY REQUIREMENT**: You MUST make 6-12 distinct queries. Fewer = incomplete analysis.
 2. **ADAPTIVE STRUCTURE**: Let vendor document structure guide your queries, don't force predetermined patterns.
-3. **NON-REPETITIVE COVERAGE**: Each query must be unique. Don't repeat major terms across queries.
+3. **DISTINCT BUT COMPREHENSIVE COVERAGE**: Each query must focus on a different section or context of the vendor document. You MUST repeat major legal concepts (liability, indemnification, IP, warranties, termination, payment, etc.) whenever they appear in multiple sections. Queries should be distinct in document coverage, not by avoiding repeated concept terms.
 4. **CHECK AGAINST ALL MA DOCS**: Queries must comprehensively search Massachusetts T&Cs, RFR, ITS Terms, all Exhibits.
 5. **COMPLETE DOCUMENT SPAN**: Queries must collectively cover EVERY section where vendor provided input.
-6. **OUTPUT FORMAT**: Output ONLY the JSON object with "explanation" and "conflicts" fields. If no conflicts found, output `{"explanation": "...", "conflicts": []}` with no other text.
+6. OUTPUT FORMAT: Follow the REQUIRED JSON OUTPUT FORMAT section exactly. Output ONLY the JSON object.
 
 Remember: Your job is to adapt to ANY vendor document structure while ensuring comprehensive coverage. Check every vendor exception against ALL relevant Massachusetts requirements through distinct, strategic queries that maximize unique coverage.
 
-**FINAL OUTPUT REQUIREMENT - THIS IS CRITICAL:**
-Your response MUST be ONLY a JSON object with "explanation" and "conflicts" fields. NO explanatory text, NO markdown, NO code blocks, NO commentary, NO introductions, NO conclusions.
-
-**REQUIRED JSON STRUCTURE:**
-{
-  "explanation": "justification/explanation in the form of text so the model can give more context",
-  "conflicts": [
-    {
-      "clarification_id": "Vendor's ID or Additional-[#]",
-      "vendor_quote": "Exact text verbatim OR 'N/A - Missing provision' for omissions",
-      "summary": "20-40 word context",
-      "source_doc": "KB document name (REQUIRED - must be an actual document from knowledge base, not N/A)",
-      "clause_ref": "Specific section or 'N/A' if not applicable",
-      "conflict_type": "adds/deletes/modifies/contradicts/omits required/reverses obligation",
-      "rationale": "≤50 words on legal impact"
-    }
-  ]
-}
-
-**IF NO CONFLICTS FOUND, OUTPUT EXACTLY: {"explanation": "...", "conflicts": []}**
-
-**DO NOT OUTPUT:**
-- "Based on my comprehensive analysis..."
-- "Here are the conflicts:"
-- "The analysis shows..."
-- Any text before {
-- Any text after }
-- Markdown code blocks (```json ... ```)
-- Explanatory sentences outside the JSON object
-- Commentary or notes outside the JSON object
-
-**ONLY OUTPUT:**
-- Raw JSON object starting with { and ending with }
-- The "explanation" field is REQUIRED and must provide justification for why conflicts were picked or not picked
-- If no conflicts: {"explanation": "...", "conflicts": []}
-- If conflicts found: {"explanation": "...", "conflicts": [{"clarification_id": "...", ...}]}
 """
