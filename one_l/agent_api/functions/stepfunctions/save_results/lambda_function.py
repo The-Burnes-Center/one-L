@@ -42,33 +42,53 @@ def lambda_handler(event, context):
         if not analysis_json or not session_id or not user_id:
             raise ValueError(f"analysis_json, session_id, and user_id are required. Got analysis_json={bool(analysis_json)}, session_id={session_id}, user_id={user_id}")
         
-        # Convert conflicts_result (dict) to analysis_json (string) if needed
-        if isinstance(analysis_json, dict):
+        # Get required parameters from event
+        job_id = event.get('job_id')
+        bucket_type = event.get('bucket_type', 'agent_processing')
+        
+        # Convert conflicts_result (dict) to analysis_data (string) if needed
+        analysis_data = analysis_json
+        if isinstance(analysis_data, dict):
             # If it's a ConflictDetectionOutput dict, convert to analysis JSON format
-            if 'conflicts' in analysis_json:
-                analysis_json = json.dumps({
-                    "explanation": analysis_json.get('explanation', ''),
-                    "conflicts": analysis_json.get('conflicts', [])
+            if 'conflicts' in analysis_data:
+                analysis_data = json.dumps({
+                    "explanation": analysis_data.get('explanation', ''),
+                    "conflicts": analysis_data.get('conflicts', [])
                 })
             else:
                 # Otherwise just stringify it
-                analysis_json = json.dumps(analysis_json)
-        elif not isinstance(analysis_json, str):
+                analysis_data = json.dumps(analysis_data)
+        elif not isinstance(analysis_data, str):
             # Convert other types to string
-            analysis_json = json.dumps(analysis_json)
+            analysis_data = json.dumps(analysis_data)
         
-        # Call save_analysis_to_dynamodb
-        logger.info(f"Saving analysis results for session {session_id}")
+        # Prepare redlined_result dict if redlined_s3_key is provided
+        redlined_result = None
+        if redlined_s3_key:
+            redlined_result = {
+                'redlined_document': redlined_s3_key
+            }
+        
+        # Use job_id as analysis_id (they're the same in Step Functions workflow)
+        analysis_id = job_id or session_id
+        
+        # Call save_analysis_to_dynamodb with correct parameters
+        logger.info(f"Saving analysis results for session {session_id}, analysis_id: {analysis_id}")
         result = save_analysis_to_dynamodb(
-            analysis=analysis_json,
+            analysis_id=analysis_id,
             document_s3_key=document_s3_key,
-            redlined_document_s3_key=redlined_s3_key,
+            analysis_data=analysis_data,
+            bucket_type=bucket_type,
+            usage_data={},  # Step Functions workflow doesn't track usage data
+            thinking="",
+            citations=None,
             session_id=session_id,
-            user_id=user_id
+            user_id=user_id,
+            redlined_result=redlined_result
         )
         
-        # Extract analysis_id from result
-        analysis_id = result.get('analysis_id', session_id)
+        # Extract analysis_id from result (should be same as what we passed)
+        analysis_id = result.get('analysis_id', analysis_id)
         
         output = SaveResultsOutput(
             success=True,
