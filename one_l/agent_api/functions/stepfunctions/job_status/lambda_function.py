@@ -75,7 +75,6 @@ def lambda_handler(event, context):
     - stage: Current workflow stage
     - progress: Percentage complete (0-100)
     - label: Human-readable stage name
-    - description: Detailed description of current stage
     - status: 'processing', 'completed', 'failed'
     - result: Final result data (if completed)
     - error: Error message (if failed)
@@ -227,10 +226,16 @@ def lambda_handler(event, context):
         elif item_status == 'failed':
             current_stage = 'failed'
             status = 'failed'
-        elif sfn_status == 'SUCCEEDED' and item_status != 'completed':
-            # Step Functions succeeded but DynamoDB not updated yet - still processing
-            current_stage = item_stage or item_status or 'finalizing'
-            status = 'processing'
+        elif sfn_status == 'SUCCEEDED':
+            # Step Functions succeeded - check if DynamoDB has results
+            if item_status == 'completed' and item.get('redlined_document'):
+                current_stage = 'completed'
+                status = 'completed'
+            else:
+                # Step Functions succeeded but DynamoDB not updated yet - mark as completed
+                # This handles the case where Step Functions finished but DynamoDB update is delayed
+                current_stage = 'completed'
+                status = 'completed'
         elif item_status == 'completed':
             current_stage = 'completed'
             status = 'completed'
@@ -241,14 +246,21 @@ def lambda_handler(event, context):
         
         stage_info = WORKFLOW_STAGES.get(current_stage, WORKFLOW_STAGES['initialized'])
         
+        # Get progress from DynamoDB if available, otherwise use stage default
+        # Use actual progress from DynamoDB if it exists (from progress_tracker)
+        item_progress = item.get('progress')
+        if item_progress is not None:
+            progress_value = int(item_progress)
+        else:
+            progress_value = stage_info['progress'] if status != 'failed' else 0
+        
         # Build response
         result = {
             'success': True,
             'job_id': job_id,
             'stage': current_stage,
-            'progress': stage_info['progress'] if status != 'failed' else 0,  # Failed jobs show 0% progress
+            'progress': progress_value,
             'label': stage_info['label'],
-            'description': item.get('stage_message') or item.get('error_message') or stage_info['description'],
             'status': status,  # Use the determined status
             'updated_at': item.get('updated_at') or item.get('timestamp'),
             'session_id': item.get('session_id'),

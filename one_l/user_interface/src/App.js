@@ -1217,7 +1217,7 @@ const SessionWorkspace = ({ session }) => {
         const statusResponse = await agentAPI.getJobStatus(jobId);
         
         if (statusResponse.success) {
-          const { status, stage, progress, label, description, result, error, job } = statusResponse;
+          const { status, stage, progress, label, result, error, job } = statusResponse;
           
           // Handle nested job object (if API returns job wrapper)
           const jobData = job || statusResponse;
@@ -1225,16 +1225,15 @@ const SessionWorkspace = ({ session }) => {
           const actualStage = jobData.stage || stage;
           const actualProgress = jobData.progress || progress;
           const actualLabel = jobData.label || label;
-          const actualDescription = jobData.description || description;
           const actualError = jobData.error_message || jobData.error || error;
           
           // Update UI with real-time progress
           if (isCurrentSession()) {
             const frontendStage = backendToFrontendStage[actualStage] || 'document_review';
             
-            // Update processing phase with backend's description
+            // Update processing phase with label only (no description)
             if (actualStatus === 'processing') {
-              setProcessingPhase(frontendStage, `${actualLabel}: ${actualDescription}`);
+              setProcessingPhase(frontendStage, actualLabel);
               
               // Update the redlined documents with progress
               setRedlinedDocuments(prev => prev.map(doc => {
@@ -1253,6 +1252,11 @@ const SessionWorkspace = ({ session }) => {
           
           // Check for failure FIRST (before completion check)
           if (actualStatus === 'failed') {
+            // Trigger session sidebar refresh to show failed status
+            if (window.triggerSessionSidebarRefresh) {
+              window.triggerSessionSidebarRefresh();
+            }
+            
             // Update UI immediately to show error
             if (isCurrentSession()) {
               setRedlinedDocuments(prev => prev.map(doc => {
@@ -1278,15 +1282,33 @@ const SessionWorkspace = ({ session }) => {
           }
           
           // Check for completion
-          if (actualStatus === 'completed' && result) {
-            return {
-              success: true,
-              processing: false,
-              redlined_document: result.redlined_document,
-              analysis: result.analysis,
-              has_redlines: result.has_redlines,
-              conflicts_found: result.conflicts_found
-            };
+          // If status is completed, stop polling even if result is not yet available
+          // (Step Functions may have succeeded but DynamoDB update is delayed)
+          if (actualStatus === 'completed') {
+            // Trigger session sidebar refresh to show completed status
+            if (window.triggerSessionSidebarRefresh) {
+              window.triggerSessionSidebarRefresh();
+            }
+            
+            // If we have result data, return it
+            if (result) {
+              return {
+                success: true,
+                processing: false,
+                redlined_document: result.redlined_document,
+                analysis: result.analysis,
+                has_redlines: result.has_redlines,
+                conflicts_found: result.conflicts_found
+              };
+            } else {
+              // Status is completed but result not available yet - stop polling
+              // The result will be available when user refreshes or checks later
+              return {
+                success: true,
+                processing: false,
+                message: 'Processing completed. Results will be available shortly.'
+              };
+            }
           }
         } else {
           // API returned success: false
@@ -1569,6 +1591,11 @@ const SessionWorkspace = ({ session }) => {
                   termsProfile: termsProfileForRun
               };
               redlineResults.push({ ...processingEntry });
+
+              // Trigger session sidebar refresh to show new job
+              if (window.triggerSessionSidebarRefresh) {
+                window.triggerSessionSidebarRefresh();
+              }
 
               if (isCurrentSession()) {
                 setRedlinedDocuments(prev => {

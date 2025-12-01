@@ -301,6 +301,18 @@ const SessionSidebar = ({
     }
   }, [sessions, currentUserId, loadSessionStatuses]);
 
+  // Expose refresh function to window for external triggers
+  useEffect(() => {
+    window.triggerSessionSidebarRefresh = () => {
+      if (sessions.length > 0 && currentUserId) {
+        loadSessionStatuses();
+      }
+    };
+    return () => {
+      delete window.triggerSessionSidebarRefresh;
+    };
+  }, [sessions, currentUserId, loadSessionStatuses]);
+
   // Poll active jobs for real-time updates (only for processing jobs)
   useEffect(() => {
     if (sessions.length === 0) return;
