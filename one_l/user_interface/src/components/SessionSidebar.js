@@ -2,6 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { sessionAPI, agentAPI } from '../services/api';
 import { useNavigate, useParams } from 'react-router-dom';
 
+// Pure helper functions - defined outside component to avoid recreation on every render
+const extractDocumentName = (s3Key) => {
+  if (!s3Key) return 'Unknown Document';
+  const parts = s3Key.split('/');
+  const filename = parts[parts.length - 1];
+  // Remove UUID prefix if present (format: uuid_filename.pdf)
+  const match = filename.match(/^[a-f0-9-]+_(.+)$/i);
+  return match ? match[1] : filename;
+};
+
 const SessionSidebar = ({ 
   currentUserId, 
   isVisible = true,
@@ -35,16 +45,6 @@ const SessionSidebar = ({
       window.activeSessionId = sessionId;
     }
   }, [sessionId]);
-
-  // Define helper functions first
-  const extractDocumentName = (s3Key) => {
-    if (!s3Key) return 'Unknown Document';
-    const parts = s3Key.split('/');
-    const filename = parts[parts.length - 1];
-    // Remove UUID prefix if present (format: uuid_filename.pdf)
-    const match = filename.match(/^[a-f0-9-]+_(.+)$/i);
-    return match ? match[1] : filename;
-  };
 
   // Define main functions with useCallback
   const loadSessions = useCallback(async () => {
@@ -151,7 +151,7 @@ const SessionSidebar = ({
     }
     
     setSessionStatuses(statusMap);
-  }, [sessions, currentUserId, extractDocumentName]);
+  }, [sessions, currentUserId]);
 
   // Use ref for loadSessionStatuses to avoid circular dependency
   const loadSessionStatusesRef = useRef(loadSessionStatuses);
