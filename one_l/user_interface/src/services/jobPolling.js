@@ -61,7 +61,6 @@ class JobPollingService {
         }
 
         const status = statusResponse.status || 'processing';
-        const lastStatus = this.activePolls.get(jobId)?.lastStatus;
 
         // Always call onUpdate if provided
         if (callbacks.onUpdate.length > 0) {
