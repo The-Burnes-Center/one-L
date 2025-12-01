@@ -2222,6 +2222,30 @@ const SessionWorkspace = ({ session }) => {
               <p className="processing-tip">
                 You can navigate away. Results will be saved automatically.
               </p>
+              <button
+                onClick={() => setGenerating(false)}
+                style={{
+                  marginTop: '16px',
+                  padding: '8px 20px',
+                  backgroundColor: 'transparent',
+                  color: '#64748b',
+                  border: '1px solid #334155',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#1e293b';
+                  e.currentTarget.style.color = '#94a3b8';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = '#64748b';
+                }}
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         );
@@ -2824,6 +2848,9 @@ const AppContent = () => {
   const [configError, setConfigError] = useState('');
   const [activeTab, setActiveTab] = useState('data');
   
+  // Sidebar state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -3084,7 +3111,11 @@ const AppContent = () => {
 
   // Show authenticated app
   return (
-    <div className="app-container" style={{ display: 'flex', height: '100vh', position: 'relative' }}>
+    <div 
+      className="app-container" 
+      style={{ display: 'flex', height: '100vh', position: 'relative' }}
+      data-sidebar-collapsed={sidebarCollapsed}
+    >
       {/* User Header */}
       <UserHeader 
         user={currentUser}
@@ -3097,6 +3128,7 @@ const AppContent = () => {
         onAdminSectionChange={handleAdminSectionChange}
         isAdmin={isAdmin}
         isVisible={true}
+        onCollapsedChange={setSidebarCollapsed}
       />
       
       {/* Main Content Area */}

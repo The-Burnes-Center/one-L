@@ -160,6 +160,16 @@
         min-height: calc(100vh - 60px);
         background: var(--color-bg);
         overflow: auto;
+        transition: margin-left 0.2s ease;
+      }
+      
+      /* Handle sidebar collapsed state via data attribute */
+      [data-sidebar-collapsed="true"] .main-content {
+        margin-left: var(--sidebar-collapsed);
+      }
+      
+      .main-content.sidebar-collapsed {
+        margin-left: var(--sidebar-collapsed);
       }
       
       .sidebar.collapsed + .main-content {

@@ -7,7 +7,8 @@ const SessionSidebar = ({
   isVisible = true,
   onAdminSectionChange,
   onRefreshRequest, // Add callback to allow parent to trigger refresh
-  isAdmin = false
+  isAdmin = false,
+  onCollapsedChange // Callback to notify parent of collapse state
 }) => {
   const navigate = useNavigate();
   const { sessionId } = useParams();
@@ -17,6 +18,16 @@ const SessionSidebar = ({
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [adminExpanded, setAdminExpanded] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  
+  // Notify parent when collapsed state changes
+  const toggleCollapsed = () => {
+    const newState = !isCollapsed;
+    setIsCollapsed(newState);
+    if (onCollapsedChange) {
+      onCollapsedChange(newState);
+    }
+  };
   
   useEffect(() => {
     if (sessionId) {
@@ -398,19 +409,53 @@ const SessionSidebar = ({
       position: 'fixed',
       top: '60px',
       left: '0',
-      width: '280px',
+      width: isCollapsed ? '48px' : '280px',
       height: 'calc(100vh - 60px)',
       backgroundColor: '#171717',
       color: '#ffffff',
       borderRight: '1px solid #333',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      transition: 'width 0.2s ease',
+      overflow: 'hidden',
+      zIndex: 100
     }}>
+      {/* Collapse Toggle Button */}
+      <button
+        onClick={toggleCollapsed}
+        style={{
+          position: 'absolute',
+          top: '12px',
+          right: isCollapsed ? '10px' : '12px',
+          width: '28px',
+          height: '28px',
+          backgroundColor: '#333',
+          color: '#fff',
+          border: '1px solid #444',
+          borderRadius: '4px',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '14px',
+          zIndex: 10,
+          transition: 'background-color 0.2s'
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#444'}
+        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#333'}
+        title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {isCollapsed ? '»' : '«'}
+      </button>
+      
       {/* Header */}
       <div style={{
-        padding: '16px',
-        borderBottom: '1px solid #333'
+        padding: isCollapsed ? '48px 8px 12px' : '16px',
+        borderBottom: '1px solid #333',
+        opacity: isCollapsed ? 0 : 1,
+        visibility: isCollapsed ? 'hidden' : 'visible',
+        transition: 'opacity 0.2s'
       }}>
         <button
           onClick={handleNewSession}
@@ -447,7 +492,10 @@ const SessionSidebar = ({
       <div style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '8px'
+        padding: '8px',
+        opacity: isCollapsed ? 0 : 1,
+        visibility: isCollapsed ? 'hidden' : 'visible',
+        transition: 'opacity 0.2s'
       }}>
         {loading && sessions.length === 0 ? (
           <div style={{
