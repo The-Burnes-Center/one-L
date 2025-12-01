@@ -43,7 +43,7 @@ def lambda_handler(event, context):
             - job_id, timestamp (for progress tracking)
         
     Returns:
-        ConflictDetectionOutput with explanation and conflicts (or S3 reference if large)
+        Dict with chunk_num, results_s3_key, conflicts_count, has_results (always stores in S3)
     """
     try:
         chunk_s3_key = event.get('chunk_s3_key')
@@ -188,64 +188,33 @@ def lambda_handler(event, context):
                     f'Identified {len(validated_output.conflicts)} conflicts in document...'
                 )
         
-        # CRITICAL: Store result in S3 if it's large to avoid Step Functions payload limits
-        # For chunks: always store (will be merged later)
-        # For single documents: store if large, otherwise return inline
+        # CRITICAL: Always store result in S3 and return only S3 reference
+        # Step Functions has 256KB limit - always store in S3, never return data directly
         result_dict = validated_output.model_dump()
+        result_json = json.dumps(result_dict)
+        result_size = len(result_json.encode('utf-8'))
         
-        # Always store chunk results in S3 (they'll be merged)
-        if is_chunk:
-            try:
-                s3_key_result = f"{event.get('session_id', 'unknown')}/chunk_results/{job_id}_chunk_{chunk_num}_analysis.json"
-                result_json = json.dumps(result_dict)
-                result_size = len(result_json.encode('utf-8'))
-                
-                s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=s3_key_result,
-                    Body=result_json.encode('utf-8'),
-                    ContentType='application/json'
-                )
-                
-                logger.info(f"Stored chunk {chunk_num} analysis result ({result_size} bytes) in S3: {s3_key_result}")
-                
-                # Return S3 key reference for chunks
-                return {
-                    'chunk_num': chunk_num,
-                    'results_s3_key': s3_key_result,
-                    'conflicts_count': len(validated_output.conflicts),
-                    'has_results': True
-                }
-            except Exception as s3_error:
-                logger.error(f"CRITICAL: Failed to store chunk {chunk_num} result in S3: {s3_error}")
-                raise  # Fail fast if S3 storage fails
-        else:
-            # For single documents, return inline (or store if very large)
-            result_json = json.dumps(result_dict)
-            result_size = len(result_json.encode('utf-8'))
+        try:
+            s3_key_result = f"{event.get('session_id', 'unknown')}/chunk_results/{job_id}_chunk_{chunk_num}_analysis.json"
+            s3_client.put_object(
+                Bucket=bucket_name,
+                Key=s3_key_result,
+                Body=result_json.encode('utf-8'),
+                ContentType='application/json'
+            )
             
-            # Store in S3 if larger than 200KB (safety margin for Step Functions 256KB limit)
-            if result_size > 200 * 1024:
-                try:
-                    s3_key_result = f"{event.get('session_id', 'unknown')}/analysis_results/{job_id}_analysis.json"
-                    s3_client.put_object(
-                        Bucket=bucket_name,
-                        Key=s3_key_result,
-                        Body=result_json.encode('utf-8'),
-                        ContentType='application/json'
-                    )
-                    logger.info(f"Stored large document analysis result ({result_size} bytes) in S3: {s3_key_result}")
-                    return {
-                        'results_s3_key': s3_key_result,
-                        'conflicts_count': len(validated_output.conflicts),
-                        'has_results': True
-                    }
-                except Exception as s3_error:
-                    logger.warning(f"Failed to store large result in S3: {s3_error}, returning inline")
-                    # Fall through to return inline
+            logger.info(f"Stored chunk {chunk_num} analysis result ({result_size} bytes) in S3: {s3_key_result}")
             
-            # Return inline for single documents (or if S3 storage failed)
-            return result_dict
+            # Always return only S3 reference (never return data directly)
+            return {
+                'chunk_num': chunk_num,
+                'results_s3_key': s3_key_result,
+                'conflicts_count': len(validated_output.conflicts),
+                'has_results': True
+            }
+        except Exception as s3_error:
+            logger.error(f"CRITICAL: Failed to store chunk {chunk_num} result in S3: {s3_error}")
+            raise  # Fail fast if S3 storage fails
         
     except Exception as e:
         logger.error(f"Error in analyze_with_kb: {e}")

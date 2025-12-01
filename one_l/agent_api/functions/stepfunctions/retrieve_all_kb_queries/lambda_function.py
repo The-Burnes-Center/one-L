@@ -101,7 +101,7 @@ def lambda_handler(event, context):
     
     Args:
         event: Lambda event with:
-            - queries: List of query objects with query, query_id, max_results, section
+            - structure_s3_key: S3 key with structure results (contains queries array)
             - knowledge_base_id: Knowledge Base ID
             - region: AWS region
             - job_id: Job ID for S3 storage
@@ -112,8 +112,23 @@ def lambda_handler(event, context):
         Dict with results_s3_key, results_count, queries_count, success_count, failed_count
     """
     try:
-        queries = event.get('queries', [])
+        structure_s3_key = event.get('structure_s3_key')
+        bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
         knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
+        
+        # CRITICAL: Load structure results from S3 (analyze_structure stores in S3)
+        if not structure_s3_key or not bucket_name:
+            raise ValueError("structure_s3_key and bucket_name are required")
+        
+        try:
+            structure_response = s3_client.get_object(Bucket=bucket_name, Key=structure_s3_key)
+            structure_json = structure_response['Body'].read().decode('utf-8')
+            structure_data = json.loads(structure_json)
+            queries = structure_data.get('queries', [])
+            logger.info(f"Loaded structure results from S3: {structure_s3_key}, found {len(queries)} queries")
+        except Exception as e:
+            logger.error(f"CRITICAL: Failed to load structure results from S3 {structure_s3_key}: {e}")
+            raise  # Fail fast - structure results must be in S3
         
         # Fallback to name lookup
         if (not knowledge_base_id or knowledge_base_id == "placeholder") and os.environ.get('KNOWLEDGE_BASE_NAME'):
@@ -194,14 +209,15 @@ def lambda_handler(event, context):
             logger.error(f"CRITICAL: Failed to store KB results in S3: {s3_error}")
             raise  # Fail fast if S3 storage fails
         
-        # Return summary
+        # CRITICAL: Only return S3 reference, never return actual data
+        # Step Functions has 256KB limit - always store in S3 and return only reference
         return {
             'results_s3_key': s3_key,
             'results_count': total_results_count,
             'queries_count': len(queries),
             'success_count': success_count,
-            'failed_count': failed_count,
-            'queries': all_results  # Include query results for reference (they're also in S3)
+            'failed_count': failed_count
+            # DO NOT include 'queries' array - data is in S3 only
         }
         
     except Exception as e:

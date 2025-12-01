@@ -6,11 +6,14 @@ Wraps existing save_analysis_to_dynamodb function.
 import json
 import boto3
 import logging
+import os
 from agent_api.agent.prompts.models import SaveResultsOutput
 from agent_api.agent.tools import save_analysis_to_dynamodb
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+s3_client = boto3.client('s3')
 
 # Import progress tracker
 try:
@@ -30,17 +33,33 @@ def lambda_handler(event, context):
         SaveResultsOutput with success, analysis_id, error
     """
     try:
+        # CRITICAL: Load conflicts from S3 if conflicts_s3_key provided (merge_chunk_results stores in S3)
+        conflicts_s3_key = event.get('conflicts_s3_key')
         analysis_json = event.get('analysis_json')
+        bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
         session_id = event.get('session_id')
         user_id = event.get('user_id')
         document_s3_key = event.get('document_s3_key')
         redlined_s3_key = event.get('redlined_s3_key')
         
         logger.info(f"save_results received event keys: {list(event.keys())}")
-        logger.info(f"save_results - analysis_json type: {type(analysis_json)}, session_id: {session_id}, user_id: {user_id}")
         
-        if not analysis_json or not session_id or not user_id:
-            raise ValueError(f"analysis_json, session_id, and user_id are required. Got analysis_json={bool(analysis_json)}, session_id={session_id}, user_id={user_id}")
+        if not session_id or not user_id:
+            raise ValueError(f"session_id and user_id are required. Got session_id={session_id}, user_id={user_id}")
+        
+        # Load conflicts from S3 if S3 key provided
+        if conflicts_s3_key and bucket_name:
+            try:
+                conflicts_response = s3_client.get_object(Bucket=bucket_name, Key=conflicts_s3_key)
+                conflicts_json = conflicts_response['Body'].read().decode('utf-8')
+                analysis_json = json.loads(conflicts_json)
+                logger.info(f"Loaded conflicts from S3: {conflicts_s3_key}")
+            except Exception as e:
+                logger.error(f"CRITICAL: Failed to load conflicts from S3 {conflicts_s3_key}: {e}")
+                raise  # Fail fast - conflicts must be in S3
+        
+        if not analysis_json:
+            raise ValueError(f"analysis_json or conflicts_s3_key is required")
         
         # Get required parameters from event
         job_id = event.get('job_id')

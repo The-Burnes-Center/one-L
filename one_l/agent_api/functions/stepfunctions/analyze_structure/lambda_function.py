@@ -42,7 +42,7 @@ def lambda_handler(event, context):
             - job_id, timestamp (for progress tracking)
         
     Returns:
-        StructureAnalysisOutput with queries and structure metadata
+        Dict with structure_s3_key, queries_count, has_results (always stores in S3)
     """
     try:
         chunk_s3_key = event.get('chunk_s3_key')
@@ -139,6 +139,7 @@ def lambda_handler(event, context):
         # Update progress
         job_id = event.get('job_id')
         timestamp = event.get('timestamp')
+        session_id = event.get('session_id', 'unknown')
         if update_progress and job_id and timestamp:
             if is_chunk and total_chunks > 1:
                 update_progress(
@@ -151,8 +152,31 @@ def lambda_handler(event, context):
                     f'Analyzed document structure, generated {len(validated_output.queries)} queries for knowledge base lookup...'
                 )
         
-        # Return plain result (Step Functions uses result_path to merge with state)
-        return validated_output.model_dump()
+        # CRITICAL: Always store result in S3 and return only S3 reference
+        # Step Functions has 256KB limit - structure results can be large with many queries
+        result_dict = validated_output.model_dump()
+        result_json = json.dumps(result_dict)
+        result_size = len(result_json.encode('utf-8'))
+        
+        try:
+            s3_key_result = f"{session_id}/structure_results/{job_id}_chunk_{chunk_num}_structure.json"
+            s3_client.put_object(
+                Bucket=bucket_name,
+                Key=s3_key_result,
+                Body=result_json.encode('utf-8'),
+                ContentType='application/json'
+            )
+            logger.info(f"Stored structure result ({result_size} bytes) in S3: {s3_key_result}")
+            
+            # Return only S3 reference
+            return {
+                'structure_s3_key': s3_key_result,
+                'queries_count': len(validated_output.queries),
+                'has_results': True
+            }
+        except Exception as s3_error:
+            logger.error(f"CRITICAL: Failed to store structure result in S3: {s3_error}")
+            raise  # Fail fast if S3 storage fails
         
     except Exception as e:
         logger.error(f"Error in analyze_structure: {e}")
