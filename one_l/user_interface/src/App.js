@@ -1221,14 +1221,23 @@ const SessionWorkspace = ({ session }) => {
           // Progress is already a number (int) from backend (converted from DynamoDB Decimal)
           const actualStatus = statusResponse.status;
           const actualStage = statusResponse.stage;
-          const actualProgress = typeof statusResponse.progress === 'number' 
-            ? statusResponse.progress 
-            : parseInt(statusResponse.progress || 0, 10);
+          
+          // Ensure progress is a valid number between 0-100
+          let actualProgress = 0;
+          if (statusResponse.progress !== undefined && statusResponse.progress !== null) {
+            if (typeof statusResponse.progress === 'number') {
+              actualProgress = Math.max(0, Math.min(100, statusResponse.progress)); // Clamp between 0-100
+            } else {
+              const parsed = parseInt(statusResponse.progress, 10);
+              actualProgress = isNaN(parsed) ? 0 : Math.max(0, Math.min(100, parsed));
+            }
+          }
+          
           const actualLabel = statusResponse.label;
           const actualError = statusResponse.error_message || statusResponse.error;
           const result = statusResponse.result;
           
-          console.log(`Polling job ${jobId}: status=${actualStatus}, stage=${actualStage}, progress=${actualProgress}, progressType=${typeof statusResponse.progress}`);
+          console.log(`Polling job ${jobId}: status=${actualStatus}, stage=${actualStage}, progress=${actualProgress}, progressType=${typeof statusResponse.progress}, rawProgress=${statusResponse.progress}, finalProgress=${actualProgress}`);
           
           // Update UI with real-time progress
           if (isCurrentSession()) {
@@ -1239,20 +1248,31 @@ const SessionWorkspace = ({ session }) => {
               setProcessingPhase(frontendStage, actualLabel);
               
               // Update the redlined documents with progress
-              setRedlinedDocuments(prev => prev.map(doc => {
-                if (doc.jobId === jobId) {
-                  const updatedDoc = {
-                    ...doc,
-                    progress: actualProgress,
-                    status: 'processing',
-                    message: `${actualLabel} (${actualProgress}%)`,
-                    processing: true  // Ensure processing flag is set
-                  };
-                  console.log(`Updating doc ${jobId} progress to ${actualProgress}%`);
-                  return updatedDoc;
-                }
-                return doc;
-              }));
+              setRedlinedDocuments(prev => {
+                const foundDoc = prev.find(doc => doc.jobId === jobId);
+                console.log(`Looking for doc with jobId=${jobId}, found:`, foundDoc ? `yes (current progress=${foundDoc.progress})` : 'no');
+                console.log(`All docs:`, prev.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status })));
+                
+                const updated = prev.map(doc => {
+                  if (doc.jobId === jobId) {
+                    const updatedDoc = {
+                      ...doc,
+                      progress: actualProgress,
+                      status: 'processing',
+                      message: `${actualLabel} (${actualProgress}%)`,
+                      processing: true  // Ensure processing flag is set
+                    };
+                    console.log(`Updating doc ${jobId} progress from ${doc.progress} to ${actualProgress}%`);
+                    return updatedDoc;
+                  }
+                  return doc;
+                });
+                
+                const afterUpdate = updated.find(doc => doc.jobId === jobId);
+                console.log(`After update, doc progress:`, afterUpdate?.progress);
+                
+                return updated;
+              });
             }
           }
           
@@ -1593,12 +1613,14 @@ const SessionWorkspace = ({ session }) => {
                 originalFile: vendorFile,
                 jobId: jobId,
                 status: 'processing',
-                progress: 0,
+                progress: 0,  // Initial progress, will be updated by polling
                 message: 'Starting document analysis...',
                 processing: true,
-                  success: false,
-                  termsProfile: termsProfileForRun
+                success: false,
+                termsProfile: termsProfileForRun
               };
+              
+              console.log(`Created processing entry for jobId=${jobId} with initial progress=0`);
               redlineResults.push({ ...processingEntry });
 
               // Trigger session sidebar refresh to show new job
@@ -2267,6 +2289,13 @@ const SessionWorkspace = ({ session }) => {
         const currentProgress = typeof processingDoc?.progress === 'number' ? processingDoc.progress : 0;
         const currentMessage = processingDoc?.message || workflowMessage || 'Starting document review...';
         
+        // Debug logging
+        if (processingDoc) {
+          console.log(`Popup: Found processing doc with jobId=${processingDoc.jobId}, progress=${processingDoc.progress}, progressType=${typeof processingDoc.progress}, currentProgress=${currentProgress}`);
+        } else {
+          console.log(`Popup: No processing doc found. All docs:`, redlinedDocuments.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status, processing: d.processing })));
+        }
+        
         return (
           <div className="processing-overlay">
             <div className="processing-modal">
@@ -2578,6 +2607,13 @@ const SessionWorkspace = ({ session }) => {
           // Get actual progress from processing document
           const processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
           const currentProgress = typeof processingDoc?.progress === 'number' ? processingDoc.progress : 0;
+          
+          // Debug logging
+          if (processingDoc) {
+            console.log(`Body: Found processing doc with jobId=${processingDoc.jobId}, progress=${processingDoc.progress}, progressType=${typeof processingDoc.progress}, currentProgress=${currentProgress}`);
+          } else {
+            console.log(`Body: No processing doc found. All docs:`, redlinedDocuments.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status, processing: d.processing })));
+          }
 
           return (
             <div style={{ 
