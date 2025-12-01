@@ -257,6 +257,10 @@ const SessionWorkspace = ({ session }) => {
     }));
   };
 
+  // NOTE: Cleanup logic has been moved to the backend.
+  // Backend automatically cancels old jobs when a new one starts and returns only the most recent active job per session.
+  // Frontend just displays what the backend returns - no decision-making needed.
+
   const persistSessionState = useCallback((sessionId, partialState = {}) => {
     if (!sessionId) {
       return;
@@ -429,6 +433,7 @@ const SessionWorkspace = ({ session }) => {
       
       // Save previous session's data BEFORE switching (if we had a previous session)
       if (previousSessionId && previousSessionId !== currentSessionId) {
+        // Backend handles cleanup - just save current state
         persistSessionState(previousSessionId, {
           uploadedFiles,
           redlinedDocuments,
@@ -505,7 +510,9 @@ const SessionWorkspace = ({ session }) => {
           if (!sessionData.redlinedDocuments || sessionData.redlinedDocuments.length === 0) {
             return [];
           }
-          // Deep copy each document to ensure proper restoration
+          
+          // Backend handles cleanup - just restore what's in localStorage
+          // Backend will return only the most recent active job when we call loadSessionResults
           return sessionData.redlinedDocuments.map(doc => ({
             ...doc,
             originalFile: doc.originalFile ? { ...doc.originalFile } : undefined,
@@ -631,7 +638,8 @@ const SessionWorkspace = ({ session }) => {
           const baseline = prev.length === 0 && restoredRedlinedDocs.length > 0 
             ? restoredRedlinedDocs 
             : prev;
-          // Keep any in-progress documents from baseline
+          
+          // Backend returns only the most recent active job - just use what's in baseline
           const inProgress = baseline.filter(doc => doc.processing || doc.status === 'processing');
           
           // Create a map of existing documents by analysis_id, redlinedDocument key, or jobId
@@ -993,6 +1001,7 @@ const SessionWorkspace = ({ session }) => {
     
     const reconcileDocuments = (docs = []) => {
       let matched = false;
+      // Backend handles cleanup - just update the completing job
       const updatedDocs = docs.map(doc => {
         if (!matched && (doc.jobId === job_id || (data.analysis_id && doc.analysis === data.analysis_id))) {
           matched = true;
@@ -1280,6 +1289,18 @@ const SessionWorkspace = ({ session }) => {
           if (actualStatus === 'failed') {
             console.log(`Job ${jobId} failed: ${actualError}`);
             
+            // Clean up job tracking
+            if (jobSessionMapRef.current[jobId]) {
+              delete jobSessionMapRef.current[jobId];
+              saveJobSessionMapToStorage(jobSessionMapRef.current);
+            }
+            if (activeJobsRef.current[jobId]) {
+              delete activeJobsRef.current[jobId];
+            }
+            if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
+              window.currentProcessingJob = null;
+            }
+            
             // Trigger session sidebar refresh to show failed status
             if (window.triggerSessionSidebarRefresh) {
               window.triggerSessionSidebarRefresh();
@@ -1287,19 +1308,34 @@ const SessionWorkspace = ({ session }) => {
             
             // Update UI immediately to show error
             if (isCurrentSession()) {
-              setRedlinedDocuments(prev => prev.map(doc => {
-                if (doc.jobId === jobId) {
-                  return {
-                    ...doc,
-                    status: 'failed',
-                    progress: 0,
-                    processing: false,
-                    message: actualError || 'Processing failed',
-                    success: false
-                  };
+              setRedlinedDocuments(prev => {
+                const updated = prev.map(doc => {
+                  if (doc.jobId === jobId) {
+                    return {
+                      ...doc,
+                      status: 'failed',
+                      progress: 0,
+                      processing: false,
+                      message: actualError || 'Processing failed',
+                      success: false
+                    };
+                  }
+                  return doc;
+                });
+                
+                // Clean up: remove failed jobs without results after a delay (let user see error first)
+                // But remove immediately if there's a new processing job
+                const hasNewProcessingJob = updated.some(doc => 
+                  doc.processing && doc.jobId !== jobId
+                );
+                
+                if (hasNewProcessingJob) {
+                  // Remove failed job immediately if there's a new processing job
+                  return updated.filter(doc => doc.jobId !== jobId || doc.redlinedDocument || doc.analysis);
                 }
-                return doc;
-              }));
+                
+                return updated;
+              });
             }
             
             // Stop polling immediately
@@ -1314,9 +1350,37 @@ const SessionWorkspace = ({ session }) => {
           // If status is completed, stop polling even if result is not yet available
           // (Step Functions may have succeeded but DynamoDB update is delayed)
           if (actualStatus === 'completed') {
+            // Clean up job tracking
+            if (jobSessionMapRef.current[jobId]) {
+              delete jobSessionMapRef.current[jobId];
+              saveJobSessionMapToStorage(jobSessionMapRef.current);
+            }
+            if (activeJobsRef.current[jobId]) {
+              delete activeJobsRef.current[jobId];
+            }
+            if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
+              window.currentProcessingJob = null;
+            }
+            
             // Trigger session sidebar refresh to show completed status
             if (window.triggerSessionSidebarRefresh) {
               window.triggerSessionSidebarRefresh();
+            }
+            
+            // Update UI to mark job as completed
+            if (isCurrentSession()) {
+              setRedlinedDocuments(prev => prev.map(doc => {
+                if (doc.jobId === jobId) {
+                  return {
+                    ...doc,
+                    status: 'completed',
+                    progress: 100,
+                    processing: false,
+                    success: result ? (result.has_redlines || result.conflicts_found === 0) : true
+                  };
+                }
+                return doc;
+              }));
             }
             
             // If we have result data, return it
@@ -1608,13 +1672,8 @@ const SessionWorkspace = ({ session }) => {
                 sessionId: sessionIdAtStart
               };
 
-              // Clear processing flag on old documents before adding new one
-              setRedlinedDocuments(prev => prev.map(doc => ({
-                ...doc,
-                processing: false  // Clear old processing flags
-              })));
-              
-              // Add job to tracking with initial progress
+              // Backend automatically cancels old jobs when a new one starts
+              // Frontend just adds the new job entry
               processingEntry = {
                 originalFile: vendorFile,
                 jobId: jobId,
@@ -1636,7 +1695,13 @@ const SessionWorkspace = ({ session }) => {
 
               if (isCurrentSession()) {
                 setRedlinedDocuments(prev => {
-                  const nextDocs = [...prev, processingEntry];
+                  // Backend handles cleanup - just add new job
+                  // Remove any existing processing jobs (backend should have cancelled them, but handle race condition)
+                  const withoutOldProcessing = prev.filter(doc => 
+                    !(doc.processing || doc.status === 'processing') || doc.jobId === jobId
+                  );
+                  const nextDocs = [...withoutOldProcessing, processingEntry];
+                  
                   persistSessionState(sessionIdAtStart, {
                     redlinedDocuments: nextDocs,
                     generating: true,
@@ -1646,10 +1711,15 @@ const SessionWorkspace = ({ session }) => {
                   return nextDocs;
                 });
               } else {
+                // For background sessions
                 const existingDocs = cloneRedlinedDocuments(
                   sessionDataRef.current?.[sessionIdAtStart]?.redlinedDocuments || []
                 );
-                const nextDocs = [...existingDocs, processingEntry];
+                const withoutOldProcessing = existingDocs.filter(doc => 
+                  !(doc.processing || doc.status === 'processing') || doc.jobId === jobId
+                );
+                const nextDocs = [...withoutOldProcessing, processingEntry];
+                
                 persistSessionState(sessionIdAtStart, {
                   redlinedDocuments: nextDocs,
                   generating: true,
@@ -1657,6 +1727,10 @@ const SessionWorkspace = ({ session }) => {
                 });
                 updateGlobalProcessingFlag(sessionIdAtStart, true);
               }
+              
+              // Track new job mapping
+              jobSessionMapRef.current[jobId] = sessionIdAtStart;
+              saveJobSessionMapToStorage(jobSessionMapRef.current);
               
             } catch (error) {
 

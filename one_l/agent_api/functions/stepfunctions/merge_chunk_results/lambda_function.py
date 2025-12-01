@@ -1,15 +1,19 @@
 """
 Merge chunk results Lambda function.
 Merges conflicts from all chunks, renumbers Additional-[#] conflicts, deduplicates.
+Handles chunk results stored in S3 to avoid Step Functions payload size limits.
 """
 
 import json
 import boto3
 import logging
+import os
 from agent_api.agent.prompts.models import ConflictDetectionOutput, ConflictModel
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+s3_client = boto3.client('s3')
 
 # Import progress tracker
 try:
@@ -30,6 +34,18 @@ def lambda_handler(event, context):
     """
     try:
         chunk_results = event.get('chunk_results', [])
+        chunk_analyses_s3_key = event.get('chunk_analyses_s3_key')  # S3 key if all chunks stored together
+        bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
+        
+        # CRITICAL: Load chunk results from S3 if stored (to handle large payloads)
+        if chunk_analyses_s3_key and bucket_name:
+            try:
+                s3_response = s3_client.get_object(Bucket=bucket_name, Key=chunk_analyses_s3_key)
+                chunk_results_json = s3_response['Body'].read().decode('utf-8')
+                chunk_results = json.loads(chunk_results_json)
+                logger.info(f"Loaded chunk results from S3: {chunk_analyses_s3_key}")
+            except Exception as e:
+                logger.warning(f"Failed to load chunk results from S3 {chunk_analyses_s3_key}: {e}, using inline results")
         
         if not chunk_results:
             # Return empty result
@@ -37,22 +53,41 @@ def lambda_handler(event, context):
                 explanation="No chunks to merge",
                 conflicts=[]
             )
-            return {
-                "statusCode": 200,
-                "body": output.model_dump_json()
-            }
+            return output.model_dump()
         
         # Parse all chunk results
         all_conflicts = []
         explanations = []
         global_additional_counter = 0
         
-        for chunk_idx, chunk_result_json in enumerate(chunk_results):
+        for chunk_idx, chunk_result_data in enumerate(chunk_results):
             try:
-                if isinstance(chunk_result_json, str):
-                    chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_json)
+                # CRITICAL: Chunk results are always stored in S3
+                # Load from S3 using results_s3_key
+                if isinstance(chunk_result_data, dict) and chunk_result_data.get('results_s3_key'):
+                    # This chunk's result is stored in S3 (always the case now)
+                    results_s3_key = chunk_result_data.get('results_s3_key')
+                    chunk_num = chunk_result_data.get('chunk_num', chunk_idx)
+                    
+                    try:
+                        s3_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
+                        chunk_result_json = s3_response['Body'].read().decode('utf-8')
+                        chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_json)
+                        logger.info(f"Loaded chunk {chunk_num} result from S3: {results_s3_key}")
+                    except Exception as e:
+                        logger.error(f"CRITICAL: Failed to load chunk {chunk_num} result from S3 {results_s3_key}: {e}")
+                        raise  # Fail fast - chunk results must be in S3
+                elif isinstance(chunk_result_data, dict) and 'conflicts' in chunk_result_data:
+                    # Fallback: inline dict (shouldn't happen, but handle for backward compatibility)
+                    logger.warning(f"Chunk {chunk_idx} result is inline (should be in S3) - loading inline")
+                    chunk_result = ConflictDetectionOutput.model_validate(chunk_result_data)
+                elif isinstance(chunk_result_data, str):
+                    # Fallback: inline JSON string (shouldn't happen, but handle for backward compatibility)
+                    logger.warning(f"Chunk {chunk_idx} result is inline JSON (should be in S3) - loading inline")
+                    chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_data)
                 else:
-                    chunk_result = ConflictDetectionOutput.model_validate(chunk_result_json)
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: {type(chunk_result_data)}")
+                    continue
                 
                 # Collect explanation
                 if chunk_result.explanation:

@@ -148,11 +148,13 @@ def lambda_handler(event, context):
         
         item = response['Items'][0]
         
-        # Check Step Functions execution status if execution_arn is available
-        # This ensures we catch failures even if DynamoDB wasn't updated
+        # CRITICAL: Always check Step Functions execution status FIRST before returning
+        # This ensures we catch failures even if DynamoDB wasn't updated (e.g., payload size limit errors)
+        # Step Functions status is the source of truth for execution state
         execution_arn = item.get('execution_arn')
         sfn_status = None
         sfn_error = None
+        sfn_error_details = None
         
         if execution_arn:
             try:
@@ -161,25 +163,67 @@ def lambda_handler(event, context):
                 
                 logger.info(f"Step Functions execution {execution_arn} status: {sfn_status}")
                 
-                # If Step Functions shows FAILED or TIMED_OUT, get error details
+                # If Step Functions shows FAILED, TIMED_OUT, or ABORTED, extract error details
                 if sfn_status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
-                    sfn_error = sfn_response.get('error', 'Unknown error')
+                    sfn_error_raw = sfn_response.get('error', 'Unknown error')
                     sfn_cause = sfn_response.get('cause', '')
                     
-                    # Try to parse cause as JSON to extract error message
+                    # Extract error message from various formats
+                    error_message = None
+                    
+                    # Try to parse cause as JSON first (most common format)
                     if sfn_cause:
                         try:
                             cause_obj = json.loads(sfn_cause)
-                            sfn_error = cause_obj.get('errorMessage', sfn_cause)
-                        except:
-                            sfn_error = sfn_cause if sfn_cause else sfn_error
+                            # Handle nested error structures
+                            if isinstance(cause_obj, dict):
+                                error_message = (
+                                    cause_obj.get('errorMessage') or
+                                    cause_obj.get('ErrorMessage') or
+                                    cause_obj.get('message') or
+                                    cause_obj.get('Message') or
+                                    str(cause_obj)
+                                )
+                            else:
+                                error_message = str(cause_obj)
+                        except (json.JSONDecodeError, TypeError):
+                            # Cause is not JSON, use as-is
+                            error_message = str(sfn_cause)
+                    
+                    # If no error message from cause, use error field
+                    if not error_message:
+                        if isinstance(sfn_error_raw, dict):
+                            error_message = (
+                                sfn_error_raw.get('Error') or
+                                sfn_error_raw.get('error') or
+                                str(sfn_error_raw)
+                            )
+                        else:
+                            error_message = str(sfn_error_raw)
+                    
+                    # Handle specific error types with user-friendly messages
+                    if 'size exceeding the maximum' in error_message.lower() or 'payload size' in error_message.lower():
+                        sfn_error = 'The document processing result exceeded the maximum size limit. The document may be too large or contain too much data. Please try with a smaller document or contact support.'
+                        sfn_error_details = f"Step Functions Error: {error_message}"
+                    elif 'timeout' in error_message.lower() or 'timed out' in error_message.lower():
+                        sfn_error = 'Document processing timed out. The document may be too large or complex. Please try with a smaller document or contact support.'
+                        sfn_error_details = f"Step Functions Error: {error_message}"
+                    else:
+                        sfn_error = error_message or f'Step Functions execution {sfn_status}'
+                        sfn_error_details = error_message
                     
                     logger.warning(f"Step Functions execution {execution_arn} has status {sfn_status}: {sfn_error}")
                     
-                    # Update DynamoDB to reflect the failed status
+                    # CRITICAL: Update DynamoDB to reflect the failed status
+                    # This handles edge cases where Step Functions fails but error handler Lambda doesn't catch it
                     try:
                         item_timestamp = item.get('timestamp')
                         if item_timestamp:
+                            # Use a more comprehensive error message that includes both user-friendly and technical details
+                            full_error_message = sfn_error
+                            if sfn_error_details and sfn_error_details != sfn_error:
+                                full_error_message = f"{sfn_error} (Technical details: {sfn_error_details})"
+                            
                             table.update_item(
                                 Key={
                                     'analysis_id': job_id,
@@ -190,12 +234,12 @@ def lambda_handler(event, context):
                                 ExpressionAttributeValues={
                                     ':status': 'failed',
                                     ':stage': 'failed',
-                                    ':error': sfn_error or f'Step Functions execution {sfn_status}',
+                                    ':error': full_error_message,
                                     ':updated': datetime.utcnow().isoformat(),
                                     ':progress': 0
                                 }
                             )
-                            logger.info(f"Updated DynamoDB for job {job_id} to failed status based on Step Functions")
+                            logger.info(f"Updated DynamoDB for job {job_id} to failed status based on Step Functions: {sfn_error}")
                             
                             # Re-read the item to get updated values
                             updated_response = table.get_item(
@@ -209,25 +253,29 @@ def lambda_handler(event, context):
                         else:
                             logger.warning(f"Could not update DynamoDB: timestamp missing for job {job_id}")
                     except Exception as update_error:
-                        logger.warning(f"Could not update DynamoDB with failed status: {update_error}")
+                        logger.error(f"CRITICAL: Could not update DynamoDB with failed status: {update_error}")
+                        # Even if DynamoDB update fails, we still return the failed status from Step Functions
                 
-            except Exception as sfn_error:
-                logger.warning(f"Could not check Step Functions status: {sfn_error}")
-                # Continue with DynamoDB status if Step Functions check fails
+            except Exception as sfn_check_error:
+                logger.error(f"CRITICAL: Could not check Step Functions status: {sfn_check_error}")
+                # If we can't check Step Functions, continue with DynamoDB status
+                # But log this as a critical issue
+        else:
+            logger.warning(f"Job {job_id} has no execution_arn - cannot verify Step Functions status")
         
-        # Check status field first (it's the source of truth)
-        # Status takes precedence over stage for terminal states
+        # CRITICAL: Step Functions status is the source of truth
+        # Always check Step Functions status FIRST, then fall back to DynamoDB
+        # This ensures we catch failures even if DynamoDB wasn't updated
         item_status = item.get('status', '').lower()
         item_stage = item.get('stage', '').lower()
         
-        # Determine the actual status: Step Functions status takes precedence, then DynamoDB status
+        # Determine the actual status: Step Functions status takes ABSOLUTE precedence
         if sfn_status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
-            # Step Functions shows failure - use that
+            # Step Functions shows failure - this is definitive
+            # DynamoDB may not be updated yet (e.g., payload size limit errors)
             current_stage = 'failed'
             status = 'failed'
-        elif item_status == 'failed':
-            current_stage = 'failed'
-            status = 'failed'
+            logger.info(f"Job {job_id} status determined from Step Functions: FAILED (sfn_status={sfn_status})")
         elif sfn_status == 'SUCCEEDED':
             # Step Functions succeeded - check if DynamoDB has results
             if item_status == 'completed' and item.get('redlined_document'):
@@ -238,6 +286,22 @@ def lambda_handler(event, context):
                 # This handles the case where Step Functions finished but DynamoDB update is delayed
                 current_stage = 'completed'
                 status = 'completed'
+                logger.info(f"Job {job_id} status determined from Step Functions: SUCCEEDED (DynamoDB may be delayed)")
+        elif sfn_status == 'RUNNING':
+            # Step Functions is still running - use DynamoDB status/stage for progress
+            if item_status == 'failed':
+                # DynamoDB says failed but Step Functions is running - trust Step Functions (may be stale DynamoDB)
+                current_stage = item_stage or 'processing'
+                status = 'processing'
+                logger.warning(f"Job {job_id} DynamoDB says failed but Step Functions is RUNNING - trusting Step Functions")
+            else:
+                current_stage = item_stage or item_status or 'initialized'
+                status = 'processing'
+        elif item_status == 'failed':
+            # DynamoDB says failed but no Step Functions status - trust DynamoDB
+            current_stage = 'failed'
+            status = 'failed'
+            logger.warning(f"Job {job_id} status determined from DynamoDB only (no Step Functions status): FAILED")
         elif item_status == 'completed':
             current_stage = 'completed'
             status = 'completed'
@@ -287,10 +351,18 @@ def lambda_handler(event, context):
         
         # Add error info if failed
         if status == 'failed':
-            # Prefer Step Functions error, then DynamoDB error_message, then stage_message
+            # Prefer Step Functions error (most accurate), then DynamoDB error_message, then stage_message
             error_msg = sfn_error or item.get('error_message') or item.get('stage_message') or 'Unknown error occurred'
             result['error'] = error_msg
             result['error_message'] = error_msg
+            
+            # Log the error source for debugging
+            if sfn_error:
+                logger.info(f"Job {job_id} error from Step Functions: {sfn_error}")
+            elif item.get('error_message'):
+                logger.info(f"Job {job_id} error from DynamoDB: {item.get('error_message')}")
+            else:
+                logger.warning(f"Job {job_id} failed but no error message found")
         
         return {
             'statusCode': 200,

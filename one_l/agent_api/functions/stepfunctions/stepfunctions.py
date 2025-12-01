@@ -343,6 +343,7 @@ class StepFunctionsConstruct(Construct):
         # itemSelector constructs input for each Map iteration
         # Each query is a QueryModel object with: query (required), query_id (optional), max_results (defaults to 50), section
         # JsonPath methods extract values - if optional fields are None/missing, they'll be None, Lambda handles with defaults
+        # CRITICAL: Pass job_id, session_id, bucket_name so Lambda can store large results in S3
         retrieve_kb_queries_map = sfn.Map(
             self, "RetrieveKBQueriesParallel",
             items_path="$.structure_result.queries",
@@ -353,7 +354,10 @@ class StepFunctionsConstruct(Construct):
                 "query_id.$": "$$.Map.Item.Value.query_id",  # Optional, Lambda uses event.get('query_id', 0)
                 "max_results.$": "$$.Map.Item.Value.max_results",  # Optional, Lambda uses event.get('max_results', 50)
                 "knowledge_base_id.$": "$.knowledge_base_id",
-                "region.$": "$.region"
+                "region.$": "$.region",
+                "job_id.$": "$.job_id",  # Pass for S3 storage
+                "session_id.$": "$.session_id",  # Pass for S3 storage
+                "bucket_name.$": "$.split_result.bucket_name"  # Pass bucket_name for S3 storage
             }
         )
         
@@ -421,13 +425,37 @@ class StepFunctionsConstruct(Construct):
         
         analyze_chunks_map.item_processor(chunk_workflow)
         
-        # Merge chunk results
+        # CRITICAL: Store chunk_analyses in S3 if too large before merging
+        # The Map collects all chunk results into $.chunk_analyses which can exceed 256KB
+        store_chunk_analyses = tasks.LambdaInvoke(
+            self, "StoreChunkAnalyses",
+            lambda_function=self.store_large_results_fn,
+            payload_response_only=True,
+            result_path="$.chunk_storage",
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "kb_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Reuse store_large_results function
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
+                "storage_type": "chunk_analyses"  # Indicate this is chunk analyses, not KB results
+            })
+        )
+        
+        # Merge chunk results - will load from S3 if stored
         merge_chunk_results = tasks.LambdaInvoke(
             self, "MergeChunkResults",
             lambda_function=self.merge_chunk_results_fn,
             payload_response_only=True,
             result_path="$.conflicts_result",
-            retry_on_service_exceptions=True
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "chunk_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Pass chunk references (contain S3 keys)
+                "chunk_analyses_s3_key": sfn.JsonPath.string_at("$.chunk_storage.s3_key"),  # Aggregated S3 key (backup)
+                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+            })
         )
         merge_chunk_results.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
@@ -456,6 +484,7 @@ class StepFunctionsConstruct(Construct):
         # itemSelector constructs input for each Map iteration
         # Each query is a QueryModel object with: query (required), query_id (optional), max_results (defaults to 50), section
         # JsonPath methods extract values - if optional fields are None/missing, they'll be None, Lambda handles with defaults
+        # CRITICAL: Pass job_id, session_id, bucket_name so Lambda can store large results in S3
         retrieve_doc_kb_queries_map = sfn.Map(
             self, "RetrieveDocKBQueriesParallel",
             items_path="$.structure_result.queries",
@@ -466,7 +495,10 @@ class StepFunctionsConstruct(Construct):
                 "query_id.$": "$$.Map.Item.Value.query_id",  # Optional, Lambda uses event.get('query_id', 0)
                 "max_results.$": "$$.Map.Item.Value.max_results",  # Optional, Lambda uses event.get('max_results', 50)
                 "knowledge_base_id.$": "$.knowledge_base_id",
-                "region.$": "$.region"
+                "region.$": "$.region",
+                "job_id.$": "$.job_id",  # Pass for S3 storage
+                "session_id.$": "$.session_id",  # Pass for S3 storage
+                "bucket_name.$": "$.bucket_name"  # Pass bucket_name for S3 storage (from initialize_job)
             }
         )
         
@@ -485,7 +517,9 @@ class StepFunctionsConstruct(Construct):
         
         retrieve_doc_kb_queries_map.item_processor(retrieve_doc_kb_query)
         
-        # Store KB results in S3 if they're too large (to avoid payload size limits)
+        # CRITICAL: KB results are always stored per-query in S3 by retrieve_kb_query Lambda
+        # Each query always stores its own results, so $.kb_results contains S3 keys, not full data
+        # Store aggregated KB results in S3 as a backup/fallback for consistency
         store_doc_kb_results = tasks.LambdaInvoke(
             self, "StoreDocKBResults",
             lambda_function=self.store_large_results_fn,
@@ -493,14 +527,16 @@ class StepFunctionsConstruct(Construct):
             result_path="$.kb_storage",
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
-                "kb_results": sfn.JsonPath.string_at("$.kb_results"),
+                "kb_results": sfn.JsonPath.object_at("$.kb_results"),  # Array of query results (may contain S3 keys)
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
                 "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "bucket_name": sfn.JsonPath.string_at("$.bucket_name")
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
+                "storage_type": "kb_results"
             })
         )
         
-        # Analyze document with KB results (will read from S3 if stored)
+        # Analyze document with KB results
+        # Will load from S3 if individual queries stored results, or from aggregated S3 key
         analyze_document_with_kb = tasks.LambdaInvoke(
             self, "AnalyzeDocumentWithKB",
             lambda_function=self.analyze_document_with_kb_fn,
@@ -514,8 +550,8 @@ class StepFunctionsConstruct(Construct):
                 "region": sfn.JsonPath.string_at("$.region"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
                 "timestamp": sfn.JsonPath.string_at("$.timestamp"),
-                "kb_results_s3_key": sfn.JsonPath.string_at("$.kb_storage.s3_key")
-                # Don't pass kb_results in state - read from S3 instead to avoid payload limits
+                "kb_results": sfn.JsonPath.object_at("$.kb_results"),  # Pass KB results (may contain per-query S3 keys)
+                "kb_results_s3_key": sfn.JsonPath.string_at("$.kb_storage.s3_key")  # Aggregated S3 key if stored
             })
         )
         analyze_document_with_kb.add_retry(
@@ -580,7 +616,8 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Define workflow with proper branching
-        chunked_path = analyze_chunks_map.next(merge_chunk_results)
+        # CRITICAL: Store chunk_analyses in S3 before merging if they're large
+        chunked_path = analyze_chunks_map.next(store_chunk_analyses.next(merge_chunk_results))
         single_path = single_doc_workflow
         
         # Add error handling to individual states (not chains)

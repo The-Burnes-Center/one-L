@@ -134,8 +134,9 @@ const SessionSidebar = ({
           };
         });
         
-        // Process active jobs from API response (includes both processing and failed jobs)
-        // This ensures we detect active jobs even after page refresh
+        // Process active jobs from API response
+        // Backend already returns only the most recent active job per session
+        // Frontend just displays what backend returns - no cleanup needed
         let activeJobs = activeJobsFromAPI.map(job => ({
           jobId: job.job_id || job.analysis_id,
           status: job.status || 'processing', // Can be 'processing', 'failed', 'completed'
@@ -146,24 +147,9 @@ const SessionSidebar = ({
           errorMessage: job.stage_message || job.error_message
         }));
         
-        // If there's a processing job, filter out old failed jobs (only keep the most recent failed if no processing)
-        const hasProcessingJob = activeJobs.some(job => job.status === 'processing');
-        if (hasProcessingJob) {
-          // Keep only processing jobs when a new one exists
-          activeJobs = activeJobs.filter(job => job.status === 'processing');
-        } else {
-          // If no processing jobs, keep failed jobs (but only the most recent one)
-          const failedJobs = activeJobs.filter(job => job.status === 'failed');
-          if (failedJobs.length > 0) {
-            // Sort by updatedAt and keep only the most recent failed job
-            failedJobs.sort((a, b) => {
-              const timeA = new Date(a.updatedAt || 0).getTime();
-              const timeB = new Date(b.updatedAt || 0).getTime();
-              return timeB - timeA; // Most recent first
-            });
-            activeJobs = [failedJobs[0]]; // Keep only the most recent failed job
-          }
-        }
+        // Backend enforces: only 1 active job per session
+        // Remove completed jobs (they should be in documents, not activeJobs)
+        activeJobs = activeJobs.filter(job => job.status !== 'completed');
         
         // Also check window state for any jobs that might not be in DynamoDB yet (race condition)
         if (window.processingSessionFlags && window.processingSessionFlags[session.session_id]) {

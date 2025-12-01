@@ -305,15 +305,43 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False, cleanup_emp
                                 # Check if this is an active job (not completed)
                                 is_active = (
                                     status in ['processing', 'initialized', 'starting'] or
-                                    (stage not in ['completed', 'failed'] and not has_redlines)
+                                    (status not in ['completed', 'failed'] and stage not in ['completed', 'failed'] and not has_redlines)
                                 )
                                 
-                                if is_active:
-                                    active_jobs.append(item)
+                                # Also include failed jobs (so UI can show error)
+                                is_failed = status == 'failed' and not has_redlines
+                                
+                                if is_active or is_failed:
+                                    active_jobs.append({
+                                        'job_id': item.get('analysis_id'),
+                                        'status': status or 'processing',
+                                        'stage': stage or 'initialized',
+                                        'timestamp': item.get('timestamp'),
+                                        'updated_at': item.get('updated_at')
+                                    })
                                 else:
                                     # Filter out entries that look like job status entries (those starting with "job_")
                                     if not item.get('analysis_id', '').startswith('job_'):
                                         actual_results.append(item)
+                            
+                            # BACKEND ENFORCEMENT: Only keep the most recent active job per session
+                            if len(active_jobs) > 1:
+                                # Sort by timestamp descending (most recent first)
+                                active_jobs.sort(key=lambda x: x.get('timestamp', '') or x.get('updated_at', ''), reverse=True)
+                                
+                                # Separate processing and failed jobs
+                                processing_jobs = [j for j in active_jobs if j.get('status') == 'processing']
+                                failed_jobs = [j for j in active_jobs if j.get('status') == 'failed']
+                                
+                                if processing_jobs:
+                                    # If there are processing jobs, keep only the most recent one
+                                    active_jobs = [processing_jobs[0]]
+                                elif failed_jobs:
+                                    # If no processing jobs, keep only the most recent failed job
+                                    active_jobs = [failed_jobs[0]]
+                                else:
+                                    # Fallback: keep only the most recent job
+                                    active_jobs = [active_jobs[0]]
                             
                             # Keep session if it has documents OR active processing jobs
                             if len(actual_results) > 0 or len(active_jobs) > 0:
@@ -950,9 +978,35 @@ def get_session_analysis_results(session_id: str, user_id: str) -> Dict[str, Any
                 })
             # Remaining items are completed analysis results (already handled above)
         
-        # Sort by timestamp descending (most recent first)
+        # BACKEND ENFORCEMENT: Only return the most recent active job per session
+        # Each session should only have 1 active job at a time
+        # Priority: processing > failed (most recent)
+        if len(active_jobs) > 1:
+            # Sort by timestamp descending (most recent first)
+            active_jobs.sort(key=lambda x: x.get('timestamp', '') or x.get('updated_at', ''), reverse=True)
+            
+            # Separate processing and failed jobs
+            processing_jobs = [j for j in active_jobs if j.get('status') == 'processing']
+            failed_jobs = [j for j in active_jobs if j.get('status') == 'failed']
+            
+            if processing_jobs:
+                # If there are processing jobs, keep only the most recent one
+                active_jobs = [processing_jobs[0]]
+                logger.info(f"Multiple active jobs found for session {session_id}, keeping only most recent processing job: {active_jobs[0].get('job_id')}")
+            elif failed_jobs:
+                # If no processing jobs, keep only the most recent failed job
+                active_jobs = [failed_jobs[0]]
+                logger.info(f"Multiple failed jobs found for session {session_id}, keeping only most recent: {active_jobs[0].get('job_id')}")
+            else:
+                # Fallback: keep only the most recent job
+                active_jobs = [active_jobs[0]]
+                logger.info(f"Multiple active jobs found for session {session_id}, keeping only most recent: {active_jobs[0].get('job_id')}")
+        elif len(active_jobs) == 1:
+            # Sort to ensure consistent ordering
+            active_jobs.sort(key=lambda x: x.get('timestamp', '') or x.get('updated_at', ''), reverse=True)
+        
+        # Sort analysis results by timestamp descending (most recent first)
         analysis_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        active_jobs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
         # Transform the data for frontend consumption
         formatted_results = []

@@ -41,20 +41,24 @@ def lambda_handler(event, context):
         knowledge_base_id = event.get('knowledge_base_id') or os.environ.get('KNOWLEDGE_BASE_ID')
         region = event.get('region') or os.environ.get('REGION')
         kb_results = event.get('kb_results', [])
-        kb_results_s3_key = event.get('kb_results_s3_key')  # S3 key for large KB results
+        kb_results_s3_key = event.get('kb_results_s3_key')  # Aggregated S3 key (if all results stored together)
         
         if not document_s3_key or not bucket_name:
             raise ValueError("document_s3_key and bucket_name are required")
         
-        # Load KB results from S3 if provided (for large results that exceed payload limits)
+        # CRITICAL: KB results are always stored in S3 per-query (from retrieve_kb_query)
+        # OR as aggregated results (from store_doc_kb_results)
+        # Priority: aggregated S3 key > per-query S3 keys
+        
+        # Load aggregated KB results from S3 if provided (backup/fallback)
         if kb_results_s3_key:
             try:
                 kb_response = s3_client.get_object(Bucket=bucket_name, Key=kb_results_s3_key)
                 kb_results_json = kb_response['Body'].read().decode('utf-8')
                 kb_results = json.loads(kb_results_json)
-                logger.info(f"Loaded {len(kb_results)} KB results from S3: {kb_results_s3_key}")
+                logger.info(f"Loaded aggregated KB results from S3: {kb_results_s3_key}")
             except Exception as e:
-                logger.warning(f"Failed to load KB results from S3 {kb_results_s3_key}: {e}, using in-memory results")
+                logger.warning(f"Failed to load aggregated KB results from S3 {kb_results_s3_key}: {e}, will use per-query S3 keys")
         
         # Load document from S3
         response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
@@ -64,18 +68,43 @@ def lambda_handler(event, context):
         model = Model(knowledge_base_id, region)
         
         # Format KB results as context
+        # CRITICAL: KB results may be stored in S3 per-query (if they exceeded size limits)
+        # Load from S3 if results_s3_key is present, otherwise use inline results
         kb_context = ""
         if kb_results:
             kb_context = "\n\nKnowledge Base Results:\n"
             for idx, kb_result in enumerate(kb_results):
                 if isinstance(kb_result, dict):
-                    # Handle both direct results and wrapped results
-                    result_data = kb_result.get('results', [kb_result]) if 'results' in kb_result else [kb_result]
-                    for result_idx, result in enumerate(result_data[:10]):  # Limit to first 10 results per query
-                        kb_context += f"\nResult {idx + 1}.{result_idx + 1}:\n"
-                        if isinstance(result, dict):
-                            kb_context += f"Document: {result.get('document', {}).get('title', 'Unknown')}\n"
-                            kb_context += f"Content: {result.get('content', {}).get('text', '')[:500]}...\n"
+                    # CRITICAL: KB results are always stored in S3
+                    # Load from S3 using results_s3_key
+                    results_s3_key = kb_result.get('results_s3_key')
+                    results_count = kb_result.get('results_count', 0)
+                    
+                    if results_s3_key:
+                        # Load results from S3 (always the case now)
+                        try:
+                            kb_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
+                            kb_results_json = kb_response['Body'].read().decode('utf-8')
+                            results = json.loads(kb_results_json)
+                            logger.info(f"Loaded {results_count} KB results for query {kb_result.get('query_id', idx)} from S3: {results_s3_key}")
+                        except Exception as e:
+                            logger.error(f"CRITICAL: Failed to load KB results from S3 {results_s3_key}: {e}")
+                            raise  # Fail fast - KB results must be in S3
+                    elif results_count > 0:
+                        # Fallback: inline results (shouldn't happen, but handle for backward compatibility)
+                        logger.warning(f"Query {kb_result.get('query_id', idx)} has {results_count} results but no S3 key - using inline results")
+                        results = kb_result.get('results', [])
+                    else:
+                        # No results for this query
+                        continue
+                    
+                    # Format results for context
+                    if results:
+                        for result_idx, result in enumerate(results[:10]):  # Limit to first 10 results per query
+                            kb_context += f"\nQuery {idx + 1}, Result {result_idx + 1}:\n"
+                            if isinstance(result, dict):
+                                kb_context += f"Document: {result.get('document', {}).get('title', 'Unknown')}\n"
+                                kb_context += f"Content: {result.get('content', {}).get('text', '')[:500]}...\n"
         
         # Determine document format
         is_pdf = document_s3_key.lower().endswith('.pdf')

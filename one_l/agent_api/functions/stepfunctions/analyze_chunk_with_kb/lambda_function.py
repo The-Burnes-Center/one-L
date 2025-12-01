@@ -61,14 +61,43 @@ def lambda_handler(event, context):
         chunk_context = f"You are analyzing chunk {chunk_num + 1} of {total_chunks} (characters {start_char}-{end_char})"
         
         # Format KB results as context
+        # CRITICAL: KB results may be stored in S3 per-query (if they exceeded size limits)
+        # Load from S3 if results_s3_key is present, otherwise use inline results
         kb_context = ""
         if kb_results:
             kb_context = "\n\nKnowledge Base Results:\n"
             for idx, kb_result in enumerate(kb_results):
                 if isinstance(kb_result, dict):
-                    kb_context += f"\nResult {idx + 1}:\n"
-                    kb_context += f"Document: {kb_result.get('document', {}).get('title', 'Unknown')}\n"
-                    kb_context += f"Content: {kb_result.get('content', {}).get('text', '')[:500]}...\n"
+                    # CRITICAL: KB results are always stored in S3
+                    # Load from S3 using results_s3_key
+                    results_s3_key = kb_result.get('results_s3_key')
+                    results_count = kb_result.get('results_count', 0)
+                    
+                    if results_s3_key:
+                        # Load results from S3 (always the case now)
+                        try:
+                            kb_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
+                            kb_results_json = kb_response['Body'].read().decode('utf-8')
+                            results = json.loads(kb_results_json)
+                            logger.info(f"Loaded {results_count} KB results for query {kb_result.get('query_id', idx)} from S3: {results_s3_key}")
+                        except Exception as e:
+                            logger.error(f"CRITICAL: Failed to load KB results from S3 {results_s3_key}: {e}")
+                            raise  # Fail fast - KB results must be in S3
+                    elif results_count > 0:
+                        # Fallback: inline results (shouldn't happen, but handle for backward compatibility)
+                        logger.warning(f"Query {kb_result.get('query_id', idx)} has {results_count} results but no S3 key - using inline results")
+                        results = kb_result.get('results', [])
+                    else:
+                        # No results for this query
+                        continue
+                    
+                    # Format results for context
+                    if results:
+                        for result_idx, result in enumerate(results[:10]):  # Limit to first 10 results per query
+                            kb_context += f"\nQuery {idx + 1}, Result {result_idx + 1}:\n"
+                            if isinstance(result, dict):
+                                kb_context += f"Document: {result.get('document', {}).get('title', 'Unknown')}\n"
+                                kb_context += f"Content: {result.get('content', {}).get('text', '')[:500]}...\n"
         
         # Prepare messages with chunk document and KB context
         from docx import Document
@@ -133,8 +162,40 @@ def lambda_handler(event, context):
                 f'Analyzing chunk {chunk_num + 1} of {total_chunks}, found {len(validated_output.conflicts)} conflicts...'
             )
         
-        # Return plain result
-        return validated_output.model_dump()
+        # CRITICAL: Store result in S3 if it's large to avoid Step Functions payload limits
+        # When multiple chunks run in parallel, their results are collected into $.chunk_analyses
+        # This can easily exceed 256KB if there are many chunks with many conflicts
+        # CRITICAL: Always store result in S3 to avoid Step Functions payload size limits
+        # Always storing in S3 ensures consistency, easier cleanup, and predictable behavior
+        result_dict = validated_output.model_dump()
+        job_id = event.get('job_id', 'unknown')
+        session_id = event.get('session_id', 'unknown')
+        chunk_num = event.get('chunk_num', 0)
+        
+        try:
+            s3_key = f"{session_id}/chunk_results/{job_id}_chunk_{chunk_num}_analysis.json"
+            result_json = json.dumps(result_dict)
+            result_size = len(result_json.encode('utf-8'))
+            
+            s3_client.put_object(
+                Bucket=bucket_name,
+                Key=s3_key,
+                Body=result_json.encode('utf-8'),
+                ContentType='application/json'
+            )
+            
+            logger.info(f"Stored chunk {chunk_num} analysis result ({result_size} bytes) in S3: {s3_key}")
+            
+            # Always return S3 key reference (results are always in S3)
+            return {
+                'chunk_num': chunk_num,
+                'results_s3_key': s3_key,
+                'conflicts_count': len(validated_output.conflicts),
+                'has_results': True
+            }
+        except Exception as s3_error:
+            logger.error(f"CRITICAL: Failed to store chunk {chunk_num} result in S3: {s3_error}")
+            raise  # Fail fast if S3 storage fails - we need S3 for Step Functions limits
         
     except Exception as e:
         logger.error(f"Error in analyze_chunk_with_kb: {e}")

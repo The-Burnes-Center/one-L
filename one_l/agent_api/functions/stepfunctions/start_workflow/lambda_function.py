@@ -80,11 +80,89 @@ def lambda_handler(event, context):
         timestamp_iso = timestamp.isoformat()
         job_id = f"{session_id}_{int(timestamp.timestamp() * 1000)}"
         
-        # Create initial DynamoDB record so frontend can start polling immediately
+        # Get table reference for cleanup and new job creation
         table_name = os.environ.get('ANALYSES_TABLE_NAME')
         if table_name:
             try:
                 table = dynamodb.Table(table_name)
+                
+                # BACKEND CLEANUP: Cancel/cleanup old processing jobs for this session
+                # Each session should only have 1 active job at a time
+                logger.info(f"Cleaning up old processing jobs for session {session_id} before starting new job {job_id}")
+                
+                # Scan for all active jobs for this session
+                response = table.scan(
+                    FilterExpression='session_id = :session_id AND user_id = :user_id',
+                    ExpressionAttributeValues={
+                        ':session_id': session_id,
+                        ':user_id': user_id
+                    }
+                )
+                
+                old_jobs = []
+                for item in response.get('Items', []):
+                    status = item.get('status', '').lower()
+                    stage = item.get('stage', '').lower()
+                    has_redlines = bool(item.get('redlined_document_s3_key'))
+                    old_job_id = item.get('analysis_id')
+                    
+                    # Identify active/processing jobs (not completed)
+                    is_active = (
+                        status in ['processing', 'initialized', 'starting'] or
+                        (status not in ['completed', 'failed'] and stage not in ['completed', 'failed'] and not has_redlines)
+                    )
+                    
+                    if is_active and old_job_id != job_id:
+                        old_jobs.append({
+                            'analysis_id': old_job_id,
+                            'timestamp': item.get('timestamp'),
+                            'execution_arn': item.get('execution_arn')
+                        })
+                
+                # Cancel old processing jobs
+                for old_job in old_jobs:
+                    old_job_id = old_job['analysis_id']
+                    old_timestamp = old_job['timestamp']
+                    execution_arn = old_job.get('execution_arn')
+                    
+                    try:
+                        # Update DynamoDB to mark old job as cancelled/replaced
+                        table.update_item(
+                            Key={
+                                'analysis_id': old_job_id,
+                                'timestamp': old_timestamp
+                            },
+                            UpdateExpression='SET #status = :status, stage = :stage, updated_at = :updated, error_message = :error',
+                            ExpressionAttributeNames={'#status': 'status'},
+                            ExpressionAttributeValues={
+                                ':status': 'failed',
+                                ':stage': 'cancelled',
+                                ':updated': timestamp_iso,
+                                ':error': 'Job cancelled: A new job was started for this session'
+                            }
+                        )
+                        logger.info(f"Marked old job {old_job_id} as cancelled in DynamoDB")
+                        
+                        # Try to stop Step Functions execution if it's still running
+                        if execution_arn:
+                            try:
+                                sfn_client.stop_execution(
+                                    executionArn=execution_arn,
+                                    error='JobCancelled',
+                                    cause='A new job was started for this session. Only one job per session is allowed.'
+                                )
+                                logger.info(f"Stopped Step Functions execution {execution_arn} for old job {old_job_id}")
+                            except sfn_client.exceptions.ExecutionDoesNotExist:
+                                logger.info(f"Step Functions execution {execution_arn} already completed or doesn't exist")
+                            except Exception as sfn_error:
+                                logger.warning(f"Could not stop Step Functions execution {execution_arn}: {sfn_error}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Could not cleanup old job {old_job_id}: {cleanup_error}")
+                
+                if old_jobs:
+                    logger.info(f"Cleaned up {len(old_jobs)} old processing job(s) for session {session_id}")
+                
+                # Create initial DynamoDB record for new job
                 table.put_item(
                     Item={
                         'analysis_id': job_id,
