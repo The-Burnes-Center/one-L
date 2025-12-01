@@ -1,18 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { sessionAPI } from '../services/api';
+import React, { useState, useEffect, useCallback } from 'react';
+import { sessionAPI, agentAPI } from '../services/api';
 import { useNavigate, useParams } from 'react-router-dom';
 
 const SessionSidebar = ({ 
   currentUserId, 
   isVisible = true,
   onAdminSectionChange,
-  onRefreshRequest, // Add callback to allow parent to trigger refresh
+  onRefreshRequest,
   isAdmin = false,
-  onCollapsedChange // Callback to notify parent of collapse state
+  onCollapsedChange
 }) => {
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const [sessions, setSessions] = useState([]);
+  const [sessionStatuses, setSessionStatuses] = useState({}); // session_id -> { documents: [], activeJobs: [] }
   const [loading, setLoading] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [editingSession, setEditingSession] = useState(null);
@@ -40,78 +41,111 @@ const SessionSidebar = ({
     if (currentUserId && isVisible) {
       loadSessions();
     }
-  }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUserId, isVisible]);
 
-  // Refresh sessions when sessionId changes (user navigates to different session)
-  // This ensures the first session created by AutoSessionRedirect appears in the sidebar
+  // Load session statuses (documents and active jobs) for all sessions
+  useEffect(() => {
+    if (sessions.length > 0 && currentUserId) {
+      loadSessionStatuses();
+    }
+  }, [sessions, currentUserId]);
+
+  // Poll active jobs for real-time updates
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    
+    const pollInterval = setInterval(() => {
+      // Get active job IDs from current state
+      const activeJobIds = [];
+      Object.values(sessionStatuses).forEach(status => {
+        if (status.activeJobs && status.activeJobs.length > 0) {
+          status.activeJobs.forEach(job => {
+            if (job.status === 'processing' && job.jobId) {
+              activeJobIds.push(job.jobId);
+            }
+          });
+        }
+      });
+      
+      // Also check window state for active jobs
+      if (window.processingSessionFlags) {
+        Object.values(window.processingSessionFlags).forEach(details => {
+          if (details.jobId && !activeJobIds.includes(details.jobId)) {
+            activeJobIds.push(details.jobId);
+          }
+        });
+      }
+      
+      // Poll each active job
+      activeJobIds.forEach(jobId => {
+        pollJobStatus(jobId);
+      });
+      
+      // Reload session statuses periodically to catch new jobs
+      if (activeJobIds.length > 0) {
+        loadSessionStatuses();
+      }
+    }, 5000); // Poll every 5 seconds
+    
+    return () => clearInterval(pollInterval);
+  }, [sessions.length]); // Only depend on sessions length, not the full object
+
+  // Refresh sessions when sessionId changes
   useEffect(() => {
     if (currentUserId && isVisible && sessionId) {
-      // Load sessions immediately
       loadSessions();
       
-      // Retry to handle DynamoDB eventual consistency
-      // This is especially important for the first session created on app load
-      // Retry multiple times to ensure the session appears, but stop on server errors
       let retryCount = 0;
-      const maxRetries = 5; // Increased retries for first session (handles eventual consistency)
+      const maxRetries = 5;
       let consecutiveServerErrors = 0;
       
       const retryInterval = setInterval(async () => {
         retryCount++;
         
-        // Stop if we've hit max retries
         if (retryCount >= maxRetries) {
           clearInterval(retryInterval);
           return;
         }
         
-        // Try loading sessions
         const result = await loadSessions();
         
-        // If we get a server error (500), stop retrying - it's a backend issue, not eventual consistency
         if (result && result.isServerError) {
           consecutiveServerErrors++;
-          // Stop after 2 consecutive server errors
           if (consecutiveServerErrors >= 2) {
-            console.warn('Stopping session retry due to persistent server errors');
             clearInterval(retryInterval);
             return;
           }
         } else if (result && result.success) {
-          // Reset error count on success
           consecutiveServerErrors = 0;
         }
-      }, 1500); // Retry every 1.5 seconds
+      }, 1500);
       
       return () => clearInterval(retryInterval);
     }
-  }, [sessionId, currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, currentUserId, isVisible]);
 
-  // Refresh sessions periodically to catch newly completed sessions
+  // Refresh sessions periodically
   useEffect(() => {
     if (!currentUserId || !isVisible) return;
     
     const refreshInterval = setInterval(() => {
       loadSessions();
-    }, 30000); // Refresh every 30 seconds
+    }, 30000);
 
     return () => clearInterval(refreshInterval);
-  }, [currentUserId, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUserId, isVisible]);
 
-  // Listen for refresh requests from parent
   useEffect(() => {
     if (onRefreshRequest) {
       loadSessions();
     }
-  }, [onRefreshRequest]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onRefreshRequest]);
 
   const loadSessions = async () => {
     try {
       setLoading(true);
-      // Load ALL sessions (including new ones without results) so they appear in sidebar
       const response = await sessionAPI.getUserSessions(currentUserId, false);
       
-      // Handle different response structures (wrapped in body or direct)
       let responseData = response;
       if (response && response.body) {
         try {
@@ -122,12 +156,9 @@ const SessionSidebar = ({
         }
       }
       
-      // Handle HTTP errors (like 500) that might be in the response
       if (response && response.statusCode && response.statusCode >= 400) {
         console.error('HTTP error loading sessions:', response.statusCode, responseData);
-        // Don't clear existing sessions on error - keep what we have
-        // Return error indicator so retry logic can stop
-        return { error: true, statusCode: response.statusCode };
+        return { error: true, statusCode: response.statusCode, isServerError: response.statusCode >= 500 };
       }
       
       if (responseData && responseData.success) {
@@ -135,137 +166,214 @@ const SessionSidebar = ({
         return { success: true };
       } else {
         console.error('Failed to load sessions:', responseData?.error || 'Unknown error');
-        // Don't clear existing sessions on error - keep what we have
         return { error: true };
       }
     } catch (error) {
-      // Handle 500 errors and other network errors gracefully
       if (error.message && error.message.includes('500')) {
-        console.warn('Server error loading sessions (500). Sessions may be temporarily unavailable.');
-        // Don't clear existing sessions - keep what we have displayed
-        // Return error indicator so retry logic can handle it
-        return { error: true, isServerError: true, statusCode: 500 };
-      } else {
-        console.error('Error loading sessions:', error);
-        console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          name: error.name
-        });
-        return { error: true };
+        console.warn('Server error loading sessions (500)');
+        return { error: true, isServerError: true };
       }
-      // Don't clear existing sessions on error - keep what we have
+      console.error('Error loading sessions:', error);
+      return { error: true };
     } finally {
       setLoading(false);
     }
   };
 
-  const getParallelSessionWarning = (action) => (
-    'A redline is currently running.\n' +
-    `If you ${action}, the progress indicator will be lost and results may not appear properly.\n\n` +
-    'We recommend waiting for the current redline to complete.\n\n' +
-    'Continue anyway?'
-  );
-
-  const getActiveProcessingStatus = () => {
-    const activeJob = window.currentProcessingJob;
-    let effectiveSessionId = sessionId || window.activeSessionId || null;
-
-    if (!effectiveSessionId && window.processingSessionFlags) {
-      const flaggedSessions = Object.keys(window.processingSessionFlags);
-      if (flaggedSessions.length === 1) {
-        effectiveSessionId = flaggedSessions[0];
-      }
-    }
-
-    if (!effectiveSessionId && activeJob?.sessionId) {
-      effectiveSessionId = activeJob.sessionId;
-    }
-
-    const currentJobActive = Boolean(effectiveSessionId && activeJob && activeJob.sessionId === effectiveSessionId);
-    const progressIntervalActive = Boolean(
-      window.progressInterval !== null &&
-      window.progressInterval !== undefined &&
-      currentJobActive
-    );
-
-    const inspectEntry = (entry, key) => {
-      if (!entry) return false;
-      const isGenerating = entry.generating === true;
-      const hasProcessingStage = isGenerating && Boolean(entry.processingStage && entry.processingStage !== '');
-      const hasProcessingDocs = Array.isArray(entry.redlinedDocuments) &&
-        entry.redlinedDocuments.some(doc =>
-          doc?.processing === true ||
-          doc?.status === 'processing' ||
-          (typeof doc?.progress === 'number' && doc.progress !== undefined && doc.progress < 100)
-        );
-
-      const isProcessing = hasProcessingDocs || hasProcessingStage;
-      return isProcessing;
-    };
-
-    let sessionData = null;
-    let sessionEntry = null;
-    let storageProcessing = false;
-    if (currentUserId) {
+  const loadSessionStatuses = async () => {
+    const statusMap = {};
+    
+    for (const session of sessions) {
       try {
-        const storageKey = `one_l_session_data_${currentUserId}`;
-        const stored = localStorage.getItem(storageKey);
-        if (stored) {
-          sessionData = JSON.parse(stored);
-
-          if (effectiveSessionId && sessionData?.[effectiveSessionId]) {
-            sessionEntry = sessionData[effectiveSessionId];
-            storageProcessing = inspectEntry(sessionEntry, effectiveSessionId);
+        // Get session results (completed documents)
+        const resultsResponse = await sessionAPI.getSessionResults(session.session_id, currentUserId);
+        const results = resultsResponse?.success ? (resultsResponse.results || []) : [];
+        
+        // Extract document info
+        const documents = results.map(result => ({
+          documentName: extractDocumentName(result.document_s3_key || ''),
+          status: result.status || 'completed',
+          hasRedlines: !!result.redlined_document,
+          conflictsFound: result.conflicts_found || 0,
+          updatedAt: result.updated_at || result.timestamp,
+          jobId: result.analysis_id // Some results might have job_id
+        }));
+        
+        // Check for active jobs - look for job_ids in the current session's processing state
+        // We'll track active jobs from window state or poll them separately
+        const activeJobs = [];
+        
+        // Check if there are any active jobs for this session in the global state
+        if (window.processingSessionFlags && window.processingSessionFlags[session.session_id]) {
+          const processingDetails = window.processingSessionFlags[session.session_id];
+          if (processingDetails.jobId) {
+            // Poll this job to get current status
+            try {
+              const jobStatus = await agentAPI.getJobStatus(processingDetails.jobId);
+              if (jobStatus.success && jobStatus.job) {
+                const job = jobStatus.job;
+                if (job.status === 'processing') {
+                  activeJobs.push({
+                    jobId: processingDetails.jobId,
+                    status: 'processing',
+                    progress: job.progress || 0,
+                    stage: job.stage
+                  });
+                }
+              }
+            } catch (error) {
+              console.warn(`Error checking job status for ${processingDetails.jobId}:`, error);
+            }
           }
         }
+        
+        statusMap[session.session_id] = {
+          documents,
+          activeJobs,
+          documentCount: documents.length,
+          hasResults: documents.length > 0
+        };
       } catch (error) {
-        console.error('Error checking processing status:', error);
+        console.error(`Error loading status for session ${session.session_id}:`, error);
+        statusMap[session.session_id] = {
+          documents: [],
+          activeJobs: [],
+          documentCount: 0,
+          hasResults: false
+        };
       }
     }
+    
+    setSessionStatuses(statusMap);
+  };
 
-    let flagProcessing = false;
-    if (effectiveSessionId && window.processingSessionFlags && window.processingSessionFlags[effectiveSessionId]) {
-      const details = window.processingSessionFlags[effectiveSessionId];
-      const stillProcessing = inspectEntry(sessionEntry, effectiveSessionId);
-      const tooOld = details?.updatedAt && (Date.now() - details.updatedAt) > 5 * 60 * 1000;
+  const pollJobStatus = async (jobId) => {
+    try {
+      const statusResponse = await agentAPI.getJobStatus(jobId);
+      
+      if (statusResponse.success) {
+        // Handle both response formats: { job: {...} } and direct fields
+        const jobData = statusResponse.job || statusResponse;
+        const { status, stage, progress, session_id } = jobData;
+        
+        if (session_id) {
+          setSessionStatuses(prev => {
+            const updated = { ...prev };
+            if (!updated[session_id]) {
+              updated[session_id] = { documents: [], activeJobs: [], documentCount: 0, hasResults: false };
+            }
+            
+            // Update or add job status
+            const jobIndex = updated[session_id].activeJobs.findIndex(j => j.jobId === jobId);
+            const jobStatus = {
+              jobId,
+              status: status || 'processing',
+              stage: stage || 'initialized',
+              progress: progress || 0
+            };
+            
+            if (jobIndex >= 0) {
+              updated[session_id].activeJobs[jobIndex] = jobStatus;
+            } else if (status === 'processing') {
+              updated[session_id].activeJobs.push(jobStatus);
+            }
+            
+            // If completed or failed, remove from active jobs and reload documents
+            if (status === 'completed' || status === 'failed') {
+              updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.jobId !== jobId);
+              // Reload session statuses to get updated document list
+              setTimeout(() => loadSessionStatuses(), 1000);
+            }
+            
+            return updated;
+          });
+        }
+      }
+    } catch (error) {
+      console.warn(`Error polling job status for ${jobId}:`, error);
+    }
+  };
 
-      if (!stillProcessing || tooOld) {
-        delete window.processingSessionFlags[effectiveSessionId];
-      } else {
-        flagProcessing = true;
+  const extractDocumentName = (s3Key) => {
+    if (!s3Key) return 'Unknown Document';
+    const parts = s3Key.split('/');
+    const filename = parts[parts.length - 1];
+    // Remove UUID prefix if present (format: uuid_filename.pdf)
+    const match = filename.match(/^[a-f0-9-]+_(.+)$/i);
+    return match ? match[1] : filename;
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+  };
+
+  const getSessionDisplayName = (session) => {
+    const status = sessionStatuses[session.session_id];
+    if (!status || status.documents.length === 0) {
+      return session.title || 'New Session';
+    }
+    
+    // Show first document name
+    const firstDoc = status.documents[0];
+    if (firstDoc.documentName) {
+      return firstDoc.documentName.length > 30 
+        ? firstDoc.documentName.substring(0, 30) + '...'
+        : firstDoc.documentName;
+    }
+    
+    return session.title || 'New Session';
+  };
+
+  const getSessionStatus = (session) => {
+    const status = sessionStatuses[session.session_id];
+    if (!status) return { type: 'empty', label: 'Empty', color: '#666' };
+    
+    // Check for active processing
+    const activeJob = status.activeJobs?.find(j => j.status === 'processing');
+    if (activeJob) {
+      return { 
+        type: 'processing', 
+        label: `${activeJob.progress}%`, 
+        color: '#3b82f6',
+        progress: activeJob.progress
+      };
+    }
+    
+    // Check for failed documents
+    const failedDocs = status.documents.filter(d => d.status === 'failed');
+    if (failedDocs.length > 0) {
+      return { type: 'failed', label: 'Failed', color: '#ef4444' };
+    }
+    
+    // Check for completed documents
+    if (status.documents.length > 0) {
+      const completedDocs = status.documents.filter(d => d.status === 'completed');
+      if (completedDocs.length > 0) {
+        return { type: 'completed', label: 'Complete', color: '#10b981' };
       }
     }
-
-    const isProcessing = progressIntervalActive || currentJobActive || storageProcessing || flagProcessing;
-
-    return {
-      hasProgressInterval: progressIntervalActive,
-      hasActiveJob: currentJobActive,
-      hasStorageProcessing: storageProcessing,
-      hasGlobalProcessing: flagProcessing,
-      isProcessing
-    };
+    
+    return { type: 'empty', label: 'Empty', color: '#666' };
   };
 
   const handleNewSession = async () => {
-    const processingStatus = getActiveProcessingStatus();
-
-    if (processingStatus.isProcessing) {
-      const proceedWithParallelWarning = window.confirm(
-        getParallelSessionWarning('create a new session')
-      );
-
-      if (!proceedWithParallelWarning) {
-        return;
-      }
-    }
-
     try {
       setCreatingSession(true);
       const response = await sessionAPI.createSession(currentUserId);
       
-      // Handle different response structures (wrapped in body or direct)
       let responseData = response;
       if (response.body) {
         try {
@@ -277,34 +385,21 @@ const SessionSidebar = ({
       }
       
       if (responseData.success && responseData.session) {
-        // Add the new session to the list immediately (optimistic update)
         const newSession = responseData.session;
         setSessions(prevSessions => {
-          // Check if session already exists to avoid duplicates
           const exists = prevSessions.some(s => s.session_id === newSession.session_id);
-          if (exists) {
-            return prevSessions;
-          }
-          // Add new session at the beginning
+          if (exists) return prevSessions;
           return [newSession, ...prevSessions];
         });
         
-        // Refresh sessions list from server after a short delay to handle eventual consistency
-        // Use silent refresh to avoid errors interrupting the flow
         setTimeout(async () => {
           try {
-            const result = await loadSessions();
-            // If we get a server error, don't keep retrying - the optimistic update is already in place
-            if (result && result.isServerError) {
-              console.warn('Server error refreshing sessions after creation. Session is already in sidebar via optimistic update.');
-            }
+            await loadSessions();
           } catch (error) {
-            // Silently fail - we already have the session in the list via optimistic update
-            console.warn('Failed to refresh sessions list after creation:', error);
+            console.warn('Failed to refresh sessions after creation:', error);
           }
         }, 1000);
         
-        // Navigate to the new session with new URL structure
         navigate(`/${newSession.session_id}`, { 
           state: { session: newSession } 
         });
@@ -314,11 +409,6 @@ const SessionSidebar = ({
       }
     } catch (error) {
       console.error('Error creating new session:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
-      });
       alert(`Error creating new session: ${error.message || 'Unknown error'}`);
     } finally {
       setCreatingSession(false);
@@ -326,32 +416,7 @@ const SessionSidebar = ({
   };
 
   const handleSessionSelect = (session) => {
-    if (session.session_id === sessionId) {
-      return;
-    }
-
-    // Check if there's active processing in the current session
-    const processingStatus = getActiveProcessingStatus();
-    
-    // Show warning if there's active processing
-    if (processingStatus.isProcessing) {
-      const confirmed = window.confirm(
-        getParallelSessionWarning('switch sessions')
-      );
-      if (!confirmed) {
-        return; // Don't navigate if user cancels
-      }
-    }
-    
-    // If we get here, either no processing or user confirmed
-    if (processingStatus.hasProgressInterval) {
-      // Clear the progress interval when switching away
-      if (window.progressInterval) {
-        clearInterval(window.progressInterval);
-        window.progressInterval = null;
-      }
-    }
-    
+    if (session.session_id === sessionId) return;
     navigate(`/${session.session_id}`, { 
       state: { session: session } 
     });
@@ -359,46 +424,44 @@ const SessionSidebar = ({
 
   const handleEditTitle = (session) => {
     setEditingSession(session.session_id);
-    setEditTitle(session.title);
+    setEditTitle(session.title || '');
   };
 
-  const handleSaveTitle = async (sessionId) => {
+  const handleSaveTitle = async (sessionIdToUpdate) => {
+    if (!editTitle.trim()) {
+      setEditingSession(null);
+      return;
+    }
+    
     try {
-      await sessionAPI.updateSessionTitle(sessionId, currentUserId, editTitle);
-      await loadSessions(); // Reload sessions
+      await sessionAPI.updateSessionTitle(sessionIdToUpdate, currentUserId, editTitle.trim());
+      setSessions(prev => prev.map(s => 
+        s.session_id === sessionIdToUpdate 
+          ? { ...s, title: editTitle.trim() }
+          : s
+      ));
       setEditingSession(null);
     } catch (error) {
       console.error('Error updating session title:', error);
+      alert('Failed to update session title');
     }
   };
 
-  const handleDeleteSession = async (sessionToDelete) => {
-    if (window.confirm('Are you sure you want to delete this session? All files will be permanently removed.')) {
-      try {
-        await sessionAPI.deleteSession(sessionToDelete, currentUserId);
-        await loadSessions(); // Reload sessions
-        
-        // If the current session was deleted, navigate to home
-        if (sessionId === sessionToDelete) {
-          navigate('/');
-        }
-      } catch (error) {
-        console.error('Error deleting session:', error);
-      }
+  const handleDeleteSession = async (sessionIdToDelete) => {
+    if (!window.confirm('Are you sure you want to delete this session? This action cannot be undone.')) {
+      return;
     }
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
+    
     try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-    } catch {
-      return '';
+      await sessionAPI.deleteSession(sessionIdToDelete, currentUserId);
+      setSessions(prev => prev.filter(s => s.session_id !== sessionIdToDelete));
+      
+      if (sessionIdToDelete === sessionId) {
+        navigate('/');
+      }
+    } catch (error) {
+      console.error('Error deleting session:', error);
+      alert('Failed to delete session');
     }
   };
 
@@ -409,7 +472,7 @@ const SessionSidebar = ({
       position: 'fixed',
       top: '60px',
       left: '0',
-      width: isCollapsed ? '48px' : '280px',
+      width: isCollapsed ? '48px' : '320px',
       height: 'calc(100vh - 60px)',
       backgroundColor: '#171717',
       color: '#ffffff',
@@ -492,7 +555,7 @@ const SessionSidebar = ({
       <div style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '8px',
+        padding: isCollapsed ? '8px 4px' : '12px',
         opacity: isCollapsed ? 0 : 1,
         visibility: isCollapsed ? 'hidden' : 'visible',
         transition: 'opacity 0.2s'
@@ -516,137 +579,217 @@ const SessionSidebar = ({
             No sessions yet
           </div>
         ) : (
-          sessions.map((session) => (
-            <div
-              key={session.session_id}
-              style={{
-                marginBottom: '4px',
-                borderRadius: '6px',
-                backgroundColor: sessionId === session.session_id ? '#333' : 'transparent',
-                border: sessionId === session.session_id ? '1px solid #555' : '1px solid transparent',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                if (sessionId !== session.session_id) {
-                  e.currentTarget.style.backgroundColor = '#1f1f1f';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (sessionId !== session.session_id) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }
-              }}
-            >
+          sessions.map((session) => {
+            const isActive = sessionId === session.session_id;
+            const status = getSessionStatus(session);
+            const displayName = getSessionDisplayName(session);
+            const sessionData = sessionStatuses[session.session_id];
+            const documentCount = sessionData?.documentCount || 0;
+            
+            return (
               <div
-                onClick={() => handleSessionSelect(session)}
+                key={session.session_id}
                 style={{
-                  padding: '12px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px'
+                  marginBottom: '8px',
+                  borderRadius: '8px',
+                  backgroundColor: isActive ? '#2a2a2a' : 'transparent',
+                  border: isActive ? '1px solid #444' : '1px solid transparent',
+                  transition: 'all 0.2s',
+                  cursor: 'pointer'
                 }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = '#1f1f1f';
+                    e.currentTarget.style.borderColor = '#333';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.borderColor = 'transparent';
+                  }
+                }}
+                onClick={() => handleSessionSelect(session)}
               >
-                {editingSession === session.session_id ? (
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={() => handleSaveTitle(session.session_id)}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        handleSaveTitle(session.session_id);
-                      }
-                    }}
-                    style={{
-                      backgroundColor: '#1f1f1f',
-                      color: '#ffffff',
-                      border: '1px solid #555',
-                      borderRadius: '4px',
-                      padding: '4px 8px',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      width: '100%'
-                    }}
-                    autoFocus
-                  />
-                ) : (
-                  <div style={{
-                    fontSize: '14px',
-                    fontWeight: '500',
-                    color: '#ffffff',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    {session.title}
-                  </div>
-                )}
-                
                 <div style={{
-                  fontSize: '12px',
-                  color: '#888',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
+                  padding: '12px'
                 }}>
-                  <span>{formatDate(session.updated_at || session.created_at)}</span>
+                  {/* Session Header */}
                   <div style={{
                     display: 'flex',
-                    gap: '4px',
-                    opacity: 0,
-                    transition: 'opacity 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.opacity = 1;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.opacity = 0;
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                    marginBottom: '8px'
                   }}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditTitle(session);
-                      }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#888',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        fontSize: '12px'
-                      }}
-                      title="Edit title"
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {editingSession === session.session_id ? (
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          onBlur={() => handleSaveTitle(session.session_id)}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              handleSaveTitle(session.session_id);
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            backgroundColor: '#1f1f1f',
+                            color: '#ffffff',
+                            border: '1px solid #555',
+                            borderRadius: '4px',
+                            padding: '4px 8px',
+                            fontSize: '14px',
+                            fontWeight: '500',
+                            width: '100%'
+                          }}
+                          autoFocus
+                        />
+                      ) : (
+                        <div style={{
+                          fontSize: '14px',
+                          fontWeight: '500',
+                          color: '#ffffff',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          marginBottom: '4px'
+                        }}>
+                          {displayName}
+                        </div>
+                      )}
+                      
+                      {/* Status Badge and Document Count */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginTop: '4px'
+                      }}>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: '500',
+                          color: status.color,
+                          backgroundColor: status.color + '20',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          {status.type === 'processing' && (
+                            <span style={{
+                              width: '6px',
+                              height: '6px',
+                              borderRadius: '50%',
+                              backgroundColor: status.color,
+                              animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                            }}></span>
+                          )}
+                          {status.label}
+                        </span>
+                        
+                        {documentCount > 0 && (
+                          <span style={{
+                            fontSize: '11px',
+                            color: '#888'
+                          }}>
+                            {documentCount} {documentCount === 1 ? 'doc' : 'docs'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Actions */}
+                    <div style={{
+                      display: 'flex',
+                      gap: '4px',
+                      opacity: 0,
+                      transition: 'opacity 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.opacity = 1;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.opacity = 0;
+                    }}
+                    onClick={(e) => e.stopPropagation()}
                     >
-                      Edit
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(session.session_id);
-                      }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#888',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        fontSize: '12px'
-                      }}
-                      title="Delete session"
-                    >
-                      Delete
-                    </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditTitle(session);
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#888',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          fontSize: '11px'
+                        }}
+                        title="Rename session"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteSession(session.session_id);
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#888',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          fontSize: '11px'
+                        }}
+                        title="Delete session"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Processing Progress Bar */}
+                  {status.type === 'processing' && status.progress !== undefined && (
+                    <div style={{
+                      width: '100%',
+                      height: '3px',
+                      backgroundColor: '#333',
+                      borderRadius: '2px',
+                      overflow: 'hidden',
+                      marginTop: '8px'
+                    }}>
+                      <div style={{
+                        width: `${status.progress}%`,
+                        height: '100%',
+                        backgroundColor: status.color,
+                        transition: 'width 0.3s ease'
+                      }}></div>
+                    </div>
+                  )}
+                  
+                  {/* Time */}
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#666',
+                    marginTop: '6px'
+                  }}>
+                    {formatDate(session.updated_at || session.created_at)}
                   </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
       {/* Admin Section */}
-      {isAdmin && (
+      {isAdmin && !isCollapsed && (
         <div style={{
           borderTop: '1px solid #333'
         }}>
@@ -683,7 +826,6 @@ const SessionSidebar = ({
             </span>
           </button>
           
-          {/* Admin Submenu */}
           {adminExpanded && (
             <div style={{ paddingLeft: '12px', paddingBottom: '8px' }}>
               <button
@@ -695,23 +837,17 @@ const SessionSidebar = ({
                   color: '#cccccc',
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: '13px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  borderRadius: '4px',
-                  transition: 'background-color 0.2s'
+                  textAlign: 'left',
+                  fontSize: '13px'
                 }}
                 onMouseEnter={(e) => {
                   e.target.style.backgroundColor = '#1f1f1f';
-                  e.target.style.color = '#ffffff';
                 }}
                 onMouseLeave={(e) => {
                   e.target.style.backgroundColor = 'transparent';
-                  e.target.style.color = '#cccccc';
                 }}
               >
-                <span>Knowledge Base</span>
+                Knowledge Base
               </button>
               <button
                 onClick={() => onAdminSectionChange && onAdminSectionChange('metrics')}
@@ -722,40 +858,22 @@ const SessionSidebar = ({
                   color: '#cccccc',
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: '13px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  borderRadius: '4px',
-                  transition: 'background-color 0.2s',
-                  marginTop: '4px'
+                  textAlign: 'left',
+                  fontSize: '13px'
                 }}
                 onMouseEnter={(e) => {
                   e.target.style.backgroundColor = '#1f1f1f';
-                  e.target.style.color = '#ffffff';
                 }}
                 onMouseLeave={(e) => {
                   e.target.style.backgroundColor = 'transparent';
-                  e.target.style.color = '#cccccc';
                 }}
               >
-                <span>Metrics</span>
+                Metrics
               </button>
             </div>
           )}
         </div>
       )}
-
-      {/* Footer */}
-      <div style={{
-        padding: '12px',
-        borderTop: '1px solid #333',
-        fontSize: '12px',
-        color: '#888',
-        textAlign: 'center'
-      }}>
-        {currentUserId?.slice(0, 8)}...
-      </div>
     </div>
   );
 };

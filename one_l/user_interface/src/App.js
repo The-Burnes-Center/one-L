@@ -1217,24 +1217,33 @@ const SessionWorkspace = ({ session }) => {
         const statusResponse = await agentAPI.getJobStatus(jobId);
         
         if (statusResponse.success) {
-          const { status, stage, progress, label, description, result, error } = statusResponse;
+          const { status, stage, progress, label, description, result, error, job } = statusResponse;
+          
+          // Handle nested job object (if API returns job wrapper)
+          const jobData = job || statusResponse;
+          const actualStatus = jobData.status || status;
+          const actualStage = jobData.stage || stage;
+          const actualProgress = jobData.progress || progress;
+          const actualLabel = jobData.label || label;
+          const actualDescription = jobData.description || description;
+          const actualError = jobData.error_message || jobData.error || error;
           
           // Update UI with real-time progress
           if (isCurrentSession()) {
-            const frontendStage = backendToFrontendStage[stage] || 'document_review';
+            const frontendStage = backendToFrontendStage[actualStage] || 'document_review';
             
             // Update processing phase with backend's description
-            if (status === 'processing') {
-              setProcessingPhase(frontendStage, `${label}: ${description}`);
+            if (actualStatus === 'processing') {
+              setProcessingPhase(frontendStage, `${actualLabel}: ${actualDescription}`);
               
               // Update the redlined documents with progress
               setRedlinedDocuments(prev => prev.map(doc => {
                 if (doc.jobId === jobId) {
                   return {
                     ...doc,
-                    progress: progress || 0,
+                    progress: actualProgress || 0,
                     status: 'processing',
-                    message: `${label} (${progress}%)`
+                    message: `${actualLabel} (${actualProgress}%)`
                   };
                 }
                 return doc;
@@ -1242,8 +1251,34 @@ const SessionWorkspace = ({ session }) => {
             }
           }
           
+          // Check for failure FIRST (before completion check)
+          if (actualStatus === 'failed') {
+            // Update UI immediately to show error
+            if (isCurrentSession()) {
+              setRedlinedDocuments(prev => prev.map(doc => {
+                if (doc.jobId === jobId) {
+                  return {
+                    ...doc,
+                    status: 'failed',
+                    progress: 100,
+                    processing: false,
+                    message: actualError || 'Processing failed',
+                    success: false
+                  };
+                }
+                return doc;
+              }));
+            }
+            
+            return {
+              success: false,
+              processing: false,
+              error: actualError || 'Processing failed'
+            };
+          }
+          
           // Check for completion
-          if (status === 'completed' && result) {
+          if (actualStatus === 'completed' && result) {
             return {
               success: true,
               processing: false,
@@ -1253,15 +1288,29 @@ const SessionWorkspace = ({ session }) => {
               conflicts_found: result.conflicts_found
             };
           }
+        } else {
+          // API returned success: false
+          const errorMsg = statusResponse.error || 'Failed to get job status';
+          console.error('Job status API error:', errorMsg);
           
-          // Check for failure
-          if (status === 'failed') {
-            return {
-              success: false,
-              processing: false,
-              error: error || 'Processing failed'
-            };
+          // Update UI to show error
+          if (isCurrentSession()) {
+            setRedlinedDocuments(prev => prev.map(doc => {
+              if (doc.jobId === jobId) {
+                return {
+                  ...doc,
+                  status: 'failed',
+                  progress: 100,
+                  processing: false,
+                  message: errorMsg,
+                  success: false
+                };
+              }
+              return doc;
+            }));
           }
+          
+          // Continue polling in case it's a transient error
         }
         
         // Wait before next poll (5 seconds)

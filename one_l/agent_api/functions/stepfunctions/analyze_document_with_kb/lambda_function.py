@@ -9,8 +9,9 @@ import logging
 import os
 import io
 from agent_api.agent.prompts.conflict_detection_prompt import CONFLICT_DETECTION_PROMPT
-from agent_api.agent.prompts.models import ConflictDetectionOutput, ValidationError
+from agent_api.agent.prompts.models import ConflictDetectionOutput
 from agent_api.agent.model import Model, _extract_json_only
+from pydantic import ValidationError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
