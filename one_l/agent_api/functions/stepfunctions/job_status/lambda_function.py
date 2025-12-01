@@ -159,6 +159,8 @@ def lambda_handler(event, context):
                 sfn_response = sfn_client.describe_execution(executionArn=execution_arn)
                 sfn_status = sfn_response.get('status')  # RUNNING, SUCCEEDED, FAILED, TIMED_OUT, ABORTED
                 
+                logger.info(f"Step Functions execution {execution_arn} status: {sfn_status}")
+                
                 # If Step Functions shows FAILED or TIMED_OUT, get error details
                 if sfn_status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
                     sfn_error = sfn_response.get('error', 'Unknown error')
@@ -255,19 +257,24 @@ def lambda_handler(event, context):
             progress_value = stage_info['progress'] if status != 'failed' else 0
         
         # Build response
+        # Ensure progress is always an integer (not float from Decimal conversion)
+        progress_value_int = int(progress_value) if progress_value is not None else 0
+        
         result = {
             'success': True,
             'job_id': job_id,
             'stage': current_stage,
-            'progress': progress_value,
+            'progress': progress_value_int,  # Always integer for frontend
             'label': stage_info['label'],
-            'status': status,  # Use the determined status
+            'status': status,  # Use the determined status: 'processing', 'completed', or 'failed'
             'updated_at': item.get('updated_at') or item.get('timestamp'),
             'session_id': item.get('session_id'),
             'document_s3_key': item.get('document_s3_key'),  # Include document key for frontend
             'chunks_processed': item.get('chunks_processed', 0),
             'total_chunks': item.get('total_chunks', 0)
         }
+        
+        logger.info(f"Returning job status for {job_id}: status={status}, stage={current_stage}, progress={progress_value_int} (type={type(progress_value_int).__name__})")
         
         # Add result data if completed
         if current_stage == 'completed':

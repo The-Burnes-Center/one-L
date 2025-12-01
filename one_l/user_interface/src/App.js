@@ -141,7 +141,7 @@ const SessionWorkspace = ({ session }) => {
   
   const stageOrder = [
     { key: 'kb_sync', label: 'Knowledge Base Sync' },
-    { key: 'document_review', label: 'Document Review' },
+    { key: 'document_review', label: 'AI Analysis' },
     { key: 'generating', label: 'Result Generation' }
   ];
 
@@ -1217,15 +1217,18 @@ const SessionWorkspace = ({ session }) => {
         const statusResponse = await agentAPI.getJobStatus(jobId);
         
         if (statusResponse.success) {
-          const { status, stage, progress, label, result, error, job } = statusResponse;
+          // Backend returns: { success: true, job_id, stage, progress, label, status, session_id, document_s3_key, ... }
+          // Progress is already a number (int) from backend (converted from DynamoDB Decimal)
+          const actualStatus = statusResponse.status;
+          const actualStage = statusResponse.stage;
+          const actualProgress = typeof statusResponse.progress === 'number' 
+            ? statusResponse.progress 
+            : parseInt(statusResponse.progress || 0, 10);
+          const actualLabel = statusResponse.label;
+          const actualError = statusResponse.error_message || statusResponse.error;
+          const result = statusResponse.result;
           
-          // Handle nested job object (if API returns job wrapper)
-          const jobData = job || statusResponse;
-          const actualStatus = jobData.status || status;
-          const actualStage = jobData.stage || stage;
-          const actualProgress = jobData.progress || progress;
-          const actualLabel = jobData.label || label;
-          const actualError = jobData.error_message || jobData.error || error;
+          console.log(`Polling job ${jobId}: status=${actualStatus}, stage=${actualStage}, progress=${actualProgress}, progressType=${typeof statusResponse.progress}`);
           
           // Update UI with real-time progress
           if (isCurrentSession()) {
@@ -1238,12 +1241,15 @@ const SessionWorkspace = ({ session }) => {
               // Update the redlined documents with progress
               setRedlinedDocuments(prev => prev.map(doc => {
                 if (doc.jobId === jobId) {
-                  return {
+                  const updatedDoc = {
                     ...doc,
-                    progress: actualProgress || 0,
+                    progress: actualProgress,
                     status: 'processing',
-                    message: `${actualLabel} (${actualProgress}%)`
+                    message: `${actualLabel} (${actualProgress}%)`,
+                    processing: true  // Ensure processing flag is set
                   };
+                  console.log(`Updating doc ${jobId} progress to ${actualProgress}%`);
+                  return updatedDoc;
                 }
                 return doc;
               }));
@@ -1252,6 +1258,8 @@ const SessionWorkspace = ({ session }) => {
           
           // Check for failure FIRST (before completion check)
           if (actualStatus === 'failed') {
+            console.log(`Job ${jobId} failed: ${actualError}`);
+            
             // Trigger session sidebar refresh to show failed status
             if (window.triggerSessionSidebarRefresh) {
               window.triggerSessionSidebarRefresh();
@@ -1264,7 +1272,7 @@ const SessionWorkspace = ({ session }) => {
                   return {
                     ...doc,
                     status: 'failed',
-                    progress: 100,
+                    progress: 0,
                     processing: false,
                     message: actualError || 'Processing failed',
                     success: false
@@ -1274,6 +1282,7 @@ const SessionWorkspace = ({ session }) => {
               }));
             }
             
+            // Stop polling immediately
             return {
               success: false,
               processing: false,
@@ -2254,8 +2263,8 @@ const SessionWorkspace = ({ session }) => {
     <div className="main-content">
       {/* Processing Overlay */}
       {generating && (() => {
-        const processingDoc = redlinedDocuments.find(d => d.processing);
-        const currentProgress = processingDoc?.progress || 0;
+        const processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
+        const currentProgress = typeof processingDoc?.progress === 'number' ? processingDoc.progress : 0;
         const currentMessage = processingDoc?.message || workflowMessage || 'Starting document review...';
         
         return (
@@ -2274,7 +2283,7 @@ const SessionWorkspace = ({ session }) => {
                       <div className={`processing-stage-dot ${isCompleted ? 'completed' : isActive ? 'active' : 'pending'}`}>
                         {isCompleted ? '✓' : index + 1}
                       </div>
-                      <span className="processing-stage-label">{stage.label.split(' ')[0]}</span>
+                      <span className="processing-stage-label">{stage.label}</span>
                     </div>
                   );
                 })}
@@ -2567,8 +2576,8 @@ const SessionWorkspace = ({ session }) => {
           const showSpinner = !isCompleted;
           
           // Get actual progress from processing document
-          const processingDoc = redlinedDocuments.find(d => d.processing);
-          const currentProgress = processingDoc?.progress || 0;
+          const processingDoc = redlinedDocuments.find(d => d.processing || d.status === 'processing');
+          const currentProgress = typeof processingDoc?.progress === 'number' ? processingDoc.progress : 0;
 
           return (
             <div style={{ 

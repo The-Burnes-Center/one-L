@@ -224,9 +224,9 @@ const SessionSidebar = ({
       const statusResponse = await agentAPI.getJobStatus(jobId);
       
       if (statusResponse.success) {
-        // Handle both response formats: { job: {...} } and direct fields
-        const jobData = statusResponse.job || statusResponse;
-        const { status, stage, progress, session_id } = jobData;
+        // Backend returns: { success: true, job_id, stage, progress, label, status, session_id, document_s3_key, ... }
+        // Progress is already a number (int) from backend
+        const { status, stage, progress, session_id, document_s3_key } = statusResponse;
         
         if (session_id) {
           setSessionStatuses(prev => {
@@ -240,14 +240,19 @@ const SessionSidebar = ({
             
             // Preserve existing job data (especially documentS3Key) when updating
             const existingJob = jobIndex >= 0 ? updated[session_id].activeJobs[jobIndex] : null;
+            // Ensure progress is a number (backend returns int, but handle edge cases)
+            const progressValue = typeof progress === 'number' ? progress : parseInt(progress || 0, 10);
+            
             const jobStatus = {
               jobId,
               status: status || 'processing',
               stage: stage || 'initialized',
-              progress: progress || 0,
+              progress: progressValue,
               // Preserve documentS3Key from existing job or get from response
-              documentS3Key: existingJob?.documentS3Key || jobData.document_s3_key || null
+              documentS3Key: existingJob?.documentS3Key || document_s3_key || null
             };
+            
+            console.log(`SessionSidebar: Updated job ${jobId} - status=${status}, progress=${progressValue}, progressType=${typeof progress}`);
             
             // If this is a new processing job, remove old failed jobs for this session
             if (status === 'processing' && jobIndex < 0) {
@@ -474,11 +479,12 @@ const SessionSidebar = ({
       
       // Check for processing job first (highest priority)
       if (job.status === 'processing') {
+        const progressValue = typeof job.progress === 'number' ? job.progress : parseInt(job.progress || 0, 10);
         return { 
           type: 'processing', 
-          label: `${job.progress || 0}%`, 
+          label: `${progressValue}%`, 
           color: '#3b82f6',
-          progress: job.progress || 0
+          progress: progressValue
         };
       }
       
