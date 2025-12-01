@@ -33,10 +33,19 @@ RUN pip install --upgrade pip setuptools wheel && \
 # Original document-review function
 COPY one_l/agent_api/functions/agent/document_review/lambda_function.py ./python/
 
-# Step Functions Lambda functions (all 12 functions)
+# Step Functions Lambda functions
 # Each function is in its own directory with lambda_function.py
 # Structure: ./python/initialize_job/lambda_function.py (handler: "initialize_job/lambda_function.lambda_handler")
 # Copy each function directory to root of python/ so handlers work correctly
+
+# API entry points (start workflow and check status)
+COPY one_l/agent_api/functions/stepfunctions/start_workflow/ ./python/start_workflow/
+COPY one_l/agent_api/functions/stepfunctions/job_status/ ./python/job_status/
+
+# Shared utilities (progress tracking, etc.)
+COPY one_l/agent_api/functions/stepfunctions/shared/ ./python/shared/
+
+# Workflow step functions
 COPY one_l/agent_api/functions/stepfunctions/initialize_job/ ./python/initialize_job/
 COPY one_l/agent_api/functions/stepfunctions/split_document/ ./python/split_document/
 COPY one_l/agent_api/functions/stepfunctions/analyze_chunk_structure/ ./python/analyze_chunk_structure/
