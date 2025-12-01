@@ -97,14 +97,41 @@ const SessionSidebar = ({
         const results = resultsResponse?.success ? (resultsResponse.results || []) : [];
         
         // Extract document info
-        const documents = results.map(result => ({
-          documentName: extractDocumentName(result.document_s3_key || ''),
-          status: result.status || 'completed',
-          hasRedlines: !!result.redlined_document,
-          conflictsFound: result.conflicts_found || 0,
-          updatedAt: result.updated_at || result.timestamp,
-          jobId: result.analysis_id // Some results might have job_id
-        }));
+        const documents = results.map(result => {
+          // Check if redlines were actually generated
+          const hasRedlines = !!(result.redlined_document_s3_key || result.redlined_document);
+          const conflictsCount = result.conflicts_count || result.conflicts_found || 0;
+          const hasAnalysisId = !!result.analysis_id;
+          
+          // Determine actual status based on completion criteria:
+          // 1. Completed: Has redlines OR (no conflicts AND has analysis_id)
+          // 2. Failed: Has conflicts but no redlines (redline generation failed)
+          // 3. Unknown: No analysis_id (might be processing or error)
+          let docStatus = 'unknown';
+          if (hasRedlines) {
+            // Redlines were generated - definitely completed
+            docStatus = 'completed';
+          } else if (conflictsCount === 0 && hasAnalysisId) {
+            // No conflicts case - valid completion (no redlines needed)
+            docStatus = 'completed';
+          } else if (conflictsCount > 0 && hasAnalysisId && !hasRedlines) {
+            // Has conflicts but no redlines - redline generation failed
+            docStatus = 'failed';
+          } else if (result.status) {
+            // Use status from backend if available
+            docStatus = result.status;
+          }
+          
+          return {
+            documentName: extractDocumentName(result.document_s3_key || ''),
+            status: docStatus,
+            hasRedlines: hasRedlines,
+            conflictsFound: conflictsCount,
+            updatedAt: result.updated_at || result.timestamp,
+            jobId: result.analysis_id,
+            redlinedDocumentS3Key: result.redlined_document_s3_key || result.redlined_document
+          };
+        });
         
         // Check for active jobs - look for job_ids in the current session's processing state
         // We'll track active jobs from window state or poll them separately
@@ -375,9 +402,18 @@ const SessionSidebar = ({
     
     // Check for completed documents
     if (status.documents.length > 0) {
-      const completedDocs = status.documents.filter(d => d.status === 'completed');
+      // Completed: has redlines OR (no conflicts AND has analysis)
+      const completedDocs = status.documents.filter(d => 
+        d.status === 'completed'
+      );
       if (completedDocs.length > 0) {
         return { type: 'completed', label: 'Complete', color: '#10b981' };
+      }
+      
+      // Check for failed documents (has conflicts but no redlines)
+      const failedDocs = status.documents.filter(d => d.status === 'failed');
+      if (failedDocs.length > 0) {
+        return { type: 'failed', label: 'Failed', color: '#ef4444' };
       }
     }
     
