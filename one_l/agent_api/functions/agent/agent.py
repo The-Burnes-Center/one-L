@@ -149,11 +149,11 @@ class AgentConstruct(Construct):
         Returns a dictionary defining available functions and their routing configurations.
         """
         
-        # If Step Functions is enabled, return state machine route
+        # If Step Functions is enabled, use the wrapper Lambda that returns job_id immediately
         if self.stepfunctions_construct:
             return {
                 "review": {
-                    "state_machine": self.stepfunctions_construct.state_machine,
+                    "function": self.stepfunctions_construct.start_workflow_fn,
                     "path": "review",
                     "methods": ["POST"],
                     "description": "AI-powered document review with Step Functions workflow"

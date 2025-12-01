@@ -61,6 +61,10 @@ class StepFunctionsConstruct(Construct):
         
         # Create Step Functions state machine
         self.create_state_machine()
+        
+        # Create the wrapper Lambda that starts the workflow
+        # This is used by API Gateway to return job_id immediately
+        self.create_start_workflow_lambda()
     
     def create_lambda_functions(self):
         """Create all Lambda functions for Step Functions workflow."""
@@ -540,6 +544,42 @@ class StepFunctionsConstruct(Construct):
                 destination=state_machine_log_group,
                 level=sfn.LogLevel.ALL
             )
+        )
+    
+    def create_start_workflow_lambda(self):
+        """
+        Create the wrapper Lambda that starts the workflow.
+        This is the entry point from API Gateway - it generates job_id upfront
+        and returns it immediately so frontend can poll for results.
+        """
+        
+        # Create role for the start workflow Lambda
+        role = self.iam_roles.create_agent_role(
+            "StartWorkflow",
+            self.buckets,
+            self.analysis_table,
+            self.opensearch_collection
+        )
+        
+        # Grant permission to start Step Functions execution
+        self.state_machine.grant_start_execution(role)
+        
+        # Environment variables
+        env = {
+            "ANALYSES_TABLE_NAME": self.analysis_table.table_name,
+            "STATE_MACHINE_ARN": self.state_machine.state_machine_arn,
+            "REGION": Stack.of(self).region,
+            "LOG_LEVEL": "INFO"
+        }
+        
+        # Create the Lambda
+        self.start_workflow_fn = self._create_lambda(
+            "StartWorkflow",
+            "start_workflow/lambda_function.lambda_handler",
+            role,
+            env,
+            timeout=Duration.seconds(30),
+            memory_size=512
         )
     
     def update_knowledge_base_id(self, knowledge_base_id: str):
