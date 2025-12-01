@@ -134,15 +134,16 @@ const SessionSidebar = ({
           };
         });
         
-        // Process active jobs from API response
+        // Process active jobs from API response (includes both processing and failed jobs)
         // This ensures we detect active jobs even after page refresh
         const activeJobs = activeJobsFromAPI.map(job => ({
           jobId: job.job_id || job.analysis_id,
-          status: job.status || 'processing',
+          status: job.status || 'processing', // Can be 'processing', 'failed', 'completed'
           progress: job.progress || 0,
           stage: job.stage || 'initialized',
           documentS3Key: job.document_s3_key,
-          updatedAt: job.updated_at || job.timestamp
+          updatedAt: job.updated_at || job.timestamp,
+          errorMessage: job.stage_message || job.error_message
         }));
         
         // Also check window state for any jobs that might not be in DynamoDB yet (race condition)
@@ -226,12 +227,14 @@ const SessionSidebar = ({
             
             if (jobIndex >= 0) {
               updated[session_id].activeJobs[jobIndex] = jobStatus;
-            } else if (status === 'processing') {
+            } else {
+              // Add job if not already tracked (for both processing and failed)
               updated[session_id].activeJobs.push(jobStatus);
             }
             
-            // If completed or failed, remove from active jobs and reload documents
-            if (status === 'completed' || status === 'failed') {
+            // If completed, remove from active jobs and reload documents
+            // Keep failed jobs visible so user can see the failure
+            if (status === 'completed') {
               updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.jobId !== jobId);
               // Reload session statuses to get updated document list (use ref to avoid dependency)
               setTimeout(() => loadSessionStatusesRef.current(), 1000);
@@ -272,11 +275,13 @@ const SessionSidebar = ({
     
     const pollInterval = setInterval(() => {
       // Get active job IDs from current state (use ref to avoid stale closure)
+      // Include both processing and failed jobs (failed jobs should still be visible)
       const activeJobIds = [];
       Object.values(sessionStatusesRef.current).forEach(status => {
         if (status.activeJobs && status.activeJobs.length > 0) {
           status.activeJobs.forEach(job => {
-            if (job.status === 'processing' && job.jobId) {
+            // Poll processing jobs for updates, and failed jobs to ensure they're displayed
+            if ((job.status === 'processing' || job.status === 'failed') && job.jobId) {
               activeJobIds.push(job.jobId);
             }
           });
@@ -376,16 +381,28 @@ const SessionSidebar = ({
 
   const getSessionDisplayName = (session) => {
     const status = sessionStatuses[session.session_id];
-    if (!status || status.documents.length === 0) {
+    if (!status) {
       return session.title || 'New Session';
     }
     
-    // Show first document name
-    const firstDoc = status.documents[0];
-    if (firstDoc.documentName) {
-      return firstDoc.documentName.length > 30 
-        ? firstDoc.documentName.substring(0, 30) + '...'
-        : firstDoc.documentName;
+    // Since each session has only 1 job, check activeJobs first
+    // Active jobs include both processing and failed jobs
+    if (status.activeJobs && status.activeJobs.length > 0) {
+      const job = status.activeJobs[0]; // Get the first (and only) job
+      if (job.documentS3Key) {
+        const docName = extractDocumentName(job.documentS3Key);
+        return docName.length > 30 ? docName.substring(0, 30) + '...' : docName;
+      }
+    }
+    
+    // Fallback to completed documents
+    if (status.documents && status.documents.length > 0) {
+      const firstDoc = status.documents[0];
+      if (firstDoc.documentName) {
+        return firstDoc.documentName.length > 30 
+          ? firstDoc.documentName.substring(0, 30) + '...'
+          : firstDoc.documentName;
+      }
     }
     
     return session.title || 'New Session';
@@ -395,15 +412,24 @@ const SessionSidebar = ({
     const status = sessionStatuses[session.session_id];
     if (!status) return { type: 'empty', label: 'Empty', color: '#666' };
     
-    // Check for active processing
-    const activeJob = status.activeJobs?.find(j => j.status === 'processing');
-    if (activeJob) {
-      return { 
-        type: 'processing', 
-        label: `${activeJob.progress}%`, 
-        color: '#3b82f6',
-        progress: activeJob.progress
-      };
+    // Check activeJobs first (since each session has only 1 job)
+    if (status.activeJobs && status.activeJobs.length > 0) {
+      const job = status.activeJobs[0]; // Get the first (and only) job
+      
+      // Check for failed job
+      if (job.status === 'failed') {
+        return { type: 'failed', label: 'Failed', color: '#ef4444' };
+      }
+      
+      // Check for processing job
+      if (job.status === 'processing') {
+        return { 
+          type: 'processing', 
+          label: `${job.progress || 0}%`, 
+          color: '#3b82f6',
+          progress: job.progress || 0
+        };
+      }
     }
     
     // Check for failed documents
@@ -420,12 +446,6 @@ const SessionSidebar = ({
       );
       if (completedDocs.length > 0) {
         return { type: 'completed', label: 'Complete', color: '#10b981' };
-      }
-      
-      // Check for failed documents (has conflicts but no redlines)
-      const failedDocs = status.documents.filter(d => d.status === 'failed');
-      if (failedDocs.length > 0) {
-        return { type: 'failed', label: 'Failed', color: '#ef4444' };
       }
     }
     
