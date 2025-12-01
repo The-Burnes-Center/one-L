@@ -122,9 +122,54 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None) -> boo
         timestamp: The timestamp (sort key)
         result_data: Optional result data (redlined_document, analysis, etc.)
     """
-    extra = result_data or {}
-    extra['completed_at'] = datetime.utcnow().isoformat()
-    return update_progress(job_id, timestamp, 'completed', 'Document review complete!', extra)
+    try:
+        table_name = os.environ.get('ANALYSES_TABLE_NAME')
+        if not table_name:
+            logger.warning("ANALYSES_TABLE_NAME not set, skipping completion mark")
+            return False
+        
+        table = dynamodb.Table(table_name)
+        
+        extra = result_data or {}
+        extra['completed_at'] = datetime.utcnow().isoformat()
+        
+        # CRITICAL: Update both 'status' and 'stage' to 'completed'
+        # job_status Lambda checks 'status' field, not just 'stage'
+        update_expr = 'SET #status = :status, stage = :stage, progress = :progress, updated_at = :updated_at'
+        expr_values = {
+            ':status': 'completed',  # CRITICAL: Set status field
+            ':stage': 'completed',
+            ':progress': 100,
+            ':updated_at': datetime.utcnow().isoformat()
+        }
+        
+        # Add stage message
+        update_expr += ', stage_message = :message'
+        expr_values[':message'] = 'Document review complete!'
+        
+        # Add result data
+        if extra:
+            for key, value in extra.items():
+                safe_key = key.replace('-', '_')
+                update_expr += f', {safe_key} = :{safe_key}'
+                expr_values[f':{safe_key}'] = value
+        
+        table.update_item(
+            Key={
+                'analysis_id': job_id,
+                'timestamp': timestamp
+            },
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames={'#status': 'status'},
+            ExpressionAttributeValues=expr_values
+        )
+        
+        logger.info(f"Marked job {job_id} as completed (status=completed, stage=completed, progress=100%)")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to mark job as completed: {e}")
+        return False
 
 
 def mark_failed(job_id: str, timestamp: str, error_message: str) -> bool:

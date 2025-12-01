@@ -70,9 +70,10 @@ def lambda_handler(event, context):
         })
         
         # Call redline_document
+        # CRITICAL: Function signature expects 'analysis_data', not 'analysis'
         logger.info(f"Generating redline for {len(conflicts_list)} conflicts")
         result = redline_document(
-            analysis=analysis_json,
+            analysis_data=analysis_json,  # Fixed: was 'analysis=', should be 'analysis_data='
             document_s3_key=document_s3_key,
             bucket_type="user_documents",
             session_id=session_id,

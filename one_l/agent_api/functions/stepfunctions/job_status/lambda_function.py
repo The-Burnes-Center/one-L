@@ -277,16 +277,46 @@ def lambda_handler(event, context):
             status = 'failed'
             logger.info(f"Job {job_id} status determined from Step Functions: FAILED (sfn_status={sfn_status})")
         elif sfn_status == 'SUCCEEDED':
-            # Step Functions succeeded - check if DynamoDB has results
-            if item_status == 'completed' and item.get('redlined_document'):
-                current_stage = 'completed'
-                status = 'completed'
-            else:
-                # Step Functions succeeded but DynamoDB not updated yet - mark as completed
-                # This handles the case where Step Functions finished but DynamoDB update is delayed
-                current_stage = 'completed'
-                status = 'completed'
-                logger.info(f"Job {job_id} status determined from Step Functions: SUCCEEDED (DynamoDB may be delayed)")
+            # Step Functions succeeded - mark as completed
+            # Even if DynamoDB hasn't been updated yet, Step Functions completion is definitive
+            current_stage = 'completed'
+            status = 'completed'
+            
+            # CRITICAL: Update DynamoDB to reflect completion if not already updated
+            if item_status != 'completed':
+                try:
+                    item_timestamp = item.get('timestamp')
+                    if item_timestamp:
+                        table.update_item(
+                            Key={
+                                'analysis_id': job_id,
+                                'timestamp': item_timestamp
+                            },
+                            UpdateExpression='SET #status = :status, stage = :stage, progress = :progress, updated_at = :updated',
+                            ExpressionAttributeNames={'#status': 'status'},
+                            ExpressionAttributeValues={
+                                ':status': 'completed',
+                                ':stage': 'completed',
+                                ':progress': 100,
+                                ':updated': datetime.utcnow().isoformat()
+                            }
+                        )
+                        logger.info(f"Updated DynamoDB for job {job_id} to completed status based on Step Functions SUCCEEDED")
+                        
+                        # Re-read the item to get updated values
+                        updated_response = table.get_item(
+                            Key={
+                                'analysis_id': job_id,
+                                'timestamp': item_timestamp
+                            }
+                        )
+                        if updated_response.get('Item'):
+                            item = updated_response['Item']
+                            item_status = 'completed'
+                except Exception as update_error:
+                    logger.warning(f"Could not update DynamoDB with completed status: {update_error}")
+            
+            logger.info(f"Job {job_id} status determined from Step Functions: SUCCEEDED -> COMPLETED")
         elif sfn_status == 'RUNNING':
             # Step Functions is still running - use DynamoDB status/stage for progress
             if item_status == 'failed':

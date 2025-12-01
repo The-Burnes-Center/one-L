@@ -36,11 +36,25 @@ def lambda_handler(event, context):
         document_s3_key = event.get('document_s3_key')
         redlined_s3_key = event.get('redlined_s3_key')
         
-        if not analysis_json or not session_id or not user_id:
-            raise ValueError("analysis_json, session_id, and user_id are required")
+        logger.info(f"save_results received event keys: {list(event.keys())}")
+        logger.info(f"save_results - analysis_json type: {type(analysis_json)}, session_id: {session_id}, user_id: {user_id}")
         
-        # Convert to string if needed
+        if not analysis_json or not session_id or not user_id:
+            raise ValueError(f"analysis_json, session_id, and user_id are required. Got analysis_json={bool(analysis_json)}, session_id={session_id}, user_id={user_id}")
+        
+        # Convert conflicts_result (dict) to analysis_json (string) if needed
         if isinstance(analysis_json, dict):
+            # If it's a ConflictDetectionOutput dict, convert to analysis JSON format
+            if 'conflicts' in analysis_json:
+                analysis_json = json.dumps({
+                    "explanation": analysis_json.get('explanation', ''),
+                    "conflicts": analysis_json.get('conflicts', [])
+                })
+            else:
+                # Otherwise just stringify it
+                analysis_json = json.dumps(analysis_json)
+        elif not isinstance(analysis_json, str):
+            # Convert other types to string
             analysis_json = json.dumps(analysis_json)
         
         # Call save_analysis_to_dynamodb
