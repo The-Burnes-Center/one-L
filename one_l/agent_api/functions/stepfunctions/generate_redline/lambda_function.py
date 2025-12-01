@@ -37,7 +37,7 @@ def lambda_handler(event, context):
         user_id = event.get('user_id')
         
         # Get conflicts from the conflicts_result (set by result_path in Step Functions)
-        # This contains the output from analyze_document_with_kb or merge_chunk_results
+        # This contains the output from analyze_with_kb (single docs) or merge_chunk_results (chunked docs)
         conflicts_result = event.get('conflicts_result', {})
         
         # Also try legacy format
