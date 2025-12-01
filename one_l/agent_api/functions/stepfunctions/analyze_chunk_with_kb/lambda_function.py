@@ -110,10 +110,8 @@ def lambda_handler(event, context):
             logger.error(f"Pydantic validation failed: {e.errors()}")
             raise ValueError(f"Invalid response structure: {e}")
         
-        return {
-            "statusCode": 200,
-            "body": validated_output.model_dump_json()
-        }
+        # Return plain result
+        return validated_output.model_dump()
         
     except Exception as e:
         logger.error(f"Error in analyze_chunk_with_kb: {e}")

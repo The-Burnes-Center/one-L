@@ -94,10 +94,8 @@ def lambda_handler(event, context):
         
         logger.info(f"KB query {query_id} completed: {len(results)} results")
         
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        # Return plain result
+        return output.model_dump()
         
     except Exception as e:
         logger.error(f"Error in retrieve_kb_query: {e}")
@@ -109,8 +107,5 @@ def lambda_handler(event, context):
             success=False,
             error=str(e)
         )
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        return output.model_dump()
 

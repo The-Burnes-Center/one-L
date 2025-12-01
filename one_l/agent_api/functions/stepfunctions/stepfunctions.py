@@ -283,11 +283,20 @@ class StepFunctionsConstruct(Construct):
             result_path="$.error"
         )
         
-        # Split document
+        # =====================================================
+        # STEP FUNCTIONS DATA FLOW (AWS Best Practices):
+        # - Use result_path to MERGE Lambda output with state
+        # - Use payload to explicitly SELECT what Lambda receives
+        # - Context (job_id, session_id, etc.) flows through entire workflow
+        # - Each Lambda output goes to a specific path ($.split_result, etc.)
+        # =====================================================
+        
+        # Split document - merge result, preserve context
         split_document = tasks.LambdaInvoke(
             self, "SplitDocument",
             lambda_function=self.split_document_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.split_result",
             retry_on_service_exceptions=True
         )
         split_document.add_retry(
@@ -307,11 +316,12 @@ class StepFunctionsConstruct(Construct):
         
         # ===== CHUNKED PATH (chunks > 1) =====
         
-        # Analyze chunk structure (gets queries for each chunk)
+        # Analyze chunk structure
         analyze_chunk_structure = tasks.LambdaInvoke(
             self, "AnalyzeChunkStructure",
             lambda_function=self.analyze_chunk_structure_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.structure_result",
             retry_on_service_exceptions=True
         )
         analyze_chunk_structure.add_retry(
@@ -324,7 +334,7 @@ class StepFunctionsConstruct(Construct):
         # Retrieve KB queries in parallel
         retrieve_kb_queries_map = sfn.Map(
             self, "RetrieveKBQueriesParallel",
-            items_path="$.queries",
+            items_path="$.structure_result.queries",
             max_concurrency=20,
             result_path="$.kb_results"
         )
@@ -332,7 +342,7 @@ class StepFunctionsConstruct(Construct):
         retrieve_kb_query = tasks.LambdaInvoke(
             self, "RetrieveKBQuery",
             lambda_function=self.retrieve_kb_query_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
             retry_on_service_exceptions=True
         )
         retrieve_kb_query.add_retry(
@@ -348,7 +358,8 @@ class StepFunctionsConstruct(Construct):
         analyze_chunk_with_kb = tasks.LambdaInvoke(
             self, "AnalyzeChunkWithKB",
             lambda_function=self.analyze_chunk_with_kb_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.analysis_result",
             retry_on_service_exceptions=True
         )
         analyze_chunk_with_kb.add_retry(
@@ -364,11 +375,27 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Process all chunks in parallel
+        # Use parameters to pass both chunk item AND parent context to each iteration
         analyze_chunks_map = sfn.Map(
             self, "AnalyzeChunksParallel",
-            items_path="$.chunks",
+            items_path="$.split_result.chunks",
             max_concurrency=10,
-            result_path="$.chunk_analyses"
+            result_path="$.chunk_analyses",
+            parameters={
+                # Chunk-specific data (from the iterated item)
+                "chunk_s3_key.$": "$$.Map.Item.Value.s3_key",
+                "chunk_num.$": "$$.Map.Item.Value.chunk_num",
+                "start_char.$": "$$.Map.Item.Value.start_char",
+                "end_char.$": "$$.Map.Item.Value.end_char",
+                # Context from parent state (preserved)
+                "bucket_name.$": "$.split_result.bucket_name",
+                "total_chunks.$": "$.split_result.chunk_count",
+                "job_id.$": "$.job_id",
+                "session_id.$": "$.session_id",
+                "user_id.$": "$.user_id",
+                "document_s3_key.$": "$.document_s3_key",
+                "terms_profile.$": "$.terms_profile"
+            }
         )
         
         analyze_chunks_map.item_processor(chunk_workflow)
@@ -377,7 +404,8 @@ class StepFunctionsConstruct(Construct):
         merge_chunk_results = tasks.LambdaInvoke(
             self, "MergeChunkResults",
             lambda_function=self.merge_chunk_results_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.conflicts_result",
             retry_on_service_exceptions=True
         )
         merge_chunk_results.add_retry(
@@ -392,7 +420,8 @@ class StepFunctionsConstruct(Construct):
         analyze_doc_structure = tasks.LambdaInvoke(
             self, "AnalyzeDocumentStructure",
             lambda_function=self.analyze_document_structure_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.structure_result",
             retry_on_service_exceptions=True
         )
         analyze_doc_structure.add_retry(
@@ -405,7 +434,7 @@ class StepFunctionsConstruct(Construct):
         # Retrieve KB queries in parallel
         retrieve_doc_kb_queries_map = sfn.Map(
             self, "RetrieveDocKBQueriesParallel",
-            items_path="$.queries",
+            items_path="$.structure_result.queries",
             max_concurrency=20,
             result_path="$.kb_results"
         )
@@ -413,7 +442,7 @@ class StepFunctionsConstruct(Construct):
         retrieve_doc_kb_query = tasks.LambdaInvoke(
             self, "RetrieveDocKBQuery",
             lambda_function=self.retrieve_kb_query_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
             retry_on_service_exceptions=True
         )
         retrieve_doc_kb_query.add_retry(
@@ -429,7 +458,8 @@ class StepFunctionsConstruct(Construct):
         analyze_document_with_kb = tasks.LambdaInvoke(
             self, "AnalyzeDocumentWithKB",
             lambda_function=self.analyze_document_with_kb_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.conflicts_result",
             retry_on_service_exceptions=True
         )
         analyze_document_with_kb.add_retry(
@@ -450,7 +480,8 @@ class StepFunctionsConstruct(Construct):
         generate_redline = tasks.LambdaInvoke(
             self, "GenerateRedline",
             lambda_function=self.generate_redline_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.redline_result",
             retry_on_service_exceptions=True
         )
         generate_redline.add_retry(
@@ -464,7 +495,8 @@ class StepFunctionsConstruct(Construct):
         save_results = tasks.LambdaInvoke(
             self, "SaveResults",
             lambda_function=self.save_results_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.save_result",
             retry_on_service_exceptions=True
         )
         save_results.add_retry(
@@ -478,7 +510,8 @@ class StepFunctionsConstruct(Construct):
         cleanup_session = tasks.LambdaInvoke(
             self, "CleanupSession",
             lambda_function=self.cleanup_session_fn,
-            output_path="$.Payload",
+            payload_response_only=True,
+            result_path="$.cleanup_result",
             retry_on_service_exceptions=True
         )
         cleanup_session.add_retry(
@@ -513,11 +546,12 @@ class StepFunctionsConstruct(Construct):
         final_steps = generate_redline.next(save_results).next(cleanup_session)
         
         # Complete workflow definition
+        # Note: split_result.chunk_count comes from split_document Lambda
         definition = initialize_job.next(
             split_document.next(
                 check_chunk_count
                     .when(
-                        sfn.Condition.number_greater_than("$.chunk_count", 1),
+                        sfn.Condition.number_greater_than("$.split_result.chunk_count", 1),
                         chunked_path.next(final_steps)
                     )
                     .otherwise(

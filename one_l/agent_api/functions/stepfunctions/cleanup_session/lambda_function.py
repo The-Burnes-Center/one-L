@@ -39,10 +39,8 @@ def lambda_handler(event, context):
             message=f"Session {session_id} cleaned up successfully"
         )
         
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        # Return plain result
+        return output.model_dump()
         
     except Exception as e:
         logger.error(f"Error in cleanup_session: {e}")
@@ -50,8 +48,5 @@ def lambda_handler(event, context):
             success=False,
             message=f"Cleanup failed: {str(e)}"
         )
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        return output.model_dump()
 

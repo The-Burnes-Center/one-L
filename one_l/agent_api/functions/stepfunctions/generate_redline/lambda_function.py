@@ -18,21 +18,29 @@ def lambda_handler(event, context):
     Generate redlined document from conflicts.
     
     Args:
-        event: Lambda event with conflicts_json, document_s3_key, bucket_name, session_id, user_id
+        event: Lambda event with conflicts_result (from analyze step), document_s3_key, session_id, user_id
         context: Lambda context
         
     Returns:
         RedlineOutput with success, redlined_document_s3_key, error
     """
     try:
-        conflicts_json = event.get('conflicts_json')
+        # Get workflow context
         document_s3_key = event.get('document_s3_key')
-        bucket_name = event.get('bucket_name')
         session_id = event.get('session_id')
         user_id = event.get('user_id')
         
+        # Get conflicts from the conflicts_result (set by result_path in Step Functions)
+        # This contains the output from analyze_document_with_kb or merge_chunk_results
+        conflicts_result = event.get('conflicts_result', {})
+        
+        # Also try legacy format
+        conflicts_json = event.get('conflicts_json') or conflicts_result
+        
+        logger.info(f"generate_redline received event keys: {list(event.keys())}")
+        
         if not conflicts_json or not document_s3_key:
-            raise ValueError("conflicts_json and document_s3_key are required")
+            raise ValueError(f"conflicts and document_s3_key are required. Got conflicts_json={bool(conflicts_json)}, document_s3_key={document_s3_key}")
         
         # Parse conflicts
         if isinstance(conflicts_json, str):
@@ -81,10 +89,8 @@ def lambda_handler(event, context):
                 error=error_msg
             )
         
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        # Return plain result (Step Functions merges via result_path)
+        return output.model_dump()
         
     except Exception as e:
         logger.error(f"Error in generate_redline: {e}")
@@ -93,8 +99,5 @@ def lambda_handler(event, context):
             redlined_document_s3_key=None,
             error=str(e)
         )
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        return output.model_dump()
 

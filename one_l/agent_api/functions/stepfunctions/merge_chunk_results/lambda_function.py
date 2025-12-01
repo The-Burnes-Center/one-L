@@ -100,10 +100,8 @@ def lambda_handler(event, context):
         
         logger.info(f"Merged {len(deduplicated_conflicts)} total conflicts from {len(chunk_results)} chunks")
         
-        return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
-        }
+        # Return plain result
+        return output.model_dump()
         
     except Exception as e:
         logger.error(f"Error in merge_chunk_results: {e}")

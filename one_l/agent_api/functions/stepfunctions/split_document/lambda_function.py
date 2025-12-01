@@ -8,7 +8,6 @@ import boto3
 import logging
 import os
 import io
-from agent_api.agent.prompts.models import DocumentSplitOutput
 from agent_api.agent.model import _split_document_into_chunks
 
 logger = logging.getLogger()
@@ -21,19 +20,27 @@ def lambda_handler(event, context):
     Split document into chunks using character-based chunking.
     
     Args:
-        event: Lambda event with document_s3_key, bucket_name, session_id
+        event: Lambda event with document_s3_key, bucket_name, session_id (+ workflow context)
         context: Lambda context
         
     Returns:
-        DocumentSplitOutput with chunk_count and chunks metadata
+        Workflow context + DocumentSplitOutput with chunk_count and chunks metadata
     """
     try:
+        # Extract workflow context (passed from initialize_job)
+        job_id = event.get('job_id')
+        timestamp = event.get('timestamp')
+        session_id = event.get('session_id')
+        user_id = event.get('user_id')
         document_s3_key = event.get('document_s3_key')
         bucket_name = event.get('bucket_name')
-        session_id = event.get('session_id')
+        bucket_type = event.get('bucket_type')
+        terms_profile = event.get('terms_profile')
         
         if not document_s3_key or not bucket_name:
             raise ValueError("document_s3_key and bucket_name are required")
+        
+        logger.info(f"Splitting document for job {job_id}: {document_s3_key}")
         
         # Download document from S3
         response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
@@ -77,17 +84,14 @@ def lambda_handler(event, context):
                 's3_key': chunk_key
             })
         
-        logger.info(f"Split document into {len(chunks)} chunks")
+        logger.info(f"Split document into {len(chunk_s3_keys)} chunks for job {job_id}")
         
-        # Create validated output
-        output = DocumentSplitOutput(
-            chunk_count=len(chunks),
-            chunks=chunk_s3_keys
-        )
-        
+        # Return just split results - context is preserved via result_path merging
+        # Step Functions will store this at $.split_result while keeping original context
         return {
-            "statusCode": 200,
-            "body": output.model_dump_json()
+            "chunk_count": len(chunk_s3_keys),
+            "chunks": chunk_s3_keys,
+            "bucket_name": bucket_name  # Include bucket_name for downstream chunk processing
         }
         
     except Exception as e:
