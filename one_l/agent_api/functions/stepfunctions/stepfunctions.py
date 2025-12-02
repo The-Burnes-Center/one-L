@@ -94,7 +94,7 @@ class StepFunctionsConstruct(Construct):
             "initialize_job/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.split_document_fn = self._create_lambda(
@@ -102,7 +102,7 @@ class StepFunctionsConstruct(Construct):
             "split_document/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.minutes(5)
+            timeout=Duration.minutes(15)
         )
         
         # Unified lambda functions (replace duplicate chunk/document functions)
@@ -119,7 +119,7 @@ class StepFunctionsConstruct(Construct):
             "retrieve_all_kb_queries/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.minutes(5)  # Longer timeout for retrieving all queries
+            timeout=Duration.minutes(15)  # Longer timeout for retrieving all queries
         )
         
         self.analyze_with_kb_fn = self._create_lambda(
@@ -143,7 +143,7 @@ class StepFunctionsConstruct(Construct):
             "generate_redline/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.minutes(10)
+            timeout=Duration.minutes(15)
         )
         
         self.save_results_fn = self._create_lambda(
@@ -151,7 +151,7 @@ class StepFunctionsConstruct(Construct):
             "save_results/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.cleanup_session_fn = self._create_lambda(
@@ -159,7 +159,7 @@ class StepFunctionsConstruct(Construct):
             "cleanup_session/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.store_large_results_fn = self._create_lambda(
@@ -167,7 +167,7 @@ class StepFunctionsConstruct(Construct):
             "store_large_results/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.handle_error_fn = self._create_lambda(
@@ -175,7 +175,7 @@ class StepFunctionsConstruct(Construct):
             "handle_error/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
     
     def _create_lambda(
@@ -335,6 +335,11 @@ class StepFunctionsConstruct(Construct):
             max_attempts=2,
             backoff_rate=2.0
         )
+        analyze_structure.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
+        )
         
         # Retrieve all KB queries in single lambda (replaces parallel Map state)
         # Loads structure results from S3, retrieves queries, stores KB results in S3
@@ -358,6 +363,11 @@ class StepFunctionsConstruct(Construct):
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
+        )
+        retrieve_all_kb_queries.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
         )
         
         # Unified analyze with KB (handles both chunk and document)
@@ -389,6 +399,11 @@ class StepFunctionsConstruct(Construct):
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
+        )
+        analyze_with_kb.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
         )
         
         # Unified workflow: structure -> retrieve all queries -> analysis
@@ -442,6 +457,17 @@ class StepFunctionsConstruct(Construct):
                 "storage_type": "chunk_analyses"  # Indicate this is chunk analyses, not KB results
             })
         )
+        store_chunk_analyses.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
+        )
+        store_chunk_analyses.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
+        )
         
         # Merge chunk results - will load from S3 if stored
         merge_chunk_results = tasks.LambdaInvoke(
@@ -463,6 +489,11 @@ class StepFunctionsConstruct(Construct):
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
+        )
+        merge_chunk_results.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
         )
         
         # ===== COMMON FINAL STEPS =====
@@ -642,7 +673,7 @@ class StepFunctionsConstruct(Construct):
             "start_workflow/lambda_function.lambda_handler",
             role,
             env,
-            timeout=Duration.seconds(30),
+            timeout=Duration.minutes(2),
             memory_size=512
         )
         
@@ -697,7 +728,7 @@ class StepFunctionsConstruct(Construct):
             "job_status/lambda_function.lambda_handler",
             role,
             env,
-            timeout=Duration.seconds(10),
+            timeout=Duration.minutes(2),
             memory_size=256
         )
     
