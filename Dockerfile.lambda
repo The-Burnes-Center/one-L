@@ -51,7 +51,7 @@ COPY one_l/agent_api/functions/stepfunctions/split_document/ ./python/split_docu
 # Unified functions (replaced duplicate chunk/document functions)
 COPY one_l/agent_api/functions/stepfunctions/analyze_structure/ ./python/analyze_structure/
 COPY one_l/agent_api/functions/stepfunctions/retrieve_all_kb_queries/ ./python/retrieve_all_kb_queries/
-COPY one_l/agent_api/functions/stepfunctions/analyze_with_kb/ ./python/analyze_with_kb/
+COPY one_l/agent_api/functions/stepfunctions/identify_conflicts/ ./python/identify_conflicts/
 COPY one_l/agent_api/functions/stepfunctions/merge_chunk_results/ ./python/merge_chunk_results/
 COPY one_l/agent_api/functions/stepfunctions/generate_redline/ ./python/generate_redline/
 COPY one_l/agent_api/functions/stepfunctions/save_results/ ./python/save_results/

@@ -217,6 +217,6 @@ def lambda_handler(event, context):
             raise  # Fail fast if S3 storage fails
         
     except Exception as e:
-        logger.error(f"Error in analyze_with_kb: {e}")
+        logger.error(f"Error in identify_conflicts: {e}")
         raise
 

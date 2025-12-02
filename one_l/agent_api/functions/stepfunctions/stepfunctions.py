@@ -122,9 +122,9 @@ class StepFunctionsConstruct(Construct):
             timeout=Duration.minutes(15)  # Longer timeout for retrieving all queries
         )
         
-        self.analyze_with_kb_fn = self._create_lambda(
-            "AnalyzeWithKB",
-            "analyze_with_kb/lambda_function.lambda_handler",
+        self.identify_conflicts_fn = self._create_lambda(
+            "IdentifyConflicts",
+            "identify_conflicts/lambda_function.lambda_handler",
             role,
             common_env,
             timeout=Duration.minutes(15)
@@ -362,11 +362,11 @@ class StepFunctionsConstruct(Construct):
         )
         # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
-        # Unified analyze with KB (handles both chunk and document)
+        # Unified identify conflicts (handles both chunk and document)
         # Always stores result in S3, returns only S3 reference
-        analyze_with_kb = tasks.LambdaInvoke(
-            self, "AnalyzeWithKB",
-            lambda_function=self.analyze_with_kb_fn,
+        identify_conflicts = tasks.LambdaInvoke(
+            self, "IdentifyConflicts",
+            lambda_function=self.identify_conflicts_fn,
             payload_response_only=True,
             result_path="$.analysis_result",  # Contains S3 reference
             retry_on_service_exceptions=True,
@@ -386,7 +386,7 @@ class StepFunctionsConstruct(Construct):
                 "timestamp": sfn.JsonPath.string_at("$.timestamp")
             })
         )
-        analyze_with_kb.add_retry(
+        identify_conflicts.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             interval=Duration.seconds(2),
             max_attempts=2,
@@ -394,9 +394,9 @@ class StepFunctionsConstruct(Construct):
         )
         # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
-        # Unified workflow: structure -> retrieve all queries -> analysis
+        # Unified workflow: structure -> retrieve all queries -> identify conflicts
         unified_workflow = analyze_structure.next(
-            retrieve_all_kb_queries.next(analyze_with_kb)
+            retrieve_all_kb_queries.next(identify_conflicts)
         )
         
         # Process all chunks in parallel using unified workflow
