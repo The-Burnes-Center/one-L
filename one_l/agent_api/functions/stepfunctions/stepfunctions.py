@@ -335,11 +335,7 @@ class StepFunctionsConstruct(Construct):
             max_attempts=2,
             backoff_rate=2.0
         )
-        analyze_structure.add_catch(
-            handle_error,
-            errors=["States.ALL"],
-            result_path="$.error"
-        )
+        # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
         # Retrieve all KB queries in single lambda (replaces parallel Map state)
         # Loads structure results from S3, retrieves queries, stores KB results in S3
@@ -364,11 +360,7 @@ class StepFunctionsConstruct(Construct):
             max_attempts=2,
             backoff_rate=2.0
         )
-        retrieve_all_kb_queries.add_catch(
-            handle_error,
-            errors=["States.ALL"],
-            result_path="$.error"
-        )
+        # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
         # Unified analyze with KB (handles both chunk and document)
         # Always stores result in S3, returns only S3 reference
@@ -400,11 +392,7 @@ class StepFunctionsConstruct(Construct):
             max_attempts=2,
             backoff_rate=2.0
         )
-        analyze_with_kb.add_catch(
-            handle_error,
-            errors=["States.ALL"],
-            result_path="$.error"
-        )
+        # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
         # Unified workflow: structure -> retrieve all queries -> analysis
         unified_workflow = analyze_structure.next(
@@ -439,7 +427,16 @@ class StepFunctionsConstruct(Construct):
             }
         )
         
+        # Set item processor first
         analyze_chunks_map.item_processor(unified_workflow)
+        
+        # Add error handling at Map level (best practice per AWS docs)
+        # Errors from item processor will be caught here and handled by HandleError Lambda
+        analyze_chunks_map.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
+        )
         
         # CRITICAL: Store chunk_analyses in S3 if too large before merging
         # The Map collects all chunk results into $.chunk_analyses which can exceed 256KB
