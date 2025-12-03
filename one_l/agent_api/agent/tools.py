@@ -3252,14 +3252,14 @@ def _cleanup_session_documents(session_id: str, user_id: str) -> Dict[str, Any]:
             'error': str(e)
         }
 
-
+# TO DO: Change this to the new stack name dynamically instead of hardcoding it
 def _get_function_names() -> Dict[str, str]:
     """Get Lambda function names based on current function naming pattern."""
     current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
     
-    if current_function and 'document-review' in current_function:
-        # Extract stack name: OneLStack-document-review -> OneLStack
-        stack_name = current_function.replace('-document-review', '')
+    if current_function and 'stepfunctions-generateredline' in current_function:
+        # Extract stack name: OneL-DV2-document-review -> OneL-DV2
+        stack_name = current_function.replace('-stepfunctions-generateredline', '')
         
         return {
             'delete_function': f"{stack_name}-delete-from-s3",
@@ -3268,8 +3268,8 @@ def _get_function_names() -> Dict[str, str]:
     else:
         # Fallback: use known stack name
         return {
-            'delete_function': 'OneLStack-delete-from-s3',
-            'sync_function': 'OneLStack-sync-knowledge-base'
+            'delete_function': 'OneL-DV2-delete-from-s3',
+            'sync_function': 'OneL-DV2-sync-knowledge-base'
         }
 
 
