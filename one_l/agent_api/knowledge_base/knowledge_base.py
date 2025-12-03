@@ -163,7 +163,7 @@ class KnowledgeBaseConstruct(Construct):
                 chunking_configuration=bedrock.CfnDataSource.ChunkingConfigurationProperty(
                     chunking_strategy="FIXED_SIZE",
                     fixed_size_chunking_configuration=bedrock.CfnDataSource.FixedSizeChunkingConfigurationProperty(
-                        max_tokens=300,
+                        max_tokens=35000,
                         overlap_percentage=20
                     )
                 )
@@ -191,7 +191,7 @@ class KnowledgeBaseConstruct(Construct):
                 chunking_configuration=bedrock.CfnDataSource.ChunkingConfigurationProperty(
                     chunking_strategy="FIXED_SIZE",
                     fixed_size_chunking_configuration=bedrock.CfnDataSource.FixedSizeChunkingConfigurationProperty(
-                        max_tokens=300,
+                        max_tokens=35000,
                         overlap_percentage=20
                     )
                 )

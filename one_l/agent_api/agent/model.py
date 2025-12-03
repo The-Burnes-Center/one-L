@@ -63,8 +63,8 @@ CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 # After 1M fails, we retry the original Sonnet 4
 ANTHROPIC_BETA_1M = "context-1m-2025-08-07"  # Beta parameter to enable 1M context window
 TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
-THINKING_BUDGET_TOKENS = 16000  # Increased from 4000 for more complex reasoning in document review
-MAX_TOKENS = 32000  # Maximum output tokens - must be greater than THINKING_BUDGET_TOKENS per AWS Bedrock requirements
+THINKING_BUDGET_TOKENS = 32000  # Increased to 32k for more complex reasoning in document review
+MAX_TOKENS = 64000  # Maximum output tokens - must be greater than THINKING_BUDGET_TOKENS per AWS Bedrock requirements
 
 # Graceful queuing configuration for token rate limiting prevention
 MAX_RETRIES = 5
