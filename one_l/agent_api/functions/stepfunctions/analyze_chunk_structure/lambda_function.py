@@ -110,8 +110,6 @@ def lambda_handler(event, context):
         # Update progress (for chunk structure analysis)
         job_id = event.get('job_id')
         timestamp = event.get('timestamp')
-        chunk_num = event.get('chunk_num', 0)
-        total_chunks = event.get('total_chunks', 1)
         if update_progress and job_id and timestamp:
             update_progress(
                 job_id, timestamp, 'analyzing',
