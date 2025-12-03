@@ -1167,13 +1167,16 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             if found_match:
                 para_idx = found_match['para_idx']
                 # Check if this paragraph was already redlined by the same base conflict
+                # Allow different conflicts (different base_conflict_id) in the same paragraph
                 if para_idx in already_redlined_paragraphs:
                     if base_conflict_id in already_redlined_paragraphs[para_idx]:
                         logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
                         remaining_conflicts.append(redline_item)  # Try next tier
                         continue
                     else:
+                        # Different conflict - allow it in the same paragraph
                         already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                        logger.info(f"CONFLICT_MULTIPLE: Adding conflict {base_conflict_id} to paragraph {para_idx} (already has {len(already_redlined_paragraphs[para_idx])-1} other conflict(s))")
                 else:
                     already_redlined_paragraphs[para_idx] = [base_conflict_id]
                 
@@ -2275,7 +2278,11 @@ def _tier5_tokenized_matching(doc, vendor_conflict_text: str, redline_item: Dict
 
 
 def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dict[str, str]):
-    """Apply redline formatting to specific text within a paragraph."""
+    """
+    Apply redline formatting to specific text within a paragraph.
+    Preserves existing formatting and allows multiple conflicts in the same paragraph.
+    Only redlines the specific conflict text, not the whole paragraph.
+    """
     
     try:
         paragraph_text = paragraph.text
@@ -2304,46 +2311,112 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
                     # This is approximate - we'll highlight a reasonable portion
                     actual_conflict_text = conflict_text[:50] + "..." if len(conflict_text) > 50 else conflict_text
                     start_pos = paragraph_text.lower().find(actual_conflict_text.lower())
-        if start_pos == -1:
-                        # Last resort: highlight the entire paragraph
-                        actual_conflict_text = paragraph_text
-                        start_pos = 0
         
+        # If still not found, try to find a shorter substring match
         if start_pos == -1:
-            logger.warning(f"Could not find conflict text '{conflict_text[:50]}...' in paragraph")
-            return
+            # Try finding a significant portion (at least 20 chars or 50% of conflict text)
+            min_match_length = max(20, len(conflict_text) // 2)
+            for match_len in range(len(conflict_text), min_match_length - 1, -1):
+                substring = conflict_text[:match_len]
+                start_pos = paragraph_text.lower().find(substring.lower())
+                if start_pos != -1:
+                    actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
+                    break
+        
+        # Only fall back to whole paragraph if conflict text is very short or not found at all
+        # and the paragraph itself is short (less than 100 chars)
+        if start_pos == -1:
+            if len(paragraph_text) < 100 and len(conflict_text) < 50:
+                # Small paragraph, might be the whole thing
+                actual_conflict_text = paragraph_text
+                start_pos = 0
+            else:
+                logger.warning(f"Could not find conflict text '{conflict_text[:50]}...' in paragraph (length: {len(paragraph_text)}). Skipping redline.")
+                return
+        
+        end_pos = start_pos + len(actual_conflict_text)
+        
+        # Collect all existing redlined ranges to preserve them
+        existing_redlined_ranges = []
+        current_pos = 0
+        for run in paragraph.runs:
+            run_text = run.text
+            run_start = current_pos
+            run_end = current_pos + len(run_text)
             
+            # Check if this run is already redlined
+            is_redlined = (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) if run.font.color and run.font.color.rgb else False
+            if is_redlined:
+                existing_redlined_ranges.append((run_start, run_end))
+            
+            current_pos = run_end
+        
+        # Check for overlap and log if needed
+        for red_start, red_end in existing_redlined_ranges:
+            if not (end_pos <= red_start or start_pos >= red_end):
+                logger.info(f"REDLINE_OVERLAP: Conflict at {start_pos}-{end_pos} overlaps with existing redline at {red_start}-{red_end}")
+        
+        # Add new conflict range
+        all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
+        
+        # Merge overlapping ranges
+        if all_redlined_ranges:
+            all_redlined_ranges.sort(key=lambda x: x[0])
+            merged_ranges = [all_redlined_ranges[0]]
+            for current_start, current_end in all_redlined_ranges[1:]:
+                last_start, last_end = merged_ranges[-1]
+                if current_start <= last_end:
+                    # Overlapping - merge
+                    merged_ranges[-1] = (last_start, max(last_end, current_end))
+                else:
+                    # Non-overlapping - add new range
+                    merged_ranges.append((current_start, current_end))
+        else:
+            merged_ranges = [(start_pos, end_pos)]
+        
+        # Rebuild paragraph preserving existing redlines and adding new conflict
         # Clear all runs
         for run in paragraph.runs:
             run.clear()
         
-        # Add text before conflict (normal formatting)
-        if start_pos > 0:
-            before_text = paragraph_text[:start_pos]
-            run = paragraph.add_run(before_text)
+        # Build paragraph with all redlined ranges marked
+        current_pos = 0
         
-        # Add conflict text with red strikethrough formatting (redlined)
-        conflict_run = paragraph.add_run(actual_conflict_text)
-        conflict_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
-        conflict_run.font.strike = True  # Strikethrough for redlining
-        
-        # Add comment to the specific conflict text run
-        comment = redline_item.get('comment', '')
-        if comment:
-            author = "One L"
-            initials = "1L"
-            conflict_run.add_comment(comment, author=author, initials=initials)
-        
-        # Add text after conflict (normal formatting)
-        end_pos = start_pos + len(actual_conflict_text)
-        if end_pos < len(paragraph_text):
-            after_text = paragraph_text[end_pos:]
-            run = paragraph.add_run(after_text)
+        for red_start, red_end in merged_ranges:
+            # Add text before this redlined range
+            if red_start > current_pos:
+                before_text = paragraph_text[current_pos:red_start]
+                if before_text:
+                    paragraph.add_run(before_text)
             
-        logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' in paragraph")
+            # Add redlined text
+            redlined_text = paragraph_text[red_start:red_end]
+            conflict_run = paragraph.add_run(redlined_text)
+            conflict_run.font.color.rgb = RGBColor(255, 0, 0)
+            conflict_run.font.strike = True
+            
+            # Add comment only if this range includes our new conflict
+            if start_pos >= red_start and end_pos <= red_end:
+                comment = redline_item.get('comment', '')
+                if comment:
+                    author = "One L"
+                    initials = "1L"
+                    conflict_run.add_comment(comment, author=author, initials=initials)
+            
+            current_pos = red_end
+        
+        # Add remaining text after last redlined range
+        if current_pos < len(paragraph_text):
+            after_text = paragraph_text[current_pos:]
+            if after_text:
+                paragraph.add_run(after_text)
+            
+        logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' at position {start_pos}-{end_pos} in paragraph (preserving existing formatting)")
         
     except Exception as e:
         logger.error(f"Error applying redline to paragraph: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def _apply_redline_to_table_cell(cell, cell_text: str, redline_item: Dict[str, str]):
@@ -2384,35 +2457,87 @@ def _apply_redline_to_table_cell(cell, cell_text: str, redline_item: Dict[str, s
                             actual_conflict_text = para_text
                             start_pos = 0
             
+            # If still not found, try shorter substring match
             if start_pos == -1:
-                continue  # Try next paragraph in the cell
+                min_match_length = max(20, len(cell_text) // 2)
+                for match_len in range(len(cell_text), min_match_length - 1, -1):
+                    substring = cell_text[:match_len]
+                    start_pos = para_text.lower().find(substring.lower())
+                    if start_pos != -1:
+                        actual_conflict_text = para_text[start_pos:start_pos + match_len]
+                        break
+            
+            if start_pos == -1:
+                # Only fall back to whole paragraph if it's very short
+                if len(para_text) < 100 and len(cell_text) < 50:
+                    actual_conflict_text = para_text
+                    start_pos = 0
+                else:
+                    continue  # Try next paragraph in the cell
+            
+            end_pos = start_pos + len(actual_conflict_text)
+            
+            # Collect existing redlined ranges to preserve them
+            existing_redlined_ranges = []
+            current_pos = 0
+            for run in paragraph.runs:
+                run_text = run.text
+                run_start = current_pos
+                run_end = current_pos + len(run_text)
                 
-            # Clear all runs in this paragraph
+                is_redlined = (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) if run.font.color and run.font.color.rgb else False
+                if is_redlined:
+                    existing_redlined_ranges.append((run_start, run_end))
+                
+                current_pos = run_end
+            
+            # Add new conflict range and merge overlapping ranges
+            all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
+            if all_redlined_ranges:
+                all_redlined_ranges.sort(key=lambda x: x[0])
+                merged_ranges = [all_redlined_ranges[0]]
+                for current_start, current_end in all_redlined_ranges[1:]:
+                    last_start, last_end = merged_ranges[-1]
+                    if current_start <= last_end:
+                        merged_ranges[-1] = (last_start, max(last_end, current_end))
+                    else:
+                        merged_ranges.append((current_start, current_end))
+            else:
+                merged_ranges = [(start_pos, end_pos)]
+            
+            # Rebuild paragraph preserving existing redlines
             for run in paragraph.runs:
                 run.clear()
             
-            # Add text before conflict (normal formatting)
-            if start_pos > 0:
-                before_text = para_text[:start_pos]
-                run = paragraph.add_run(before_text)
+            current_pos = 0
+            for red_start, red_end in merged_ranges:
+                # Add text before this redlined range
+                if red_start > current_pos:
+                    before_text = para_text[current_pos:red_start]
+                    if before_text:
+                        paragraph.add_run(before_text)
+                
+                # Add redlined text
+                redlined_text = para_text[red_start:red_end]
+                conflict_run = paragraph.add_run(redlined_text)
+                conflict_run.font.color.rgb = RGBColor(255, 0, 0)
+                conflict_run.font.strike = True
+                
+                # Add comment only if this range includes our new conflict
+                if start_pos >= red_start and end_pos <= red_end:
+                    comment = redline_item.get('comment', '')
+                    if comment:
+                        author = "One L"
+                        initials = "1L"
+                        conflict_run.add_comment(comment, author=author, initials=initials)
+                
+                current_pos = red_end
             
-            # Add conflict text with red strikethrough formatting (redlined)
-            conflict_run = paragraph.add_run(actual_conflict_text)
-            conflict_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
-            conflict_run.font.strike = True  # Strikethrough for redlining
-            
-            # Add comment to the specific conflict text run
-            comment = redline_item.get('comment', '')
-            if comment:
-                author = "One L"
-                initials = "1L"
-                conflict_run.add_comment(comment, author=author, initials=initials)
-            
-            # Add text after conflict (normal formatting)
-            end_pos = start_pos + len(actual_conflict_text)
-            if end_pos < len(para_text):
-                after_text = para_text[end_pos:]
-                run = paragraph.add_run(after_text)
+            # Add remaining text after last redlined range
+            if current_pos < len(para_text):
+                after_text = para_text[current_pos:]
+                if after_text:
+                    paragraph.add_run(after_text)
             
             logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' in table cell")
             break  # Only redline the first matching paragraph in the cell
