@@ -1003,16 +1003,17 @@ class Model:
         logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
         return sanitized
     
-    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False) -> Dict[str, Any]:
+    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False) -> Dict[str, Any]:
         """
         Call Claude with tool support using Converse API.
         Implements graceful queuing with call spacing to prevent token rate limiting.
-        Supports fallback: Primary Sonnet 4 -> Sonnet 4 1M -> Retry Sonnet 4
+        Supports fallback: Primary Sonnet 4 (once) -> Sonnet 4 1M -> Retry Sonnet 4 with backoff
         
         Args:
             messages: List of message dictionaries
             retry_count: Current retry attempt number
             use_1m_context: Whether to use 1M context version (fallback)
+            tried_1m: Whether we've already attempted 1M context (prevents loops)
         """
         
         # Implement graceful call spacing to prevent token rate limiting
@@ -1054,8 +1055,9 @@ class Model:
             }
             
             # Add 1M context beta parameter if using 1M fallback
+            # AWS Bedrock expects anthropic_beta to be a list of strings
             if use_1m_context:
-                api_params["additionalModelRequestFields"]["anthropic_beta"] = ANTHROPIC_BETA_1M
+                api_params["additionalModelRequestFields"]["anthropic_beta"] = [ANTHROPIC_BETA_1M]
             
             # Call Bedrock using Converse API (supports document attachments)
             response = bedrock_client.converse(**api_params)
@@ -1112,47 +1114,43 @@ class Model:
             
             # Retry logic for throttling and transient errors
             if (is_throttling or is_transient) and not is_validation_error:
+                # On first failure (retry_count=0), try Sonnet 4 1M if not already tried
+                if retry_count == 0 and not use_1m_context and not tried_1m:
+                    logger.warning(f"Sonnet 4 failed on first attempt. Attempting fallback to Sonnet 4 1M")
+                    try:
+                        return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=True, tried_1m=True)
+                    except Exception as fallback_1m_error:
+                        # If 1M fails, go back to Sonnet 4 and continue retrying with backoff
+                        logger.warning(f"Sonnet 4 1M also failed. Retrying Sonnet 4 with exponential backoff")
+                        delay = min(BASE_DELAY * (BACKOFF_MULTIPLIER ** retry_count), MAX_DELAY)
+                        error_category = "throttling" if is_throttling else "transient"
+                        logger.warning(f"Retrying Sonnet 4 in {delay} seconds (attempt {retry_count + 2})")
+                        time.sleep(delay)
+                        return self._call_claude_with_tools(messages, retry_count + 1, use_1m_context=False, tried_1m=True)
+                
+                # Continue retrying Sonnet 4 with exponential backoff
                 if retry_count < MAX_RETRIES:
                     delay = min(BASE_DELAY * (BACKOFF_MULTIPLIER ** retry_count), MAX_DELAY)
                     error_category = "throttling" if is_throttling else "transient"
                     logger.warning(f"Claude API {error_category} error detected ({error_type}), retrying in {delay} seconds (attempt {retry_count + 1}/{MAX_RETRIES + 1})")
                     time.sleep(delay)
-                    return self._call_claude_with_tools(messages, retry_count + 1, use_1m_context=use_1m_context)
+                    return self._call_claude_with_tools(messages, retry_count + 1, use_1m_context=False, tried_1m=tried_1m)
                 else:
-                    # Retries exhausted - try Sonnet 4 1M if not already using it, then retry Sonnet 4
-                    if not use_1m_context:
-                        logger.warning(f"Max retries exceeded for Sonnet 4. Attempting fallback to Sonnet 4 1M")
-                        try:
-                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=True)
-                        except Exception as fallback_1m_error:
-                            # If 1M also fails, retry original Sonnet 4 one more time
-                            logger.warning(f"Sonnet 4 1M also failed. Retrying original Sonnet 4 one more time")
-                            try:
-                                return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False)
-                            except Exception as final_error:
-                                error_category = "throttling" if is_throttling else "transient"
-                                logger.error(f"All attempts failed. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
-                                raise Exception(f"Claude API {error_category} error limit exceeded after all attempts. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
-                    else:
-                        # Already tried 1M, now retry original Sonnet 4
-                        logger.warning(f"Sonnet 4 1M failed. Retrying original Sonnet 4")
-                        try:
-                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False)
-                        except Exception as final_error:
-                            error_category = "throttling" if is_throttling else "transient"
-                            logger.error(f"All attempts failed. Sonnet 4 1M: {str(e)}, Sonnet 4 retry: {str(final_error)}")
-                            raise Exception(f"Claude API {error_category} error limit exceeded. Sonnet 4 1M: {str(e)}, Sonnet 4 retry: {str(final_error)}")
+                    # Max retries exceeded
+                    error_category = "throttling" if is_throttling else "transient"
+                    logger.error(f"Max retries exceeded for Claude API {error_category} error after {MAX_RETRIES + 1} attempts")
+                    raise Exception(f"Claude API {error_category} error limit exceeded after {MAX_RETRIES + 1} retries: {str(e)}")
             else:
-                # For validation errors, try Sonnet 4 1M if not already using it, then retry Sonnet 4
-                if not use_1m_context and is_validation_error:
+                # For validation errors, try Sonnet 4 1M if not already tried, then retry Sonnet 4
+                if not use_1m_context and is_validation_error and not tried_1m:
                     logger.warning(f"Validation error on Sonnet 4. Attempting fallback to Sonnet 4 1M")
                     try:
-                        return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=True)
+                        return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=True, tried_1m=True)
                     except Exception as fallback_1m_error:
                         # If 1M also fails, retry original Sonnet 4
                         logger.warning(f"Sonnet 4 1M also failed with validation error. Retrying original Sonnet 4")
                         try:
-                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False)
+                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False, tried_1m=True)
                         except Exception as final_error:
                             logger.error(f"All attempts failed with validation errors. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
                             raise Exception(f"Claude API validation error on all attempts. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
