@@ -59,8 +59,12 @@ bedrock_client = boto3.client('bedrock-runtime', config=bedrock_config)
 
 # Model configuration - Using inference profile for Claude Sonnet 4
 CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+# Fallback: Claude Sonnet 4 with 1M context (same model ID, requires anthropic_beta parameter)
+# After 1M fails, we retry the original Sonnet 4
+ANTHROPIC_BETA_1M = "context-1m-2025-08-07"  # Beta parameter to enable 1M context window
 TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
 THINKING_BUDGET_TOKENS = 16000  # Increased from 4000 for more complex reasoning in document review
+MAX_TOKENS = 32000  # Maximum output tokens - must be greater than THINKING_BUDGET_TOKENS per AWS Bedrock requirements
 
 # Graceful queuing configuration for token rate limiting prevention
 MAX_RETRIES = 5
@@ -999,10 +1003,16 @@ class Model:
         logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
         return sanitized
     
-    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0) -> Dict[str, Any]:
+    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False) -> Dict[str, Any]:
         """
-        Call Claude 4 Sonnet thinking with tool support using Converse API.
+        Call Claude with tool support using Converse API.
         Implements graceful queuing with call spacing to prevent token rate limiting.
+        Supports fallback: Primary Sonnet 4 -> Sonnet 4 1M -> Retry Sonnet 4
+        
+        Args:
+            messages: List of message dictionaries
+            retry_count: Current retry attempt number
+            use_1m_context: Whether to use 1M context version (fallback)
         """
         
         # Implement graceful call spacing to prevent token rate limiting
@@ -1014,26 +1024,41 @@ class Model:
             logger.info(f"Graceful queuing: waiting {wait_time:.2f}s to prevent token rate limiting")
             time.sleep(wait_time)
         
+        # Always use Claude Sonnet 4 - just toggle 1M context via beta parameter
+        current_model_id = CLAUDE_MODEL_ID
+        
         # Log attempt (but don't increment counter until successful)
-        logger.info(f"Calling Claude with {len(messages)} messages and {len(self.tools)} tools (attempt {retry_count + 1}) - Total successful calls so far: {_call_tracker['total_model_calls']}")
+        model_name = "Sonnet 4 1M" if use_1m_context else "Sonnet 4"
+        logger.info(f"Calling Claude ({model_name}: {current_model_id}) with {len(messages)} messages and {len(self.tools)} tools (attempt {retry_count + 1}, use_1m_context={use_1m_context}) - Total successful calls so far: {_call_tracker['total_model_calls']}")
         
         try:
-            # Call Bedrock using Converse API (supports document attachments)
-            response = bedrock_client.converse(
-                modelId=CLAUDE_MODEL_ID,
-                messages=messages,
-                system=[{"text": SYSTEM_PROMPT}],
-                inferenceConfig={
-                    "temperature": TEMPERATURE
-                },
-                toolConfig={"tools": self.tools},
-                additionalModelRequestFields={
+            # Prepare inference config
+            inference_config = {
+                "temperature": TEMPERATURE,
+                "maxTokens": MAX_TOKENS
+            }
+            
+            # Prepare API call parameters
+            api_params = {
+                "modelId": current_model_id,
+                "messages": messages,
+                "system": [{"text": SYSTEM_PROMPT}],
+                "inferenceConfig": inference_config,
+                "toolConfig": {"tools": self.tools},
+                "additionalModelRequestFields": {
                     "thinking": {
                         "type": "enabled",
                         "budget_tokens": THINKING_BUDGET_TOKENS
                     }
                 }
-            )
+            }
+            
+            # Add 1M context beta parameter if using 1M fallback
+            if use_1m_context:
+                api_params["additionalModelRequestFields"]["anthropic_beta"] = ANTHROPIC_BETA_1M
+            
+            # Call Bedrock using Converse API (supports document attachments)
+            response = bedrock_client.converse(**api_params)
             
             # SUCCESS: Only now increment the counter for successful calls
             _call_tracker['total_model_calls'] += 1
@@ -1055,23 +1080,85 @@ class Model:
             
         except Exception as e:
             error_msg = str(e)
+            error_type = type(e).__name__
             
             # Check for throttling errors and implement exponential backoff
-            if ("ThrottlingException" in error_msg or "Too many tokens" in error_msg or 
-                "rate" in error_msg.lower() or "throttl" in error_msg.lower() or
-                "limit" in error_msg.lower()):
-                
+            is_throttling = ("ThrottlingException" in error_msg or "Too many tokens" in error_msg or 
+                            "rate" in error_msg.lower() or "throttl" in error_msg.lower() or
+                            "limit" in error_msg.lower())
+            
+            # Check for transient errors that should be retried
+            is_transient = (
+                "ServiceUnavailableException" in error_type or
+                "InternalServerError" in error_type or
+                "InternalFailure" in error_msg or
+                "ServiceUnavailable" in error_msg or
+                "timeout" in error_msg.lower() or
+                "Timeout" in error_type or
+                "Connection" in error_type or
+                "ReadTimeout" in error_type or
+                "502" in error_msg or  # Bad Gateway
+                "503" in error_msg or  # Service Unavailable
+                "504" in error_msg     # Gateway Timeout
+            )
+            
+            # Check for validation errors that should NOT be retried (configuration issues)
+            is_validation_error = (
+                "ValidationException" in error_type or
+                "ValidationError" in error_type or
+                "InvalidParameter" in error_type or
+                "InvalidRequest" in error_msg
+            )
+            
+            # Retry logic for throttling and transient errors
+            if (is_throttling or is_transient) and not is_validation_error:
                 if retry_count < MAX_RETRIES:
                     delay = min(BASE_DELAY * (BACKOFF_MULTIPLIER ** retry_count), MAX_DELAY)
-                    logger.warning(f"Claude API throttling detected, retrying in {delay} seconds (attempt {retry_count + 1}/{MAX_RETRIES + 1})")
+                    error_category = "throttling" if is_throttling else "transient"
+                    logger.warning(f"Claude API {error_category} error detected ({error_type}), retrying in {delay} seconds (attempt {retry_count + 1}/{MAX_RETRIES + 1})")
                     time.sleep(delay)
-                    return self._call_claude_with_tools(messages, retry_count + 1)
+                    return self._call_claude_with_tools(messages, retry_count + 1, use_1m_context=use_1m_context)
                 else:
-                    logger.error(f"Max retries exceeded for Claude API throttling after {MAX_RETRIES + 1} attempts")
-                    raise Exception(f"Claude API throttling limit exceeded after {MAX_RETRIES + 1} retries. Please try again later when token limits reset.")
+                    # Retries exhausted - try Sonnet 4 1M if not already using it, then retry Sonnet 4
+                    if not use_1m_context:
+                        logger.warning(f"Max retries exceeded for Sonnet 4. Attempting fallback to Sonnet 4 1M")
+                        try:
+                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=True)
+                        except Exception as fallback_1m_error:
+                            # If 1M also fails, retry original Sonnet 4 one more time
+                            logger.warning(f"Sonnet 4 1M also failed. Retrying original Sonnet 4 one more time")
+                            try:
+                                return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False)
+                            except Exception as final_error:
+                                error_category = "throttling" if is_throttling else "transient"
+                                logger.error(f"All attempts failed. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
+                                raise Exception(f"Claude API {error_category} error limit exceeded after all attempts. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
+                    else:
+                        # Already tried 1M, now retry original Sonnet 4
+                        logger.warning(f"Sonnet 4 1M failed. Retrying original Sonnet 4")
+                        try:
+                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False)
+                        except Exception as final_error:
+                            error_category = "throttling" if is_throttling else "transient"
+                            logger.error(f"All attempts failed. Sonnet 4 1M: {str(e)}, Sonnet 4 retry: {str(final_error)}")
+                            raise Exception(f"Claude API {error_category} error limit exceeded. Sonnet 4 1M: {str(e)}, Sonnet 4 retry: {str(final_error)}")
             else:
-                # Non-throttling error - don't retry
-                logger.error(f"Error calling Claude (non-throttling): {str(e)}")
+                # For validation errors, try Sonnet 4 1M if not already using it, then retry Sonnet 4
+                if not use_1m_context and is_validation_error:
+                    logger.warning(f"Validation error on Sonnet 4. Attempting fallback to Sonnet 4 1M")
+                    try:
+                        return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=True)
+                    except Exception as fallback_1m_error:
+                        # If 1M also fails, retry original Sonnet 4
+                        logger.warning(f"Sonnet 4 1M also failed with validation error. Retrying original Sonnet 4")
+                        try:
+                            return self._call_claude_with_tools(messages, retry_count=0, use_1m_context=False)
+                        except Exception as final_error:
+                            logger.error(f"All attempts failed with validation errors. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
+                            raise Exception(f"Claude API validation error on all attempts. Sonnet 4: {str(e)}, Sonnet 4 1M: {str(fallback_1m_error)}, Sonnet 4 retry: {str(final_error)}")
+                
+                # Non-retryable error - don't retry
+                logger.error(f"Error calling Claude (non-retryable {error_type}): {str(e)}")
                 raise
     
     def _handle_tool_calls(self, messages: List[Dict[str, Any]], claude_response: Dict[str, Any]) -> Dict[str, Any]:
