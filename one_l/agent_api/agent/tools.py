@@ -229,6 +229,94 @@ Use 6-12+ targeted queries to ensure no conflicts are missed.
         }
     ]
 
+def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, Any]) -> str:
+    """
+    Extract source document name from retrieval result metadata and location.
+    
+    Checks multiple possible fields where AWS Bedrock Knowledge Base might store
+    the source information, in order of preference:
+    1. metadata.source - primary source field
+    2. location.s3Location.uri - full S3 URI
+    3. location.s3Location.key - S3 key
+    4. metadata.s3_location - alternative metadata field
+    5. metadata.uri - URI in metadata
+    6. Extract filename from S3 key if available
+    
+    Args:
+        metadata: Metadata dictionary from retrieval result
+        location: Location dictionary from retrieval result
+        
+    Returns:
+        Source document name or descriptive fallback if not found
+    """
+    import os
+    
+    # Try metadata.source first (primary field)
+    if metadata.get('source'):
+        return metadata['source']
+    
+    # Try location.s3Location.uri (full S3 URI)
+    s3_location = location.get('s3Location', {})
+    if s3_location.get('uri'):
+        uri = s3_location['uri']
+        # Extract filename from URI (e.g., s3://bucket/path/file.pdf -> file.pdf)
+        if '/' in uri:
+            filename = uri.split('/')[-1]
+            if filename:
+                return filename
+    
+    # Try location.s3Location.key (S3 key)
+    if s3_location.get('key'):
+        s3_key = s3_location['key']
+        # Extract filename from S3 key (e.g., path/to/file.pdf -> file.pdf)
+        if '/' in s3_key:
+            filename = s3_key.split('/')[-1]
+            if filename:
+                return filename
+        return s3_key
+    
+    # Try metadata.s3_location (alternative metadata field)
+    if metadata.get('s3_location'):
+        s3_loc = metadata['s3_location']
+        if '/' in s3_loc:
+            filename = s3_loc.split('/')[-1]
+            if filename:
+                return filename
+        return s3_loc
+    
+    # Try metadata.uri
+    if metadata.get('uri'):
+        uri = metadata['uri']
+        if '/' in uri:
+            filename = uri.split('/')[-1]
+            if filename:
+                return filename
+        return uri
+    
+    # Try extracting from any metadata field that looks like a path or filename
+    for key, value in metadata.items():
+        if isinstance(value, str) and ('/' in value or '.' in value):
+            # Check if it looks like a file path
+            if any(ext in value.lower() for ext in ['.pdf', '.docx', '.doc', '.txt', '.html']):
+                filename = value.split('/')[-1] if '/' in value else value
+                if filename and len(filename) > 3:  # Reasonable filename length
+                    return filename
+    
+    # If we have location info but no specific source, return a descriptive message
+    if s3_location:
+        bucket = s3_location.get('bucket', 'unknown-bucket')
+        key = s3_location.get('key', 'unknown-key')
+        # Extract filename from key if possible
+        if '/' in key:
+            filename = key.split('/')[-1]
+            if filename:
+                return filename
+        return key if key != 'unknown-key' else f"{bucket}/{key}"
+    
+    # Last resort: log warning and return descriptive fallback
+    logger.warning(f"Could not extract source from metadata: {metadata}, location: {location}")
+    return 'Unknown Source'
+
 def retrieve_from_knowledge_base(
     query: str, 
     max_results: int = 50,
@@ -339,7 +427,10 @@ def retrieve_from_knowledge_base(
         for result in response.get('retrievalResults', []):
             content = result.get('content', {})
             metadata = result.get('metadata', {})
-            source = metadata.get('source', 'Unknown')
+            location = result.get('location', {})
+            
+            # Extract source from multiple possible locations
+            source = _extract_source_from_result(metadata, location)
             source_documents.add(source)
             
             raw_results.append({
