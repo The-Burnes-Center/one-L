@@ -243,11 +243,34 @@ class StepFunctionsConstruct(Construct):
         """Create Step Functions state machine with complete workflow."""
         
         # Error handler (define early so it can be used in catch blocks)
+        # Use result_path to merge error output with existing state (preserves session_id, user_id)
         handle_error = tasks.LambdaInvoke(
             self, "HandleError",
             lambda_function=self.handle_error_fn,
-            output_path="$.Payload"
+            result_path="$.error_result"  # Merge instead of replace to preserve context
         )
+        
+        # Cleanup session - ensure it runs after error handling
+        cleanup_session = tasks.LambdaInvoke(
+            self, "CleanupSession",
+            lambda_function=self.cleanup_session_fn,
+            payload_response_only=True,
+            result_path="$.cleanup_result",
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "user_id": sfn.JsonPath.string_at("$.user_id")
+            })
+        )
+        cleanup_session.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
+        )
+        
+        # Chain error handling with cleanup - ensures cleanup runs after any error
+        handle_error_chain = handle_error.next(cleanup_session)
         
         # Initialize job
         initialize_job = tasks.LambdaInvoke(
@@ -263,7 +286,7 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         initialize_job.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )
@@ -291,7 +314,7 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         split_document.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )
@@ -425,7 +448,7 @@ class StepFunctionsConstruct(Construct):
         # Add error handling at Map level (best practice per AWS docs)
         # Errors from item processor will be caught here and handled by HandleError Lambda
         analyze_chunks_map.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )
@@ -452,7 +475,7 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         merge_chunk_results.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )
@@ -514,41 +537,23 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         
-        # Cleanup session
-        cleanup_session = tasks.LambdaInvoke(
-            self, "CleanupSession",
-            lambda_function=self.cleanup_session_fn,
-            payload_response_only=True,
-            result_path="$.cleanup_result",
-            retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "user_id": sfn.JsonPath.string_at("$.user_id")
-            })
-        )
-        cleanup_session.add_retry(
-            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            interval=Duration.seconds(2),
-            max_attempts=2,
-            backoff_rate=2.0
-        )
-        
         # Define workflow - always uses Map state (works for both single and multiple chunks)
         processing_path = analyze_chunks_map.next(merge_chunk_results)
         
         # Add error handling to individual states (not chains)
+        # All catch blocks use handle_error_chain to ensure cleanup runs after errors
         generate_redline.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )
         save_results.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )
         cleanup_session.add_catch(
-            handle_error,
+            handle_error_chain,
             errors=["States.ALL"],
             result_path="$.error"
         )

@@ -91,6 +91,10 @@ def lambda_handler(event, context):
             except Exception as db_error:
                 logger.warning(f"Could not update DynamoDB: {db_error}")
         
+        # Preserve session_id and user_id from event context for cleanup
+        session_id = event.get('session_id')
+        user_id = event.get('user_id')
+        
         # Create validated output
         output = ErrorOutput(
             error=error_message,
@@ -98,21 +102,43 @@ def lambda_handler(event, context):
             timestamp=datetime.utcnow().isoformat()
         )
         
-        return {
+        # Return output with preserved context for cleanup
+        result = {
             "statusCode": 200,
             "body": output.model_dump_json()
         }
         
+        # Preserve session_id and user_id in output for cleanup step
+        if session_id:
+            result["session_id"] = session_id
+        if user_id:
+            result["user_id"] = user_id
+            
+        return result
+        
     except Exception as e:
         logger.error(f"Error in handle_error: {e}")
+        # Preserve session_id and user_id from event context for cleanup
+        session_id = event.get('session_id')
+        user_id = event.get('user_id')
+        
         # Return basic error output
         output = ErrorOutput(
             error=str(e),
             error_type="ErrorHandlerError",
             timestamp=datetime.utcnow().isoformat()
         )
-        return {
+        
+        result = {
             "statusCode": 200,
             "body": output.model_dump_json()
         }
+        
+        # Preserve session_id and user_id in output for cleanup step
+        if session_id:
+            result["session_id"] = session_id
+        if user_id:
+            result["user_id"] = user_id
+            
+        return result
 
