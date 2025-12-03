@@ -59,7 +59,6 @@ bedrock_client = boto3.client('bedrock-runtime', config=bedrock_config)
 
 # Model configuration - Using inference profile for Claude Sonnet 4
 CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
-MAX_TOKENS = 8000
 TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
 THINKING_BUDGET_TOKENS = 4000
 
@@ -1025,7 +1024,6 @@ class Model:
                 messages=messages,
                 system=[{"text": SYSTEM_PROMPT}],
                 inferenceConfig={
-                    "maxTokens": MAX_TOKENS,
                     "temperature": TEMPERATURE
                 },
                 toolConfig={"tools": self.tools},
