@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { sessionAPI, agentAPI } from '../services/api';
+import jobPollingService from '../services/jobPolling';
 import { useNavigate, useParams } from 'react-router-dom';
 
 // Pure helper functions - defined outside component to avoid recreation on every render
@@ -92,10 +93,10 @@ const SessionSidebar = ({
     
     for (const session of sessions) {
       try {
-        // Get session results (completed documents) and active jobs
-        const resultsResponse = await sessionAPI.getSessionResults(session.session_id, currentUserId);
-        const results = resultsResponse?.success ? (resultsResponse.results || []) : [];
-        const activeJobsFromAPI = resultsResponse?.success ? (resultsResponse.active_jobs || []) : [];
+        // UNIFIED API: Use data already included in session from getUserSessions
+        // Backend now includes active_jobs and results in the session object
+        const results = session.results || [];
+        const activeJobsFromAPI = session.active_jobs || [];
         
         // Extract document info
         const documents = results.map(result => {
@@ -161,14 +162,16 @@ const SessionSidebar = ({
               // Job not in API response yet, poll it directly
               try {
                 const jobStatus = await agentAPI.getJobStatus(processingDetails.jobId);
-                if (jobStatus.success && jobStatus.job) {
-                  const job = jobStatus.job;
-                  if (job.status === 'processing') {
+                if (jobStatus.success) {
+                  // API returns job data directly, not wrapped in 'job' field
+                  const status = jobStatus.status || 'processing';
+                  if (status === 'processing') {
                     activeJobs.push({
                       jobId: processingDetails.jobId,
                       status: 'processing',
-                      progress: job.progress || 0,
-                      stage: job.stage || 'initialized'
+                      progress: jobStatus.progress || 0,
+                      stage: jobStatus.stage || 'initialized',
+                      documentS3Key: jobStatus.document_s3_key
                     });
                   }
                 }
@@ -197,7 +200,7 @@ const SessionSidebar = ({
     }
     
     setSessionStatuses(statusMap);
-  }, [sessions, currentUserId]);
+  }, [sessions]);
 
   // Use ref for loadSessionStatuses to avoid circular dependency
   const loadSessionStatusesRef = useRef(loadSessionStatuses);
@@ -205,71 +208,61 @@ const SessionSidebar = ({
     loadSessionStatusesRef.current = loadSessionStatuses;
   }, [loadSessionStatuses]);
 
-  const pollJobStatus = useCallback(async (jobId) => {
-    try {
-      const statusResponse = await agentAPI.getJobStatus(jobId);
-      
-      if (statusResponse.success) {
-        // Backend returns: { success: true, job_id, stage, progress, label, status, session_id, document_s3_key, ... }
-        // Progress is already a number (int) from backend
-        const { status, stage, progress, session_id, document_s3_key } = statusResponse;
-        
-        if (session_id) {
-          setSessionStatuses(prev => {
-            const updated = { ...prev };
-            if (!updated[session_id]) {
-              updated[session_id] = { documents: [], activeJobs: [], documentCount: 0, hasResults: false };
-            }
-            
-            // Update or add job status
-            const jobIndex = updated[session_id].activeJobs.findIndex(j => j.jobId === jobId);
-            
-            // Preserve existing job data (especially documentS3Key) when updating
-            const existingJob = jobIndex >= 0 ? updated[session_id].activeJobs[jobIndex] : null;
-            // Ensure progress is a number (backend returns int, but handle edge cases)
-            const progressValue = typeof progress === 'number' ? progress : parseInt(progress || 0, 10);
-            
-            const jobStatus = {
-              jobId,
-              status: status || 'processing',
-              stage: stage || 'initialized',
-              progress: progressValue,
-              // Preserve documentS3Key from existing job or get from response
-              documentS3Key: existingJob?.documentS3Key || document_s3_key || null
-            };
-            
-            console.log(`SessionSidebar: Updated job ${jobId} - status=${status}, progress=${progressValue}, progressType=${typeof progress}`);
-            
-            // If this is a new processing job, remove old failed jobs for this session
-            if (status === 'processing' && jobIndex < 0) {
-              // New processing job started - remove old failed jobs
-              updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.status !== 'failed');
-            }
-            
-            if (jobIndex >= 0) {
-              updated[session_id].activeJobs[jobIndex] = jobStatus;
-            } else {
-              // Add job if not already tracked (for both processing and failed)
-              updated[session_id].activeJobs.push(jobStatus);
-            }
-            
-            // If completed or failed, stop polling this job
-            // Keep failed jobs visible so user can see the failure, but don't poll them anymore
-            if (status === 'completed') {
-              updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.jobId !== jobId);
-              // Reload session statuses to get updated document list (use ref to avoid dependency)
-              setTimeout(() => loadSessionStatusesRef.current(), 1000);
-            }
-            // If failed, keep it in activeJobs but stop polling (status is already 'failed')
-            // The job will remain visible but won't be polled anymore
-            
-            return updated;
-          });
-        }
+  // Use centralized polling service
+  const handleJobStatusUpdate = useCallback((statusResponse) => {
+    const { status, stage, progress, session_id, document_s3_key, job_id } = statusResponse;
+    
+    if (!session_id || !job_id) return;
+    
+    setSessionStatuses(prev => {
+      const updated = { ...prev };
+      if (!updated[session_id]) {
+        updated[session_id] = { documents: [], activeJobs: [], documentCount: 0, hasResults: false };
       }
-    } catch (error) {
-      console.warn(`Error polling job status for ${jobId}:`, error);
+      
+      // Update or add job status
+      const jobIndex = updated[session_id].activeJobs.findIndex(j => j.jobId === job_id);
+      const existingJob = jobIndex >= 0 ? updated[session_id].activeJobs[jobIndex] : null;
+      const progressValue = typeof progress === 'number' ? progress : parseInt(progress || 0, 10);
+      
+      const jobStatus = {
+        jobId: job_id,
+        status: status || 'processing',
+        stage: stage || 'initialized',
+        progress: progressValue,
+        documentS3Key: existingJob?.documentS3Key || document_s3_key || null
+      };
+      
+      if (jobIndex >= 0) {
+        updated[session_id].activeJobs[jobIndex] = jobStatus;
+      } else {
+        updated[session_id].activeJobs.push(jobStatus);
+      }
+      
+      return updated;
+    });
+  }, []);
+  
+  const handleJobComplete = useCallback((statusResponse) => {
+    const { session_id, job_id } = statusResponse;
+    if (session_id) {
+      setSessionStatuses(prev => {
+        const updated = { ...prev };
+        if (updated[session_id]) {
+          // Remove completed job
+          updated[session_id].activeJobs = updated[session_id].activeJobs.filter(j => j.jobId !== job_id);
+        }
+        return updated;
+      });
+      // Reload session statuses to get updated document list
+      setTimeout(() => loadSessionStatusesRef.current(), 1000);
     }
+  }, []);
+  
+  const handleJobError = useCallback((statusResponse) => {
+    // Failed jobs remain visible but stop polling
+    const { job_id } = statusResponse;
+    console.warn(`Job ${job_id} failed:`, statusResponse.error_message || statusResponse.error);
   }, []);
 
   // Use ref to access latest sessionStatuses without causing re-renders
@@ -304,50 +297,52 @@ const SessionSidebar = ({
     };
   }, [sessions, currentUserId, loadSessionStatuses]);
 
-  // Poll active jobs for real-time updates (only for processing jobs)
+  // Use centralized polling service for active jobs
   useEffect(() => {
     if (sessions.length === 0) return;
     
-    const pollInterval = setInterval(() => {
-      // Get only processing job IDs from current state (use ref to avoid stale closure)
-      // Only poll jobs that are actively processing, not failed or completed
-      const processingJobIds = [];
-      Object.values(sessionStatusesRef.current).forEach(status => {
-        if (status.activeJobs && status.activeJobs.length > 0) {
-          status.activeJobs.forEach(job => {
-            // Only poll jobs that are actively processing
-            if (job.status === 'processing' && job.jobId) {
-              processingJobIds.push(job.jobId);
-            }
-          });
-        }
-      });
-      
-      // Also check window state for active processing jobs
-      if (window.processingSessionFlags) {
-        Object.values(window.processingSessionFlags).forEach(details => {
-          if (details.jobId && !processingJobIds.includes(details.jobId)) {
-            // Only add if we don't know its status yet (might be processing)
-            processingJobIds.push(details.jobId);
+    // Get all processing job IDs from current state
+    const processingJobIds = new Set();
+    Object.values(sessionStatusesRef.current).forEach(status => {
+      if (status.activeJobs && status.activeJobs.length > 0) {
+        status.activeJobs.forEach(job => {
+          if (job.status === 'processing' && job.jobId) {
+            processingJobIds.add(job.jobId);
           }
         });
       }
-      
-      // Only poll if there are actually processing jobs
-      if (processingJobIds.length > 0) {
-        // Poll each processing job
-        processingJobIds.forEach(jobId => {
-          pollJobStatus(jobId);
-        });
-        
-        // Reload session statuses periodically to catch new jobs and updates
-        loadSessionStatusesRef.current();
-      }
-      // If no processing jobs, don't make any API calls
-    }, 5000); // Poll every 5 seconds
+    });
     
-    return () => clearInterval(pollInterval);
-  }, [sessions.length, pollJobStatus]);
+    // Also check window state for active processing jobs
+    if (window.processingSessionFlags) {
+      Object.values(window.processingSessionFlags).forEach(details => {
+        if (details.jobId) {
+          processingJobIds.add(details.jobId);
+        }
+      });
+    }
+    
+    // Start polling for each processing job using centralized service
+    const stopFunctions = [];
+    processingJobIds.forEach(jobId => {
+      const stop = jobPollingService.startPolling(jobId, {
+        onUpdate: handleJobStatusUpdate,
+        onComplete: handleJobComplete,
+        onError: handleJobError
+      });
+      stopFunctions.push(stop);
+    });
+    
+    // Reload session statuses periodically to catch new jobs
+    const reloadInterval = setInterval(() => {
+      loadSessionStatusesRef.current();
+    }, 10000); // Every 10 seconds
+    
+    return () => {
+      stopFunctions.forEach(stop => stop());
+      clearInterval(reloadInterval);
+    };
+  }, [sessions.length, handleJobStatusUpdate, handleJobComplete, handleJobError]);
 
   // Refresh sessions when sessionId changes
   useEffect(() => {

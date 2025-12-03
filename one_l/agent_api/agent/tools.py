@@ -48,7 +48,7 @@ if PYDANTIC_AVAILABLE:
         clarification_id: str = Field(..., description="Vendor's ID or Additional-[#] for other findings")
         vendor_quote: str = Field(..., description="Exact text verbatim OR 'N/A - Missing provision' for omissions")
         summary: str = Field(..., description="20-40 word context")
-        source_doc: str = Field(..., description="KB document name (REQUIRED - must be an actual document from knowledge base)")
+        source_doc: str = Field(..., description="Name of the actual Massachusetts source document retrieved from the knowledge base, OR 'N/A – General risk language not tied to a specific Massachusetts clause'")
         clause_ref: str = Field(default="N/A", description="Specific section or 'N/A' if not applicable")
         conflict_type: str = Field(..., description="adds/deletes/modifies/contradicts/omits required/reverses obligation")
         rationale: str = Field(..., description="≤50 words on legal impact")
@@ -56,11 +56,10 @@ if PYDANTIC_AVAILABLE:
         @field_validator('source_doc')
         @classmethod
         def validate_source_doc(cls, v: str) -> str:
-            """Ensure source_doc is not empty or invalid."""
+            """Normalize source_doc but allow any value - no hard restrictions on conflict removal."""
             v_str = str(v).strip()
-            if not v_str or v_str.lower() in ['n/a', 'na', 'none', 'unknown']:
-                raise ValueError(f"source_doc must be a valid document name, got: '{v}'")
-            return v_str
+            # Return as-is, no validation/rejection - allow all conflicts through
+            return v_str if v_str else ""
         
         @field_validator('vendor_quote')
         @classmethod
@@ -727,6 +726,7 @@ def redline_document(
             'conflicts_count': str(len(redline_items)),
             'matches_found': str(results['matches_found'])
         })
+        logger.info(f"REDLINE_UPLOAD: Uploaded redlined document to {redlined_s3_key}")
         
         if not upload_success:
             # Cleanup on failure
@@ -739,10 +739,6 @@ def redline_document(
                 "success": False,
                 "error": "Failed to upload redlined document"
             }
-        
-
-
-
         
         # Original redlining completion
         result = {
@@ -760,7 +756,6 @@ def redline_document(
         # NEW: After successful redlining, cleanup session documents
         if session_id and user_id:
 
-            
             try:
                 cleanup_result = _cleanup_session_documents(session_id, user_id)
                 result["cleanup_performed"] = True
@@ -931,16 +926,11 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             
                             # Create redline item using exact vendor quote for matching
                             if vendor_quote_clean.strip():  # Only add if we have actual text
-                                # VALIDATION: Require source document for all conflicts
-                                if not source_doc or not str(source_doc).strip() or str(source_doc).lower() in ['n/a', 'na', 'none', 'unknown']:
-                                    logger.warning(f"PARSE_REJECT_NO_SOURCE: Rejecting conflict {clarification_id} - missing or invalid source_doc: '{source_doc}'. Conflicts must have a valid reference document from the knowledge base.")
-                                    continue
-                                
                                 # Use comment format: CONFLICT ID (type): rationale
                                 comment = f"CONFLICT {clarification_id} ({conflict_type}): {rationale}"
                                 
-                                # Add reference section
-                                if source_doc and str(source_doc).strip() and str(source_doc).lower() not in ['n/a', 'na', 'none', 'unknown']:
+                                # Add reference section if source_doc is provided
+                                if source_doc and str(source_doc).strip():
                                     comment += f"\n\nReference: {str(source_doc).strip()}"
                                     if clause_ref and str(clause_ref).strip() and str(clause_ref).lower() not in ['n/a', 'na', 'none']:
                                         comment += f" ({str(clause_ref).strip()})"
@@ -1034,17 +1024,11 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     
                     # Create redline item using exact vendor quote for matching
                     if vendor_quote_clean.strip():  # Only add if we have actual text
-                        # VALIDATION: Require source document for all conflicts (but allow RFR documents)
-                        # Only reject if source_doc is truly missing/invalid, not if it's a valid document name
-                        if not source_doc or not source_doc.strip() or source_doc.lower() in ['n/a', 'na', 'none', 'unknown']:
-                            logger.warning(f"PARSE_REJECT_NO_SOURCE: Rejecting conflict {clarification_id} - missing or invalid source_doc: '{source_doc}'. Conflicts must have a valid reference document from the knowledge base.")
-                            continue  # Skip conflicts without valid source documents
-                        
                         # Use Ritik's comment format from main branch: CONFLICT ID (type): rationale
                         comment = f"CONFLICT {clarification_id} ({conflict_type}): {rationale}"
                         
-                        # Add reference section using earlier format (before 1453265) - more accurate reference
-                        if source_doc and source_doc.strip() and source_doc.lower() not in ['n/a', 'na', 'none', 'unknown']:
+                        # Add reference section if source_doc is provided
+                        if source_doc and source_doc.strip():
                             comment += f"\n\nReference: {source_doc.strip()}"
                             if clause_ref and clause_ref.strip() and clause_ref.lower() not in ['n/a', 'na', 'none']:
                                 comment += f" ({clause_ref.strip()})"
@@ -3264,14 +3248,14 @@ def _cleanup_session_documents(session_id: str, user_id: str) -> Dict[str, Any]:
             'error': str(e)
         }
 
-
+# TO DO: Change this to the new stack name dynamically instead of hardcoding it
 def _get_function_names() -> Dict[str, str]:
     """Get Lambda function names based on current function naming pattern."""
     current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
     
-    if current_function and 'document-review' in current_function:
-        # Extract stack name: OneLStack-document-review -> OneLStack
-        stack_name = current_function.replace('-document-review', '')
+    if current_function and 'stepfunctions-generateredline' in current_function:
+        # Extract stack name: OneL-DV2-document-review -> OneL-DV2
+        stack_name = current_function.replace('-stepfunctions-generateredline', '')
         
         return {
             'delete_function': f"{stack_name}-delete-from-s3",
@@ -3280,8 +3264,8 @@ def _get_function_names() -> Dict[str, str]:
     else:
         # Fallback: use known stack name
         return {
-            'delete_function': 'OneLStack-delete-from-s3',
-            'sync_function': 'OneLStack-sync-knowledge-base'
+            'delete_function': 'OneL-DV2-delete-from-s3',
+            'sync_function': 'OneL-DV2-sync-knowledge-base'
         }
 
 

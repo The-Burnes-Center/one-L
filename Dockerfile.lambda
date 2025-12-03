@@ -48,17 +48,15 @@ COPY one_l/agent_api/functions/stepfunctions/shared/ ./python/shared/
 # Workflow step functions
 COPY one_l/agent_api/functions/stepfunctions/initialize_job/ ./python/initialize_job/
 COPY one_l/agent_api/functions/stepfunctions/split_document/ ./python/split_document/
-COPY one_l/agent_api/functions/stepfunctions/analyze_chunk_structure/ ./python/analyze_chunk_structure/
-COPY one_l/agent_api/functions/stepfunctions/analyze_document_structure/ ./python/analyze_document_structure/
-COPY one_l/agent_api/functions/stepfunctions/retrieve_kb_query/ ./python/retrieve_kb_query/
-COPY one_l/agent_api/functions/stepfunctions/analyze_chunk_with_kb/ ./python/analyze_chunk_with_kb/
-COPY one_l/agent_api/functions/stepfunctions/analyze_document_with_kb/ ./python/analyze_document_with_kb/
+# Unified functions (replaced duplicate chunk/document functions)
+COPY one_l/agent_api/functions/stepfunctions/analyze_structure/ ./python/analyze_structure/
+COPY one_l/agent_api/functions/stepfunctions/retrieve_all_kb_queries/ ./python/retrieve_all_kb_queries/
+COPY one_l/agent_api/functions/stepfunctions/identify_conflicts/ ./python/identify_conflicts/
 COPY one_l/agent_api/functions/stepfunctions/merge_chunk_results/ ./python/merge_chunk_results/
 COPY one_l/agent_api/functions/stepfunctions/generate_redline/ ./python/generate_redline/
 COPY one_l/agent_api/functions/stepfunctions/save_results/ ./python/save_results/
 COPY one_l/agent_api/functions/stepfunctions/cleanup_session/ ./python/cleanup_session/
 COPY one_l/agent_api/functions/stepfunctions/handle_error/ ./python/handle_error/
-COPY one_l/agent_api/functions/stepfunctions/store_large_results/ ./python/store_large_results/
 
 # Copy the agent modules that all Lambda functions import
 COPY one_l/agent_api/agent ./python/agent_api/agent/

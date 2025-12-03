@@ -162,6 +162,33 @@ def lambda_handler(event, context):
                 if old_jobs:
                     logger.info(f"Cleaned up {len(old_jobs)} old processing job(s) for session {session_id}")
                 
+                # Update session title to use the document filename
+                # Extract filename from document_s3_key (e.g., "vendor-submissions/filename.pdf" -> "filename.pdf")
+                filename = document_s3_key.split('/')[-1] if document_s3_key else None
+                if filename:
+                    try:
+                        sessions_table_name = os.environ.get('SESSIONS_TABLE')
+                        if sessions_table_name:
+                            sessions_table = dynamodb.Table(sessions_table_name)
+                            sessions_table.update_item(
+                                Key={
+                                    'session_id': session_id,
+                                    'user_id': user_id
+                                },
+                                UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                                ExpressionAttributeValues={
+                                    ':title': filename,
+                                    ':updated_at': timestamp_iso,
+                                    ':last_activity': timestamp_iso
+                                }
+                            )
+                            logger.info(f"Updated session {session_id} title to: {filename}")
+                        else:
+                            logger.warning("SESSIONS_TABLE environment variable not set, skipping session title update")
+                    except Exception as title_update_error:
+                        # Non-fatal: log but don't fail the workflow
+                        logger.warning(f"Could not update session title: {title_update_error}")
+                
                 # Create initial DynamoDB record for new job
                 table.put_item(
                     Item={

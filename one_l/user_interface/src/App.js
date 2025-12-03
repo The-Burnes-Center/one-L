@@ -14,6 +14,7 @@ import { isConfigValid, loadConfig } from './utils/config';
 import { agentAPI, sessionAPI } from './services/api';
 import authService from './services/auth';
 import webSocketService from './services/websocket';
+import jobPollingService from './services/jobPolling';
 
 // Simple session component that loads session from URL
 const SessionView = () => {
@@ -584,7 +585,6 @@ const SessionWorkspace = ({ session }) => {
 
     try {
       setLoadingResults(true);
-      const userId = authService.getUserId();
       
       // Check if this session has recent WebSocket updates that should be prioritized
       const hasRecentWebSocketUpdates = sessionData?.hasWebSocketUpdates && 
@@ -595,26 +595,19 @@ const SessionWorkspace = ({ session }) => {
         console.log(`Session ${session.session_id} has recent WebSocket updates. Prioritizing localStorage data.`);
       }
       
-      // Always try to load results - the backend will return empty if none exist
-      const response = await sessionAPI.getSessionResults(session.session_id, userId);
+      // UNIFIED API: Use data already included in session from getUserSessions
+      // Backend now includes active_jobs and results in the session object
+      // No need to make a separate API call
+      const results = session.results || [];
       
-      // Handle response structure (wrapped in body or direct)
-      let responseData = response;
-      if (response && response.body) {
-        try {
-          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-        } catch (e) {
-          console.error('Error parsing session results response body:', e);
-          responseData = response;
-        }
-      }
+      // Always set session results (even if empty) for consistency
+      setSessionResults(results);
       
-      if (responseData.success && responseData.results) {
-        setSessionResults(responseData.results);
+      if (results && results.length > 0) {
         
         // Convert sessionResults to redlinedDocuments format for display
         // This allows existing sessions to show their redline documents
-        const redlinedDocsFromResults = responseData.results
+        const redlinedDocsFromResults = results
           .filter(result => result.redlined_document_s3_key && 
                            typeof result.redlined_document_s3_key === 'string' && 
                            result.redlined_document_s3_key.trim() !== '')
@@ -1199,11 +1192,8 @@ const SessionWorkspace = ({ session }) => {
     setWorkflowMessageType('error');
   };
 
-  // Polling function for real-time job status updates
+  // Simplified polling function using centralized service
   const pollJobStatus = async (jobId, sessionIdAtStart, filename, isCurrentSession) => {
-    const maxAttempts = 120; // 10 minutes with 5-second intervals
-    let attempts = 0;
-    
     // Map backend stages to frontend stages
     const backendToFrontendStage = {
       'starting': 'kb_sync',
@@ -1221,232 +1211,150 @@ const SessionWorkspace = ({ session }) => {
       'failed': ''
     };
     
-    while (attempts < maxAttempts) {
-      try {
-        const statusResponse = await agentAPI.getJobStatus(jobId);
-        
-        if (statusResponse.success) {
-          // Backend returns: { success: true, job_id, stage, progress, label, status, session_id, document_s3_key, ... }
-          // Progress is already a number (int) from backend (converted from DynamoDB Decimal)
-          const actualStatus = statusResponse.status;
-          const actualStage = statusResponse.stage;
-          
-          // Ensure progress is a valid number between 0-100
-          let actualProgress = 0;
-          if (statusResponse.progress !== undefined && statusResponse.progress !== null) {
-            if (typeof statusResponse.progress === 'number') {
-              actualProgress = Math.max(0, Math.min(100, statusResponse.progress)); // Clamp between 0-100
-            } else {
-              const parsed = parseInt(statusResponse.progress, 10);
-              actualProgress = isNaN(parsed) ? 0 : Math.max(0, Math.min(100, parsed));
-            }
-          }
-          
-          const actualLabel = statusResponse.label;
-          const actualError = statusResponse.error_message || statusResponse.error;
-          const result = statusResponse.result;
-          
-          console.log(`Polling job ${jobId}: status=${actualStatus}, stage=${actualStage}, progress=${actualProgress}, progressType=${typeof statusResponse.progress}, rawProgress=${statusResponse.progress}, finalProgress=${actualProgress}`);
-          
-          // Update UI with real-time progress
-          if (isCurrentSession()) {
-            const frontendStage = backendToFrontendStage[actualStage] || 'document_review';
-            
-            // Update processing phase with label only (no description)
-            if (actualStatus === 'processing') {
-              setProcessingPhase(frontendStage, actualLabel);
-              
-              // Update the redlined documents with progress
-              setRedlinedDocuments(prev => {
-                const foundDoc = prev.find(doc => doc.jobId === jobId);
-                console.log(`Looking for doc with jobId=${jobId}, found:`, foundDoc ? `yes (current progress=${foundDoc.progress})` : 'no');
-                console.log(`All docs:`, prev.map(d => ({ jobId: d.jobId, progress: d.progress, status: d.status })));
-                
-                const updated = prev.map(doc => {
-                  if (doc.jobId === jobId) {
-                    const updatedDoc = {
-                      ...doc,
-                      progress: actualProgress,
-                      status: 'processing',
-                      message: `${actualLabel} (${actualProgress}%)`,
-                      processing: true  // Ensure processing flag is set
-                    };
-                    console.log(`Updating doc ${jobId} progress from ${doc.progress} to ${actualProgress}%`);
-                    return updatedDoc;
-                  }
-                  return doc;
-                });
-                
-                const afterUpdate = updated.find(doc => doc.jobId === jobId);
-                console.log(`After update, doc progress:`, afterUpdate?.progress);
-                
-                return updated;
-              });
-            }
-          }
-          
-          // Check for failure FIRST (before completion check)
-          if (actualStatus === 'failed') {
-            console.log(`Job ${jobId} failed: ${actualError}`);
-            
-            // Clean up job tracking
-            if (jobSessionMapRef.current[jobId]) {
-              delete jobSessionMapRef.current[jobId];
-              saveJobSessionMapToStorage(jobSessionMapRef.current);
-            }
-            if (activeJobsRef.current[jobId]) {
-              delete activeJobsRef.current[jobId];
-            }
-            if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
-              window.currentProcessingJob = null;
-            }
-            
-            // Trigger session sidebar refresh to show failed status
-            if (window.triggerSessionSidebarRefresh) {
-              window.triggerSessionSidebarRefresh();
-            }
-            
-            // Update UI immediately to show error
-            if (isCurrentSession()) {
-              setRedlinedDocuments(prev => {
-                const updated = prev.map(doc => {
-                  if (doc.jobId === jobId) {
-                    return {
-                      ...doc,
-                      status: 'failed',
-                      progress: 0,
-                      processing: false,
-                      message: actualError || 'Processing failed',
-                      success: false
-                    };
-                  }
-                  return doc;
-                });
-                
-                // Clean up: remove failed jobs without results after a delay (let user see error first)
-                // But remove immediately if there's a new processing job
-                const hasNewProcessingJob = updated.some(doc => 
-                  doc.processing && doc.jobId !== jobId
-                );
-                
-                if (hasNewProcessingJob) {
-                  // Remove failed job immediately if there's a new processing job
-                  return updated.filter(doc => doc.jobId !== jobId || doc.redlinedDocument || doc.analysis);
-                }
-                
-                return updated;
-              });
-            }
-            
-            // Stop polling immediately
+    const handleUpdate = (statusResponse) => {
+      if (!isCurrentSession()) return;
+      
+      const { status, stage, progress, label } = statusResponse;
+      const actualProgress = Math.max(0, Math.min(100, progress || 0));
+      const frontendStage = backendToFrontendStage[stage] || 'document_review';
+      
+      if (status === 'processing') {
+        setProcessingPhase(frontendStage, label);
+        setRedlinedDocuments(prev => prev.map(doc => {
+          if (doc.jobId === jobId) {
             return {
-              success: false,
-              processing: false,
-              error: actualError || 'Processing failed'
+              ...doc,
+              progress: actualProgress,
+              status: 'processing',
+              message: `${label} (${actualProgress}%)`,
+              processing: true
             };
           }
-          
-          // Check for completion
-          // If status is completed, stop polling even if result is not yet available
-          // (Step Functions may have succeeded but DynamoDB update is delayed)
-          if (actualStatus === 'completed') {
-            // Clean up job tracking
-            if (jobSessionMapRef.current[jobId]) {
-              delete jobSessionMapRef.current[jobId];
-              saveJobSessionMapToStorage(jobSessionMapRef.current);
-            }
-            if (activeJobsRef.current[jobId]) {
-              delete activeJobsRef.current[jobId];
-            }
-            if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
-              window.currentProcessingJob = null;
-            }
-            
-            // Trigger session sidebar refresh to show completed status
-            if (window.triggerSessionSidebarRefresh) {
-              window.triggerSessionSidebarRefresh();
-            }
-            
-            // Update UI to mark job as completed
-            if (isCurrentSession()) {
-              setRedlinedDocuments(prev => prev.map(doc => {
-                if (doc.jobId === jobId) {
-                  return {
-                    ...doc,
-                    status: 'completed',
-                    progress: 100,
-                    processing: false,
-                    success: result ? (result.has_redlines || result.conflicts_found === 0) : true
-                  };
-                }
-                return doc;
-              }));
-            }
-            
-            // If we have result data, return it
-            if (result) {
-              return {
-                success: true,
-                processing: false,
-                redlined_document: result.redlined_document,
-                analysis: result.analysis,
-                has_redlines: result.has_redlines,
-                conflicts_found: result.conflicts_found
-              };
-            } else {
-              // Status is completed but result not available yet - stop polling
-              // The result will be available when user refreshes or checks later
-              return {
-                success: true,
-                processing: false,
-                message: 'Processing completed. Results will be available shortly.'
-              };
-            }
-          }
-        } else {
-          // API returned success: false
-          const errorMsg = statusResponse.error || 'Failed to get job status';
-          console.error('Job status API error:', errorMsg);
-          
-          // Update UI to show error
-          if (isCurrentSession()) {
-            setRedlinedDocuments(prev => prev.map(doc => {
-              if (doc.jobId === jobId) {
-                return {
-                  ...doc,
-                  status: 'failed',
-                  progress: 100,
-                  processing: false,
-                  message: errorMsg,
-                  success: false
-                };
-              }
-              return doc;
-            }));
-          }
-          
-          // Continue polling in case it's a transient error
-        }
-        
-        // Wait before next poll (5 seconds)
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        attempts++;
-        
-      } catch (pollError) {
-        console.warn('Polling error:', pollError);
-        // Continue polling even on error
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        attempts++;
+          return doc;
+        }));
       }
-    }
-    
-    // Timeout - but job may still be running
-    return {
-      success: false,
-      processing: true,
-      error: 'Processing is taking longer than expected. The job will continue in the background.',
-      job_id: jobId
     };
+    
+    const handleComplete = (statusResponse) => {
+      const { result } = statusResponse;
+      
+      // Clean up job tracking
+      if (jobSessionMapRef.current[jobId]) {
+        delete jobSessionMapRef.current[jobId];
+        saveJobSessionMapToStorage(jobSessionMapRef.current);
+      }
+      if (activeJobsRef.current[jobId]) {
+        delete activeJobsRef.current[jobId];
+      }
+      if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
+        window.currentProcessingJob = null;
+      }
+      
+      if (window.triggerSessionSidebarRefresh) {
+        window.triggerSessionSidebarRefresh();
+      }
+      
+      if (isCurrentSession()) {
+        setRedlinedDocuments(prev => prev.map(doc => {
+          if (doc.jobId === jobId) {
+            return {
+              ...doc,
+              status: 'completed',
+              progress: 100,
+              processing: false,
+              success: result ? (result.has_redlines || result.conflicts_found === 0) : true
+            };
+          }
+          return doc;
+        }));
+      }
+      
+      return {
+        success: true,
+        processing: false,
+        redlined_document: result?.redlined_document,
+        analysis: result?.analysis,
+        has_redlines: result?.has_redlines,
+        conflicts_found: result?.conflicts_found || 0
+      };
+    };
+    
+    const handleError = (statusResponse) => {
+      const error = statusResponse.error_message || statusResponse.error || 'Processing failed';
+      
+      // Clean up job tracking
+      if (jobSessionMapRef.current[jobId]) {
+        delete jobSessionMapRef.current[jobId];
+        saveJobSessionMapToStorage(jobSessionMapRef.current);
+      }
+      if (activeJobsRef.current[jobId]) {
+        delete activeJobsRef.current[jobId];
+      }
+      if (window.currentProcessingJob && window.currentProcessingJob.jobId === jobId) {
+        window.currentProcessingJob = null;
+      }
+      
+      if (window.triggerSessionSidebarRefresh) {
+        window.triggerSessionSidebarRefresh();
+      }
+      
+      if (isCurrentSession()) {
+        setRedlinedDocuments(prev => {
+          const updated = prev.map(doc => {
+            if (doc.jobId === jobId) {
+              return {
+                ...doc,
+                status: 'failed',
+                progress: 0,
+                processing: false,
+                message: error,
+                success: false
+              };
+            }
+            return doc;
+          });
+          
+          // Remove failed job if there's a new processing job
+          const hasNewProcessingJob = updated.some(doc => 
+            doc.processing && doc.jobId !== jobId
+          );
+          
+          if (hasNewProcessingJob) {
+            return updated.filter(doc => doc.jobId !== jobId || doc.redlinedDocument || doc.analysis);
+          }
+          
+          return updated;
+        });
+      }
+      
+      return {
+        success: false,
+        processing: false,
+        error
+      };
+    };
+    
+    try {
+      // Use centralized polling service
+      const finalResponse = await jobPollingService.pollUntilComplete(jobId, handleUpdate, 120);
+      
+      // Handle completion or failure based on status
+      if (finalResponse.status === 'completed') {
+        return handleComplete(finalResponse);
+      } else if (finalResponse.status === 'failed') {
+        return handleError(finalResponse);
+      }
+      
+      // Fallback (shouldn't happen)
+      return {
+        success: false,
+        processing: true,
+        error: 'Unexpected polling result'
+      };
+    } catch (error) {
+      console.error(`Polling failed for job ${jobId}:`, error);
+      return handleError({ error: error.message });
+    }
   };
 
   // Unified stage management without artificial percentage tracking

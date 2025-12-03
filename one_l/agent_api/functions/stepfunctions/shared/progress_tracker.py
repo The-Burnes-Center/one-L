@@ -3,15 +3,19 @@ Shared progress tracking utilities for Step Functions workflow.
 
 Each Lambda in the workflow calls update_progress() to track its stage.
 This updates DynamoDB so the frontend can poll for status.
+Optionally sends WebSocket notifications for real-time updates.
 """
 
 import boto3
+import json
 import os
 import logging
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger()
 dynamodb = boto3.resource('dynamodb')
+lambda_client = boto3.client('lambda')
 
 
 # Workflow stages in order with their progress percentages
@@ -54,10 +58,73 @@ STAGES = {
 }
 
 
-def update_progress(job_id: str, timestamp: str, stage: str, message: str = None, 
-                   extra_data: dict = None) -> bool:
+def _send_websocket_notification(job_id: str, session_id: Optional[str], 
+                                  user_id: Optional[str], stage: str, 
+                                  progress: int, message: Optional[str] = None) -> None:
     """
-    Update job progress in DynamoDB.
+    Send WebSocket notification for progress update (non-blocking).
+    
+    Args:
+        job_id: The job ID
+        session_id: Optional session ID
+        user_id: Optional user ID
+        stage: Current stage
+        progress: Progress percentage
+        message: Optional message
+    """
+    try:
+        # Try to get notification function name from environment or construct it
+        notification_function_name = os.environ.get('WEBSOCKET_NOTIFICATION_FUNCTION_NAME')
+        
+        if not notification_function_name:
+            # Try to construct from current function name pattern
+            current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
+            if current_function:
+                # Pattern: {stack}-{service}-{function} -> {stack}-websocket-notification
+                parts = current_function.split('-')
+                if len(parts) >= 2:
+                    stack_name = parts[0]
+                    notification_function_name = f"{stack_name}-websocket-notification"
+        
+        if not notification_function_name:
+            logger.debug("WebSocket notification function name not available, skipping notification")
+            return
+        
+        notification_payload = {
+            'notification_type': 'job_progress',
+            'job_id': job_id,
+            'session_id': session_id,
+            'user_id': user_id,
+            'data': {
+                'status': 'processing' if stage not in ['completed', 'failed'] else stage,
+                'stage': stage,
+                'progress': progress,
+                'message': message or f"Processing: {stage}"
+            }
+        }
+        
+        # Invoke asynchronously (non-blocking)
+        lambda_client.invoke(
+            FunctionName=notification_function_name,
+            InvocationType='Event',
+            Payload=json.dumps(notification_payload)
+        )
+        logger.debug(f"Sent WebSocket notification for job {job_id} at stage {stage}")
+        
+    except Exception as e:
+        # Don't fail progress update if notification fails
+        logger.debug(f"Failed to send WebSocket notification (non-critical): {e}")
+
+
+def update_progress(job_id: str, timestamp: str, stage: str, message: str = None, 
+                   extra_data: dict = None, session_id: Optional[str] = None,
+                   user_id: Optional[str] = None, send_notification: bool = True) -> bool:
+    """
+    Update job progress in DynamoDB and optionally send WebSocket notification.
+    
+    CRITICAL: Always sets both 'status' and 'stage' fields for consistency.
+    - 'status' is the primary field: 'processing', 'completed', 'failed'
+    - 'stage' is the granular workflow stage: 'analyzing', 'generating_redlines', etc.
     
     Args:
         job_id: The job ID (analysis_id in DynamoDB)
@@ -65,6 +132,9 @@ def update_progress(job_id: str, timestamp: str, stage: str, message: str = None
         stage: Current workflow stage (from STAGES)
         message: Optional custom message for this stage
         extra_data: Optional additional data to store
+        session_id: Optional session ID for WebSocket notifications
+        user_id: Optional user ID for WebSocket notifications
+        send_notification: Whether to send WebSocket notification (default: True)
     
     Returns:
         True if update succeeded, False otherwise
@@ -79,8 +149,18 @@ def update_progress(job_id: str, timestamp: str, stage: str, message: str = None
         
         progress = STAGES.get(stage, 0)
         
-        update_expr = 'SET stage = :stage, progress = :progress, updated_at = :updated_at'
+        # Determine status based on stage
+        if stage == 'completed':
+            status = 'completed'
+        elif stage == 'failed':
+            status = 'failed'
+        else:
+            status = 'processing'  # All other stages are processing
+        
+        # CRITICAL: Always update both 'status' and 'stage' fields
+        update_expr = 'SET #status = :status, stage = :stage, progress = :progress, updated_at = :updated_at'
         expr_values = {
+            ':status': status,
             ':stage': stage,
             ':progress': progress,
             ':updated_at': datetime.utcnow().isoformat()
@@ -102,10 +182,16 @@ def update_progress(job_id: str, timestamp: str, stage: str, message: str = None
                 'timestamp': timestamp
             },
             UpdateExpression=update_expr,
+            ExpressionAttributeNames={'#status': 'status'},
             ExpressionAttributeValues=expr_values
         )
         
-        logger.info(f"Updated job {job_id} to stage '{stage}' ({progress}%)")
+        logger.info(f"Updated job {job_id} to status='{status}', stage='{stage}' ({progress}%)")
+        
+        # Send WebSocket notification if requested and we have session/user info
+        if send_notification and (session_id or user_id):
+            _send_websocket_notification(job_id, session_id, user_id, stage, progress, message)
+        
         return True
         
     except Exception as e:
@@ -113,7 +199,8 @@ def update_progress(job_id: str, timestamp: str, stage: str, message: str = None
         return False
 
 
-def mark_completed(job_id: str, timestamp: str, result_data: dict = None) -> bool:
+def mark_completed(job_id: str, timestamp: str, result_data: dict = None,
+                   session_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
     """
     Mark a job as completed with optional result data.
     
@@ -121,6 +208,8 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None) -> boo
         job_id: The job ID
         timestamp: The timestamp (sort key)
         result_data: Optional result data (redlined_document, analysis, etc.)
+        session_id: Optional session ID for WebSocket notifications
+        user_id: Optional user ID for WebSocket notifications
     """
     try:
         table_name = os.environ.get('ANALYSES_TABLE_NAME')
@@ -134,10 +223,9 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None) -> boo
         extra['completed_at'] = datetime.utcnow().isoformat()
         
         # CRITICAL: Update both 'status' and 'stage' to 'completed'
-        # job_status Lambda checks 'status' field, not just 'stage'
         update_expr = 'SET #status = :status, stage = :stage, progress = :progress, updated_at = :updated_at'
         expr_values = {
-            ':status': 'completed',  # CRITICAL: Set status field
+            ':status': 'completed',
             ':stage': 'completed',
             ':progress': 100,
             ':updated_at': datetime.utcnow().isoformat()
@@ -165,6 +253,14 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None) -> boo
         )
         
         logger.info(f"Marked job {job_id} as completed (status=completed, stage=completed, progress=100%)")
+        
+        # Send WebSocket notification for completion
+        if session_id or user_id:
+            _send_websocket_notification(
+                job_id, session_id, user_id, 'completed', 100, 
+                'Document review complete!'
+            )
+        
         return True
         
     except Exception as e:
@@ -172,7 +268,8 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None) -> boo
         return False
 
 
-def mark_failed(job_id: str, timestamp: str, error_message: str) -> bool:
+def mark_failed(job_id: str, timestamp: str, error_message: str, 
+                 session_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
     """
     Mark a job as failed with an error message.
     
@@ -180,10 +277,15 @@ def mark_failed(job_id: str, timestamp: str, error_message: str) -> bool:
         job_id: The job ID
         timestamp: The timestamp (sort key)
         error_message: The error message to store
+        session_id: Optional session ID for WebSocket notifications
+        user_id: Optional user ID for WebSocket notifications
     """
     return update_progress(
         job_id, timestamp, 'failed', 
         'Processing failed',
-        {'error_message': error_message, 'failed_at': datetime.utcnow().isoformat()}
+        {'error_message': error_message, 'failed_at': datetime.utcnow().isoformat()},
+        session_id=session_id,
+        user_id=user_id,
+        send_notification=True
     )
 

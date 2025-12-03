@@ -94,7 +94,7 @@ class StepFunctionsConstruct(Construct):
             "initialize_job/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.split_document_fn = self._create_lambda(
@@ -102,44 +102,29 @@ class StepFunctionsConstruct(Construct):
             "split_document/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.minutes(5)
+            timeout=Duration.minutes(15)
         )
         
-        self.analyze_chunk_structure_fn = self._create_lambda(
-            "AnalyzeChunkStructure",
-            "analyze_chunk_structure/lambda_function.lambda_handler",
+        # Unified lambda functions (replace duplicate chunk/document functions)
+        self.analyze_structure_fn = self._create_lambda(
+            "AnalyzeStructure",
+            "analyze_structure/lambda_function.lambda_handler",
             role,
             common_env,
             timeout=Duration.minutes(15)
         )
         
-        self.analyze_document_structure_fn = self._create_lambda(
-            "AnalyzeDocumentStructure",
-            "analyze_document_structure/lambda_function.lambda_handler",
+        self.retrieve_all_kb_queries_fn = self._create_lambda(
+            "RetrieveAllKBQueries",
+            "retrieve_all_kb_queries/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.minutes(15)
+            timeout=Duration.minutes(15)  # Longer timeout for retrieving all queries
         )
         
-        self.retrieve_kb_query_fn = self._create_lambda(
-            "RetrieveKBQuery",
-            "retrieve_kb_query/lambda_function.lambda_handler",
-            role,
-            common_env,
-            timeout=Duration.minutes(2)
-        )
-        
-        self.analyze_chunk_with_kb_fn = self._create_lambda(
-            "AnalyzeChunkWithKB",
-            "analyze_chunk_with_kb/lambda_function.lambda_handler",
-            role,
-            common_env,
-            timeout=Duration.minutes(15)
-        )
-        
-        self.analyze_document_with_kb_fn = self._create_lambda(
-            "AnalyzeDocumentWithKB",
-            "analyze_document_with_kb/lambda_function.lambda_handler",
+        self.identify_conflicts_fn = self._create_lambda(
+            "IdentifyConflicts",
+            "identify_conflicts/lambda_function.lambda_handler",
             role,
             common_env,
             timeout=Duration.minutes(15)
@@ -158,7 +143,7 @@ class StepFunctionsConstruct(Construct):
             "generate_redline/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.minutes(10)
+            timeout=Duration.minutes(15)
         )
         
         self.save_results_fn = self._create_lambda(
@@ -166,7 +151,7 @@ class StepFunctionsConstruct(Construct):
             "save_results/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.cleanup_session_fn = self._create_lambda(
@@ -174,15 +159,7 @@ class StepFunctionsConstruct(Construct):
             "cleanup_session/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
-        )
-        
-        self.store_large_results_fn = self._create_lambda(
-            "StoreLargeResults",
-            "store_large_results/lambda_function.lambda_handler",
-            role,
-            common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
         
         self.handle_error_fn = self._create_lambda(
@@ -190,7 +167,7 @@ class StepFunctionsConstruct(Construct):
             "handle_error/lambda_function.lambda_handler",
             role,
             common_env,
-            timeout=Duration.seconds(30)
+            timeout=Duration.minutes(2)
         )
     
     def _create_lambda(
@@ -319,88 +296,107 @@ class StepFunctionsConstruct(Construct):
             result_path="$.error"
         )
         
-        # Check chunk count
-        check_chunk_count = sfn.Choice(self, "CheckChunkCount")
+        # ===== UNIFIED WORKFLOW (always uses Map state, even for single documents) =====
         
-        # ===== CHUNKED PATH (chunks > 1) =====
-        
-        # Analyze chunk structure
-        analyze_chunk_structure = tasks.LambdaInvoke(
-            self, "AnalyzeChunkStructure",
-            lambda_function=self.analyze_chunk_structure_fn,
+        # Unified analyze structure (handles both chunk and document)
+        # Always stores result in S3, returns only S3 reference
+        analyze_structure = tasks.LambdaInvoke(
+            self, "AnalyzeStructure",
+            lambda_function=self.analyze_structure_fn,
             payload_response_only=True,
             result_path="$.structure_result",
-            retry_on_service_exceptions=True
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "chunk_s3_key": sfn.JsonPath.string_at("$.chunk_s3_key"),  # From chunk item
+                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),  # For single docs (fallback)
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region"),
+                "chunk_num": sfn.JsonPath.number_at("$.chunk_num"),
+                "total_chunks": sfn.JsonPath.number_at("$.total_chunks"),
+                "start_char": sfn.JsonPath.number_at("$.start_char"),
+                "end_char": sfn.JsonPath.number_at("$.end_char"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+            })
         )
-        analyze_chunk_structure.add_retry(
+        analyze_structure.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
         )
+        # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
-        # Retrieve KB queries in parallel
-        # itemSelector constructs input for each Map iteration
-        # Each query is a QueryModel object with: query (required), query_id (optional), max_results (defaults to 50), section
-        # JsonPath methods extract values - if optional fields are None/missing, they'll be None, Lambda handles with defaults
-        # CRITICAL: Pass job_id, session_id, bucket_name so Lambda can store large results in S3
-        retrieve_kb_queries_map = sfn.Map(
-            self, "RetrieveKBQueriesParallel",
-            items_path="$.structure_result.queries",
-            max_concurrency=20,
-            result_path="$.kb_results",
-            item_selector={
-                "query.$": "$$.Map.Item.Value.query",
-                "query_id.$": "$$.Map.Item.Value.query_id",  # Optional, Lambda uses event.get('query_id', 0)
-                "max_results.$": "$$.Map.Item.Value.max_results",  # Optional, Lambda uses event.get('max_results', 50)
-                "knowledge_base_id.$": "$.knowledge_base_id",
-                "region.$": "$.region",
-                "job_id.$": "$.job_id",  # Pass for S3 storage
-                "session_id.$": "$.session_id",  # Pass for S3 storage
-                "bucket_name.$": "$.split_result.bucket_name"  # Pass bucket_name for S3 storage
-            }
-        )
-        
-        retrieve_kb_query = tasks.LambdaInvoke(
-            self, "RetrieveKBQuery",
-            lambda_function=self.retrieve_kb_query_fn,
+        # Retrieve all KB queries in single lambda (replaces parallel Map state)
+        # Loads structure results from S3, retrieves queries, stores KB results in S3
+        retrieve_all_kb_queries = tasks.LambdaInvoke(
+            self, "RetrieveAllKBQueries",
+            lambda_function=self.retrieve_all_kb_queries_fn,
             payload_response_only=True,
-            retry_on_service_exceptions=True
+            result_path="$.kb_retrieval_result",
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "structure_s3_key": sfn.JsonPath.string_at("$.structure_result.structure_s3_key"),  # Load from S3
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name")
+            })
         )
-        retrieve_kb_query.add_retry(
-            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            interval=Duration.seconds(2),
-            max_attempts=3,
-            backoff_rate=2.0
-        )
-        
-        retrieve_kb_queries_map.item_processor(retrieve_kb_query)
-        
-        # Analyze chunk with KB results
-        analyze_chunk_with_kb = tasks.LambdaInvoke(
-            self, "AnalyzeChunkWithKB",
-            lambda_function=self.analyze_chunk_with_kb_fn,
-            payload_response_only=True,
-            result_path="$.analysis_result",
-            retry_on_service_exceptions=True
-        )
-        analyze_chunk_with_kb.add_retry(
+        retrieve_all_kb_queries.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
             interval=Duration.seconds(2),
             max_attempts=2,
             backoff_rate=2.0
         )
+        # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
-        # Chunk workflow: structure -> queries -> analysis
-        chunk_workflow = analyze_chunk_structure.next(
-            retrieve_kb_queries_map.next(analyze_chunk_with_kb)
+        # Unified identify conflicts (handles both chunk and document)
+        # Always stores result in S3, returns only S3 reference
+        identify_conflicts = tasks.LambdaInvoke(
+            self, "IdentifyConflicts",
+            lambda_function=self.identify_conflicts_fn,
+            payload_response_only=True,
+            result_path="$.analysis_result",  # Contains S3 reference
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "chunk_s3_key": sfn.JsonPath.string_at("$.chunk_s3_key"),  # From chunk item
+                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),  # For single docs (fallback)
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
+                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
+                "region": sfn.JsonPath.string_at("$.region"),
+                "kb_results_s3_key": sfn.JsonPath.string_at("$.kb_retrieval_result.results_s3_key"),  # From S3
+                "chunk_num": sfn.JsonPath.number_at("$.chunk_num"),
+                "total_chunks": sfn.JsonPath.number_at("$.total_chunks"),
+                "start_char": sfn.JsonPath.number_at("$.start_char"),
+                "end_char": sfn.JsonPath.number_at("$.end_char"),
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+            })
+        )
+        identify_conflicts.add_retry(
+            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
+            interval=Duration.seconds(2),
+            max_attempts=2,
+            backoff_rate=2.0
+        )
+        # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
+        
+        # Unified workflow: structure -> retrieve all queries -> identify conflicts
+        unified_workflow = analyze_structure.next(
+            retrieve_all_kb_queries.next(identify_conflicts)
         )
         
-        # Process all chunks in parallel
+        # Process all chunks in parallel using unified workflow
+        # Works for both single documents (1 chunk) and multiple chunks
         # Use itemSelector to pass both chunk item AND parent context to each iteration
         analyze_chunks_map = sfn.Map(
             self, "AnalyzeChunksParallel",
-            items_path="$.split_result.chunks",
+            items_path="$.split_result.chunks",  # Always has at least 1 chunk (even for single docs)
             max_concurrency=10,
             result_path="$.chunk_analyses",
             item_selector={
@@ -423,26 +419,18 @@ class StepFunctionsConstruct(Construct):
             }
         )
         
-        analyze_chunks_map.item_processor(chunk_workflow)
+        # Set item processor first
+        analyze_chunks_map.item_processor(unified_workflow)
         
-        # CRITICAL: Store chunk_analyses in S3 if too large before merging
-        # The Map collects all chunk results into $.chunk_analyses which can exceed 256KB
-        store_chunk_analyses = tasks.LambdaInvoke(
-            self, "StoreChunkAnalyses",
-            lambda_function=self.store_large_results_fn,
-            payload_response_only=True,
-            result_path="$.chunk_storage",
-            retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "kb_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Reuse store_large_results function
-                "job_id": sfn.JsonPath.string_at("$.job_id"),
-                "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
-                "storage_type": "chunk_analyses"  # Indicate this is chunk analyses, not KB results
-            })
+        # Add error handling at Map level (best practice per AWS docs)
+        # Errors from item processor will be caught here and handled by HandleError Lambda
+        analyze_chunks_map.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
         )
         
-        # Merge chunk results - will load from S3 if stored
+        # Merge chunk results - loads individual chunk results from S3
         merge_chunk_results = tasks.LambdaInvoke(
             self, "MergeChunkResults",
             lambda_function=self.merge_chunk_results_fn,
@@ -451,9 +439,9 @@ class StepFunctionsConstruct(Construct):
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
                 "chunk_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Pass chunk references (contain S3 keys)
-                "chunk_analyses_s3_key": sfn.JsonPath.string_at("$.chunk_storage.s3_key"),  # Aggregated S3 key (backup)
                 "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
                 "timestamp": sfn.JsonPath.string_at("$.timestamp")
             })
         )
@@ -463,115 +451,16 @@ class StepFunctionsConstruct(Construct):
             max_attempts=2,
             backoff_rate=2.0
         )
-        
-        # ===== SINGLE DOCUMENT PATH (chunks = 1) =====
-        
-        analyze_doc_structure = tasks.LambdaInvoke(
-            self, "AnalyzeDocumentStructure",
-            lambda_function=self.analyze_document_structure_fn,
-            payload_response_only=True,
-            result_path="$.structure_result",
-            retry_on_service_exceptions=True
-        )
-        analyze_doc_structure.add_retry(
-            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            interval=Duration.seconds(2),
-            max_attempts=2,
-            backoff_rate=2.0
-        )
-        
-        # Retrieve KB queries in parallel
-        # itemSelector constructs input for each Map iteration
-        # Each query is a QueryModel object with: query (required), query_id (optional), max_results (defaults to 50), section
-        # JsonPath methods extract values - if optional fields are None/missing, they'll be None, Lambda handles with defaults
-        # CRITICAL: Pass job_id, session_id, bucket_name so Lambda can store large results in S3
-        retrieve_doc_kb_queries_map = sfn.Map(
-            self, "RetrieveDocKBQueriesParallel",
-            items_path="$.structure_result.queries",
-            max_concurrency=20,
-            result_path="$.kb_results",
-            item_selector={
-                "query.$": "$$.Map.Item.Value.query",
-                "query_id.$": "$$.Map.Item.Value.query_id",  # Optional, Lambda uses event.get('query_id', 0)
-                "max_results.$": "$$.Map.Item.Value.max_results",  # Optional, Lambda uses event.get('max_results', 50)
-                "knowledge_base_id.$": "$.knowledge_base_id",
-                "region.$": "$.region",
-                "job_id.$": "$.job_id",  # Pass for S3 storage
-                "session_id.$": "$.session_id",  # Pass for S3 storage
-                "bucket_name.$": "$.bucket_name"  # Pass bucket_name for S3 storage (from initialize_job)
-            }
-        )
-        
-        retrieve_doc_kb_query = tasks.LambdaInvoke(
-            self, "RetrieveDocKBQuery",
-            lambda_function=self.retrieve_kb_query_fn,
-            payload_response_only=True,
-            retry_on_service_exceptions=True
-        )
-        retrieve_doc_kb_query.add_retry(
-            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            interval=Duration.seconds(2),
-            max_attempts=3,
-            backoff_rate=2.0
-        )
-        
-        retrieve_doc_kb_queries_map.item_processor(retrieve_doc_kb_query)
-        
-        # CRITICAL: KB results are always stored per-query in S3 by retrieve_kb_query Lambda
-        # Each query always stores its own results, so $.kb_results contains S3 keys, not full data
-        # Store aggregated KB results in S3 as a backup/fallback for consistency
-        store_doc_kb_results = tasks.LambdaInvoke(
-            self, "StoreDocKBResults",
-            lambda_function=self.store_large_results_fn,
-            payload_response_only=True,
-            result_path="$.kb_storage",
-            retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "kb_results": sfn.JsonPath.object_at("$.kb_results"),  # Array of query results (may contain S3 keys)
-                "job_id": sfn.JsonPath.string_at("$.job_id"),
-                "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
-                "storage_type": "kb_results"
-            })
-        )
-        
-        # Analyze document with KB results
-        # Will load from S3 if individual queries stored results, or from aggregated S3 key
-        analyze_document_with_kb = tasks.LambdaInvoke(
-            self, "AnalyzeDocumentWithKB",
-            lambda_function=self.analyze_document_with_kb_fn,
-            payload_response_only=True,
-            result_path="$.conflicts_result",
-            retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
-                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
-                "knowledge_base_id": sfn.JsonPath.string_at("$.knowledge_base_id"),
-                "region": sfn.JsonPath.string_at("$.region"),
-                "job_id": sfn.JsonPath.string_at("$.job_id"),
-                "timestamp": sfn.JsonPath.string_at("$.timestamp"),
-                "kb_results": sfn.JsonPath.object_at("$.kb_results"),  # Pass KB results (may contain per-query S3 keys)
-                "kb_results_s3_key": sfn.JsonPath.string_at("$.kb_storage.s3_key")  # Aggregated S3 key if stored
-            })
-        )
-        analyze_document_with_kb.add_retry(
-            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            interval=Duration.seconds(2),
-            max_attempts=2,
-            backoff_rate=2.0
-        )
-        
-        # Single document workflow
-        single_doc_workflow = analyze_doc_structure.next(
-            retrieve_doc_kb_queries_map.next(
-                store_doc_kb_results.next(analyze_document_with_kb)
-            )
+        merge_chunk_results.add_catch(
+            handle_error,
+            errors=["States.ALL"],
+            result_path="$.error"
         )
         
         # ===== COMMON FINAL STEPS =====
         
         # Generate redline
-        # CRITICAL: Pass required parameters explicitly to avoid missing data
+        # CRITICAL: Load conflicts from S3 (merge_chunk_results stores in S3)
         generate_redline = tasks.LambdaInvoke(
             self, "GenerateRedline",
             lambda_function=self.generate_redline_fn,
@@ -579,8 +468,11 @@ class StepFunctionsConstruct(Construct):
             result_path="$.redline_result",
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
-                "conflicts_result": sfn.JsonPath.object_at("$.conflicts_result"),  # From analyze step
+                "conflicts_s3_key": sfn.JsonPath.string_at("$.conflicts_result.conflicts_s3_key"),  # S3 reference from merge
+                "conflicts_result": sfn.JsonPath.object_at("$.conflicts_result"),  # Fallback for legacy support
                 "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
+                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),  # For loading conflicts from S3
+                "bucket_type": sfn.JsonPath.string_at("$.bucket_type"),  # Pass bucket_type for correct S3 bucket lookup
                 "session_id": sfn.JsonPath.string_at("$.session_id"),
                 "user_id": sfn.JsonPath.string_at("$.user_id"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
@@ -595,7 +487,7 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Save results
-        # CRITICAL: Pass required parameters explicitly (analysis_json from conflicts_result, redlined_s3_key from redline_result)
+        # CRITICAL: Load conflicts from S3 (merge_chunk_results stores in S3)
         save_results = tasks.LambdaInvoke(
             self, "SaveResults",
             lambda_function=self.save_results_fn,
@@ -603,9 +495,12 @@ class StepFunctionsConstruct(Construct):
             result_path="$.save_result",
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
-                "analysis_json": sfn.JsonPath.object_at("$.conflicts_result"),  # Convert conflicts_result to analysis_json
+                "conflicts_s3_key": sfn.JsonPath.string_at("$.conflicts_result.conflicts_s3_key"),  # S3 reference from merge
+                "analysis_json": sfn.JsonPath.object_at("$.conflicts_result"),  # Fallback for legacy support
+                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),  # For loading conflicts from S3
                 "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
                 "redlined_s3_key": sfn.JsonPath.string_at("$.redline_result.redlined_document_s3_key"),  # From generate_redline
+                "bucket_type": sfn.JsonPath.string_at("$.bucket_type"),  # Pass bucket_type for correct bucket lookup
                 "session_id": sfn.JsonPath.string_at("$.session_id"),
                 "user_id": sfn.JsonPath.string_at("$.user_id"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
@@ -625,7 +520,11 @@ class StepFunctionsConstruct(Construct):
             lambda_function=self.cleanup_session_fn,
             payload_response_only=True,
             result_path="$.cleanup_result",
-            retry_on_service_exceptions=True
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
+                "user_id": sfn.JsonPath.string_at("$.user_id")
+            })
         )
         cleanup_session.add_retry(
             errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
@@ -634,10 +533,8 @@ class StepFunctionsConstruct(Construct):
             backoff_rate=2.0
         )
         
-        # Define workflow with proper branching
-        # CRITICAL: Store chunk_analyses in S3 before merging if they're large
-        chunked_path = analyze_chunks_map.next(store_chunk_analyses.next(merge_chunk_results))
-        single_path = single_doc_workflow
+        # Define workflow - always uses Map state (works for both single and multiple chunks)
+        processing_path = analyze_chunks_map.next(merge_chunk_results)
         
         # Add error handling to individual states (not chains)
         generate_redline.add_catch(
@@ -656,21 +553,15 @@ class StepFunctionsConstruct(Construct):
             result_path="$.error"
         )
         
-        # Both paths converge to final steps
+        # Final steps
         final_steps = generate_redline.next(save_results).next(cleanup_session)
         
         # Complete workflow definition
-        # Note: split_result.chunk_count comes from split_document Lambda
+        # Always uses Map state - works for single documents (1 chunk) and multiple chunks
+        # split_document always creates chunks array with at least 1 chunk
         definition = initialize_job.next(
             split_document.next(
-                check_chunk_count
-                    .when(
-                        sfn.Condition.number_greater_than("$.split_result.chunk_count", 1),
-                        chunked_path.next(final_steps)
-                    )
-                    .otherwise(
-                        single_path.next(final_steps)
-                    )
+                processing_path.next(final_steps)
             )
         )
         
@@ -712,12 +603,27 @@ class StepFunctionsConstruct(Construct):
         # Grant permission to start Step Functions execution
         self.state_machine.grant_start_execution(role)
         
+        # Grant permission to update sessions table (for updating session title with document filename)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "dynamodb:UpdateItem",
+                    "dynamodb:GetItem"
+                ],
+                resources=[
+                    f"arn:aws:dynamodb:{Stack.of(self).region}:{Stack.of(self).account}:table/{self._stack_name}-sessions"
+                ]
+            )
+        )
+        
         # Environment variables
         env = {
             "ANALYSES_TABLE_NAME": self.analysis_table.table_name,
             "STATE_MACHINE_ARN": self.state_machine.state_machine_arn,
             "REGION": Stack.of(self).region,
             "KNOWLEDGE_BASE_ID": self.knowledge_base_id,  # Required for passing to Step Functions
+            "SESSIONS_TABLE": f"{self._stack_name}-sessions",  # Sessions table name (matches knowledge_management construct)
             "LOG_LEVEL": "INFO"
         }
         
@@ -727,7 +633,7 @@ class StepFunctionsConstruct(Construct):
             "start_workflow/lambda_function.lambda_handler",
             role,
             env,
-            timeout=Duration.seconds(30),
+            timeout=Duration.minutes(2),
             memory_size=512
         )
         
@@ -782,7 +688,7 @@ class StepFunctionsConstruct(Construct):
             "job_status/lambda_function.lambda_handler",
             role,
             env,
-            timeout=Duration.seconds(10),
+            timeout=Duration.minutes(2),
             memory_size=256
         )
     

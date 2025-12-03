@@ -351,6 +351,127 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False, cleanup_emp
                             sessions_with_content.append(session)
                     sessions = sessions_with_content
             
+            # UNIFIED API: For each session, get its active_jobs and results
+            # This merges the functionality of action=list and action=session_results
+            if ANALYSIS_RESULTS_TABLE:
+                analysis_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
+                sessions_with_data = []
+                
+                for session in sessions:
+                    session_id = session.get('session_id')
+                    
+                    # Get analysis results for this session (same logic as get_session_analysis_results)
+                    try:
+                        analysis_response = analysis_table.scan(
+                            FilterExpression='session_id = :session_id AND user_id = :user_id',
+                            ExpressionAttributeValues={
+                                ':session_id': session_id,
+                                ':user_id': user_id
+                            }
+                        )
+                        items = analysis_response.get('Items', [])
+                        
+                        # Separate completed analysis results from active jobs
+                        active_jobs = []
+                        analysis_results = []
+                        
+                        for item in items:
+                            status = item.get('status', '').lower()
+                            stage = item.get('stage', '').lower()
+                            has_redlines = bool(item.get('redlined_document_s3_key'))
+                            
+                            # Check if this is a completed result (has redlines)
+                            if has_redlines:
+                                if not item.get('analysis_id', '').startswith('job_'):
+                                    analysis_results.append(item)
+                                continue
+                            
+                            # Check if this is a failed job
+                            if status == 'failed':
+                                active_jobs.append({
+                                    'job_id': item.get('analysis_id'),
+                                    'status': 'failed',
+                                    'stage': stage or 'failed',
+                                    'progress': item.get('progress', 0),
+                                    'document_s3_key': item.get('document_s3_key'),
+                                    'timestamp': item.get('timestamp'),
+                                    'updated_at': item.get('updated_at'),
+                                    'stage_message': item.get('stage_message') or item.get('error_message', 'Processing failed'),
+                                    'error_message': item.get('error_message', '')
+                                })
+                                continue
+                            
+                            # Check if this is a completed job
+                            if status == 'completed':
+                                if not item.get('analysis_id', '').startswith('job_'):
+                                    analysis_results.append(item)
+                                continue
+                            
+                            # Check if this is an active/processing job
+                            is_active = (
+                                status in ['processing', 'initialized', 'starting'] or
+                                (status not in ['completed', 'failed'] and stage not in ['completed', 'failed'] and not has_redlines)
+                            )
+                            
+                            if is_active:
+                                active_jobs.append({
+                                    'job_id': item.get('analysis_id'),
+                                    'status': status or 'processing',
+                                    'stage': stage or 'initialized',
+                                    'progress': item.get('progress', 0),
+                                    'document_s3_key': item.get('document_s3_key'),
+                                    'timestamp': item.get('timestamp'),
+                                    'updated_at': item.get('updated_at'),
+                                    'stage_message': item.get('stage_message', '')
+                                })
+                        
+                        # BACKEND ENFORCEMENT: Only keep the most recent active job per session
+                        if len(active_jobs) > 1:
+                            active_jobs.sort(key=lambda x: x.get('timestamp', '') or x.get('updated_at', ''), reverse=True)
+                            processing_jobs = [j for j in active_jobs if j.get('status') == 'processing']
+                            failed_jobs = [j for j in active_jobs if j.get('status') == 'failed']
+                            
+                            if processing_jobs:
+                                active_jobs = [processing_jobs[0]]
+                            elif failed_jobs:
+                                active_jobs = [failed_jobs[0]]
+                            else:
+                                active_jobs = [active_jobs[0]]
+                        
+                        # Format analysis results
+                        formatted_results = []
+                        for result in analysis_results:
+                            formatted_result = {
+                                'analysis_id': result.get('analysis_id'),
+                                'document_s3_key': result.get('document_s3_key'),
+                                'timestamp': result.get('timestamp'),
+                                'conflicts_count': result.get('conflicts_count', 0),
+                                'conflicts': result.get('conflicts', []),
+                                'document_name': result.get('document_s3_key', '').split('/')[-1] if result.get('document_s3_key') else 'Unknown Document',
+                                'redlined_document_s3_key': result.get('redlined_document_s3_key'),
+                                'analysis_data': result.get('analysis_data', '')
+                            }
+                            formatted_results.append(formatted_result)
+                        
+                        # Sort results by timestamp descending
+                        formatted_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                        
+                        # Add active_jobs and results to session
+                        session['active_jobs'] = active_jobs
+                        session['results'] = formatted_results
+                        session['total_results'] = len(formatted_results)
+                        
+                    except Exception as session_error:
+                        logger.warning(f"Error getting data for session {session_id}: {session_error}")
+                        # On error, include session with empty arrays
+                        session['active_jobs'] = []
+                        session['results'] = []
+                        session['total_results'] = 0
+                    
+                    sessions_with_data.append(session)
+                
+                sessions = sessions_with_data
+            
             # Sort by created_at descending (handle missing or invalid dates)
             try:
                 sessions.sort(key=lambda x: x.get('created_at', ''), reverse=True)
@@ -433,7 +554,7 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
             ReturnValues='ALL_NEW'
         )
         
-        logger.info(f"Updated session title: {session_id}")
+        logger.info(f"Updated session title: {session_id} -> {title}")
         
         return {
             'success': True,
@@ -461,6 +582,37 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         return {
             'success': False,
             'error': f'Failed to update session title: {error_msg}'
+        }
+
+def update_session_title_from_document(session_id: str, user_id: str, document_s3_key: str) -> Dict[str, Any]:
+    """Update session title to use the document filename from document_s3_key"""
+    try:
+        # Extract filename from document_s3_key
+        # document_s3_key can be in formats like:
+        # - "vendor-submissions/filename.pdf"
+        # - "sessions/user_id/session_id/vendor-submissions/filename.pdf"
+        # - "filename.pdf"
+        filename = document_s3_key.split('/')[-1] if document_s3_key else None
+        
+        if not filename:
+            logger.warning(f"Could not extract filename from document_s3_key: {document_s3_key}")
+            return {
+                'success': False,
+                'error': 'Could not extract filename from document_s3_key'
+            }
+        
+        # Remove file extension for cleaner title (optional - you can keep it if preferred)
+        # For now, let's keep the extension as it might be useful
+        title = filename
+        
+        # Update the session title
+        return update_session_title(session_id, user_id, title)
+        
+    except Exception as e:
+        logger.error(f"Error updating session title from document: {e}")
+        return {
+            'success': False,
+            'error': str(e)
         }
 
 def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
@@ -1129,14 +1281,42 @@ def lambda_handler(event, context):
             return create_cors_response(200 if result['success'] else 500, result)
             
         elif http_method == 'GET' and action == 'session_results':
-            # Get analysis results for a specific session
+            # DEPRECATED: Use action=list instead, which now includes session results
+            # This endpoint is kept for backward compatibility but delegates to get_user_sessions
+            # and filters to the requested session
             session_id = query_parameters.get('session_id')
             
             if not session_id:
                 return create_cors_response(400, {'error': 'session_id is required'})
             
-            result = get_session_analysis_results(session_id, user_id)
-            return create_cors_response(200 if result['success'] else 500, result)
+            # Get all sessions (which now includes results and active_jobs)
+            all_sessions_result = get_user_sessions(user_id, filter_by_results=False, cleanup_empty=False)
+            
+            if not all_sessions_result['success']:
+                return create_cors_response(500, all_sessions_result)
+            
+            # Find the requested session
+            requested_session = None
+            for session in all_sessions_result['sessions']:
+                if session.get('session_id') == session_id:
+                    requested_session = session
+                    break
+            
+            if not requested_session:
+                return create_cors_response(404, {
+                    'success': False,
+                    'error': 'Session not found',
+                    'session_id': session_id
+                })
+            
+            # Return in the same format as get_session_analysis_results for backward compatibility
+            return create_cors_response(200, {
+                'success': True,
+                'session_id': session_id,
+                'results': requested_session.get('results', []),
+                'active_jobs': requested_session.get('active_jobs', []),
+                'total_results': requested_session.get('total_results', 0)
+            })
             
         elif http_method == 'PUT' and action == 'mark_results':
             # Mark session as having processed results

@@ -26,26 +26,15 @@ def lambda_handler(event, context):
     Merge conflicts from all chunks into single result.
     
     Args:
-        event: Lambda event with chunk_results (list of ConflictDetectionOutput JSON strings)
+        event: Lambda event with chunk_results (list of chunk result dicts with S3 references)
         context: Lambda context
         
     Returns:
-        ConflictDetectionOutput with merged conflicts
+        Dict with conflicts_s3_key, conflicts_count, has_results (always stores in S3)
     """
     try:
         chunk_results = event.get('chunk_results', [])
-        chunk_analyses_s3_key = event.get('chunk_analyses_s3_key')  # S3 key if all chunks stored together
         bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
-        
-        # CRITICAL: Load chunk results from S3 if stored (to handle large payloads)
-        if chunk_analyses_s3_key and bucket_name:
-            try:
-                s3_response = s3_client.get_object(Bucket=bucket_name, Key=chunk_analyses_s3_key)
-                chunk_results_json = s3_response['Body'].read().decode('utf-8')
-                chunk_results = json.loads(chunk_results_json)
-                logger.info(f"Loaded chunk results from S3: {chunk_analyses_s3_key}")
-            except Exception as e:
-                logger.warning(f"Failed to load chunk results from S3 {chunk_analyses_s3_key}: {e}, using inline results")
         
         if not chunk_results:
             # Return empty result
@@ -60,38 +49,42 @@ def lambda_handler(event, context):
         explanations = []
         global_additional_counter = 0
         
+        logger.info(f"Processing {len(chunk_results)} chunk results")
+        
         for chunk_idx, chunk_result_data in enumerate(chunk_results):
             try:
                 # CRITICAL: Chunk results are always stored in S3
-                # Load from S3 using results_s3_key
-                if isinstance(chunk_result_data, dict) and chunk_result_data.get('results_s3_key'):
-                    # This chunk's result is stored in S3 (always the case now)
-                    results_s3_key = chunk_result_data.get('results_s3_key')
-                    chunk_num = chunk_result_data.get('chunk_num', chunk_idx)
-                    
-                    try:
-                        s3_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
-                        chunk_result_json = s3_response['Body'].read().decode('utf-8')
-                        chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_json)
-                        logger.info(f"Loaded chunk {chunk_num} result from S3: {results_s3_key}")
-                    except Exception as e:
-                        logger.error(f"CRITICAL: Failed to load chunk {chunk_num} result from S3 {results_s3_key}: {e}")
-                        raise  # Fail fast - chunk results must be in S3
-                elif isinstance(chunk_result_data, dict) and 'conflicts' in chunk_result_data:
-                    # Fallback: inline dict (shouldn't happen, but handle for backward compatibility)
-                    logger.warning(f"Chunk {chunk_idx} result is inline (should be in S3) - loading inline")
-                    chunk_result = ConflictDetectionOutput.model_validate(chunk_result_data)
-                elif isinstance(chunk_result_data, str):
-                    # Fallback: inline JSON string (shouldn't happen, but handle for backward compatibility)
-                    logger.warning(f"Chunk {chunk_idx} result is inline JSON (should be in S3) - loading inline")
-                    chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_data)
-                else:
-                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: {type(chunk_result_data)}")
+                # Load from S3 using results_s3_key from analysis_result
+                if not isinstance(chunk_result_data, dict):
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: expected dict, got {type(chunk_result_data)}")
                     continue
+                
+                # Get analysis_result from chunk_result_data (from identify_conflicts step)
+                analysis_result = chunk_result_data.get('analysis_result')
+                if not isinstance(analysis_result, dict):
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: missing or invalid analysis_result")
+                    continue
+                
+                results_s3_key = analysis_result.get('results_s3_key')
+                if not results_s3_key:
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: missing results_s3_key in analysis_result")
+                    continue
+                
+                chunk_num = analysis_result.get('chunk_num', chunk_result_data.get('chunk_num', chunk_idx))
+                
+                # Load chunk result from S3
+                try:
+                    s3_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
+                    chunk_result_json = s3_response['Body'].read().decode('utf-8')
+                    chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_json)
+                    logger.info(f"Loaded chunk {chunk_num} result from S3: {results_s3_key}")
+                except Exception as e:
+                    logger.error(f"CRITICAL: Failed to load chunk {chunk_num} result from S3 {results_s3_key}: {e}")
+                    raise  # Fail fast - chunk results must be in S3
                 
                 # Collect explanation
                 if chunk_result.explanation:
-                    explanations.append(f"Chunk {chunk_idx + 1}: {chunk_result.explanation}")
+                    explanations.append(f"Chunk {chunk_num + 1}: {chunk_result.explanation}")
                 
                 # Process conflicts and renumber Additional-[#] conflicts
                 for conflict in chunk_result.conflicts:
@@ -107,10 +100,10 @@ def lambda_handler(event, context):
                         # Keep vendor-provided IDs as-is
                         all_conflicts.append(conflict)
                 
-                logger.info(f"Merged {len(chunk_result.conflicts)} conflicts from chunk {chunk_idx + 1}")
+                logger.info(f"Merged {len(chunk_result.conflicts)} conflicts from chunk {chunk_num + 1}")
                 
             except Exception as e:
-                logger.warning(f"Error processing chunk {chunk_idx + 1}: {e}")
+                logger.warning(f"Error processing chunk {chunk_num + 1}: {e}")
                 continue
         
         # Deduplicate conflicts based on clarification_id and vendor_quote
@@ -144,14 +137,38 @@ def lambda_handler(event, context):
         # Update progress
         job_id = event.get('job_id')
         timestamp = event.get('timestamp')
+        session_id = event.get('session_id', 'unknown')
         if update_progress and job_id and timestamp:
             update_progress(
                 job_id, timestamp, 'merging_results',
                 f'Merged analysis results from {len(chunk_results)} chunks, found {len(deduplicated_conflicts)} conflicts...'
             )
         
-        # Return plain result
-        return output.model_dump()
+        # CRITICAL: Always store result in S3 and return only S3 reference
+        # Step Functions has 256KB limit - merged conflicts can be large
+        result_dict = output.model_dump()
+        result_json = json.dumps(result_dict)
+        result_size = len(result_json.encode('utf-8'))
+        
+        try:
+            s3_key_result = f"{session_id}/merged_results/{job_id}_merged_conflicts.json"
+            s3_client.put_object(
+                Bucket=bucket_name,
+                Key=s3_key_result,
+                Body=result_json.encode('utf-8'),
+                ContentType='application/json'
+            )
+            logger.info(f"Stored merged conflicts result ({result_size} bytes) in S3: {s3_key_result}")
+            
+            # Return only S3 reference (never return data directly)
+            return {
+                'conflicts_s3_key': s3_key_result,
+                'conflicts_count': len(deduplicated_conflicts),
+                'has_results': True
+            }
+        except Exception as s3_error:
+            logger.error(f"CRITICAL: Failed to store merged conflicts result in S3: {s3_error}")
+            raise  # Fail fast if S3 storage fails
         
     except Exception as e:
         logger.error(f"Error in merge_chunk_results: {e}")

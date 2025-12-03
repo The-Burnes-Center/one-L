@@ -64,7 +64,7 @@ class ConflictModel(BaseModel):
     clarification_id: str = Field(..., description="Vendor's ID or Additional-[#] for other findings")
     vendor_quote: str = Field(..., description="Exact text verbatim OR 'N/A - Missing provision' for omissions")
     summary: str = Field(..., description="20-40 word context")
-    source_doc: str = Field(..., description="KB document name (REQUIRED - must be an actual document from knowledge base)")
+    source_doc: str = Field(..., description="Name of the actual Massachusetts source document retrieved from the knowledge base, OR 'N/A – General risk language not tied to a specific Massachusetts clause'")
     clause_ref: str = Field(default="N/A", description="Specific section or 'N/A' if not applicable")
     conflict_type: str = Field(..., description="adds/deletes/modifies/contradicts/omits required/reverses obligation")
     rationale: str = Field(..., description="≤50 words on legal impact")
@@ -72,11 +72,10 @@ class ConflictModel(BaseModel):
     @field_validator('source_doc')
     @classmethod
     def validate_source_doc(cls, v: str) -> str:
-        """Ensure source_doc is not empty or invalid."""
+        """Normalize source_doc but allow any value - no hard restrictions on conflict removal."""
         v_str = str(v).strip()
-        if not v_str or v_str.lower() in ['n/a', 'na', 'none', 'unknown']:
-            raise ValueError(f"source_doc must be a valid document name, got: '{v}'")
-        return v_str
+        # Return as-is, no validation/rejection - allow all conflicts through
+        return v_str if v_str else ""
     
     @field_validator('vendor_quote')
     @classmethod
