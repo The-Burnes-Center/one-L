@@ -96,11 +96,11 @@ def lambda_handler(event, context):
                 if content_block.get("text"):
                     content += content_block["text"]
         
+        if not content:
+            raise ValueError("Empty response from Claude - no content received")
+        
         # Extract JSON
         response_json = _extract_json_only(content)
-        
-        if not response_json:
-            raise ValueError("Failed to extract JSON from Claude response")
         
         # Validate with Pydantic
         try:
