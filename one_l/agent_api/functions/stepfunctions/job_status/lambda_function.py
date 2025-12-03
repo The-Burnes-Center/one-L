@@ -467,10 +467,10 @@ def lambda_handler(event, context):
         # Add result data if completed
         if status == 'completed':
             result['result'] = {
-                'redlined_document': item.get('redlined_document'),
+                'redlined_document': item.get('redlined_document_s3_key'),
                 'analysis': item.get('analysis'),
-                'conflicts_found': item.get('conflicts_found', 0),
-                'has_redlines': bool(item.get('redlined_document'))
+                'conflicts_found': item.get('conflicts_count', 0),
+                'has_redlines': bool(item.get('redlined_document_s3_key'))
             }
         
         logger.info(f"Returning job status for {job_id}: status={status}, stage={current_stage}, progress={progress_value_int}%")
