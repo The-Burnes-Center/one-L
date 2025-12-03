@@ -1262,7 +1262,9 @@ const SessionWorkspace = ({ session }) => {
               status: 'completed',
               progress: 100,
               processing: false,
-              success: result ? (result.has_redlines || result.conflicts_found === 0) : true
+              success: result ? (result.has_redlines || result.conflicts_found === 0) : true,
+              redlinedDocument: result?.redlined_document || doc.redlinedDocument,
+              analysis: result?.analysis || doc.analysis
             };
           }
           return doc;
@@ -1669,7 +1671,7 @@ const SessionWorkspace = ({ session }) => {
                 progress: 100,
                 success: finalResult.success,
                 redlinedDocument: finalResult.success
-                  ? finalResult.redlined_document?.redlined_document
+                  ? finalResult.redlined_document
                   : undefined,
                 analysis: finalResult.success ? finalResult.analysis : undefined,
                 error: finalResult.success ? undefined : finalResult.error,
