@@ -726,6 +726,7 @@ def redline_document(
             'conflicts_count': str(len(redline_items)),
             'matches_found': str(results['matches_found'])
         })
+        logger.info(f"REDLINE_UPLOAD: Uploaded redlined document to {redlined_s3_key}")
         
         if not upload_success:
             # Cleanup on failure
@@ -738,10 +739,6 @@ def redline_document(
                 "success": False,
                 "error": "Failed to upload redlined document"
             }
-        
-
-
-
         
         # Original redlining completion
         result = {
@@ -759,7 +756,6 @@ def redline_document(
         # NEW: After successful redlining, cleanup session documents
         if session_id and user_id:
 
-            
             try:
                 cleanup_result = _cleanup_session_documents(session_id, user_id)
                 result["cleanup_performed"] = True

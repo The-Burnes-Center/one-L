@@ -101,7 +101,7 @@ def lambda_handler(event, context):
         
         # Extract result
         if result.get('success'):
-            redlined_s3_key = result.get('redlined_document_s3_key', '')
+            redlined_s3_key = result.get('redlined_document', '')
             output = RedlineOutput(
                 success=True,
                 redlined_document_s3_key=redlined_s3_key,
@@ -134,4 +134,3 @@ def lambda_handler(event, context):
             error=str(e)
         )
         return output.model_dump()
-
