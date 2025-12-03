@@ -60,7 +60,7 @@ bedrock_client = boto3.client('bedrock-runtime', config=bedrock_config)
 # Model configuration - Using inference profile for Claude Sonnet 4
 CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 TEMPERATURE = 1.0  # Must be 1.0 when thinking is enabled
-THINKING_BUDGET_TOKENS = 4000
+THINKING_BUDGET_TOKENS = 16000  # Increased from 4000 for more complex reasoning in document review
 
 # Graceful queuing configuration for token rate limiting prevention
 MAX_RETRIES = 5

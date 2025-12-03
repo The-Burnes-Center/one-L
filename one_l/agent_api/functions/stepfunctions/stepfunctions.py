@@ -205,6 +205,8 @@ class StepFunctionsConstruct(Construct):
                         # Install Python dependencies
                         pip install --upgrade pip setuptools wheel && \
                         pip install --no-cache-dir -r one_l/agent_api/functions/agent/document_review/requirements.txt -t /asset-output && \
+                        # Fix SyntaxWarning in python-docx library (invalid escape sequence \d)
+                        python3 -c "import os,re; [open(f,'w').write(open(f,'r').read().replace('headerPattern = re.compile(\".*Heading (\\\\d+)$\")','headerPattern = re.compile(r\".*Heading (\\\\d+)$\")')) for root,dirs,files in os.walk('/asset-output') for f in [os.path.join(root,file) for file in files if file=='paragraph.py' and 'docx/text' in root]]" 2>/dev/null || true && \
                         # Copy the specific Lambda function
                         cp one_l/agent_api/functions/stepfunctions/{handler_dir}/lambda_function.py /asset-output/ && \
                         # Copy all agent modules (shared across all Lambda functions)

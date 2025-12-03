@@ -24,10 +24,15 @@ RUN echo "Cache bust: ${CACHE_BUST}"
 # Copy requirements file first for better layer caching
 COPY one_l/agent_api/functions/agent/document_review/requirements.txt .
 
+# Copy fix script for python-docx warning
+COPY scripts/fix_docx_warning.py ./fix_docx_warning.py
+
 # Install Python dependencies in a Lambda-compatible way
 # Remove --only-binary=all to allow source builds if needed (may reduce size)
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt -t ./python/
+    pip install --no-cache-dir -r requirements.txt -t ./python/ && \
+    # Fix SyntaxWarning in python-docx library (invalid escape sequence \d)
+    python3 fix_docx_warning.py || true
 
 # Copy all Lambda function code
 # Original document-review function
