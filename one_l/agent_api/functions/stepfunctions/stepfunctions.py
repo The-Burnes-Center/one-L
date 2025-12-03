@@ -162,14 +162,6 @@ class StepFunctionsConstruct(Construct):
             timeout=Duration.minutes(2)
         )
         
-        self.store_large_results_fn = self._create_lambda(
-            "StoreLargeResults",
-            "store_large_results/lambda_function.lambda_handler",
-            role,
-            common_env,
-            timeout=Duration.minutes(2)
-        )
-        
         self.handle_error_fn = self._create_lambda(
             "HandleError",
             "handle_error/lambda_function.lambda_handler",
@@ -438,35 +430,7 @@ class StepFunctionsConstruct(Construct):
             result_path="$.error"
         )
         
-        # CRITICAL: Store chunk_analyses in S3 if too large before merging
-        # The Map collects all chunk results into $.chunk_analyses which can exceed 256KB
-        store_chunk_analyses = tasks.LambdaInvoke(
-            self, "StoreChunkAnalyses",
-            lambda_function=self.store_large_results_fn,
-            payload_response_only=True,
-            result_path="$.chunk_storage",
-            retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "kb_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Reuse store_large_results function
-                "job_id": sfn.JsonPath.string_at("$.job_id"),
-                "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
-                "storage_type": "chunk_analyses"  # Indicate this is chunk analyses, not KB results
-            })
-        )
-        store_chunk_analyses.add_retry(
-            errors=[sfn.Errors.TIMEOUT, sfn.Errors.TASKS_FAILED],
-            interval=Duration.seconds(2),
-            max_attempts=2,
-            backoff_rate=2.0
-        )
-        store_chunk_analyses.add_catch(
-            handle_error,
-            errors=["States.ALL"],
-            result_path="$.error"
-        )
-        
-        # Merge chunk results - will load from S3 if stored
+        # Merge chunk results - loads individual chunk results from S3
         merge_chunk_results = tasks.LambdaInvoke(
             self, "MergeChunkResults",
             lambda_function=self.merge_chunk_results_fn,
@@ -475,7 +439,6 @@ class StepFunctionsConstruct(Construct):
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
                 "chunk_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Pass chunk references (contain S3 keys)
-                "chunk_analyses_s3_key": sfn.JsonPath.string_at("$.chunk_storage.s3_key"),  # Aggregated S3 key (backup)
                 "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
                 "timestamp": sfn.JsonPath.string_at("$.timestamp")
@@ -570,8 +533,7 @@ class StepFunctionsConstruct(Construct):
         )
         
         # Define workflow - always uses Map state (works for both single and multiple chunks)
-        # CRITICAL: Store chunk_analyses in S3 before merging if they're large
-        processing_path = analyze_chunks_map.next(store_chunk_analyses.next(merge_chunk_results))
+        processing_path = analyze_chunks_map.next(merge_chunk_results)
         
         # Add error handling to individual states (not chains)
         generate_redline.add_catch(

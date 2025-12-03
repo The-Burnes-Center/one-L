@@ -26,7 +26,7 @@ def lambda_handler(event, context):
     Merge conflicts from all chunks into single result.
     
     Args:
-        event: Lambda event with chunk_results (list of ConflictDetectionOutput JSON strings)
+        event: Lambda event with chunk_results (list of chunk result dicts with S3 references)
         context: Lambda context
         
     Returns:
@@ -34,18 +34,7 @@ def lambda_handler(event, context):
     """
     try:
         chunk_results = event.get('chunk_results', [])
-        chunk_analyses_s3_key = event.get('chunk_analyses_s3_key')  # S3 key if all chunks stored together
         bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
-        
-        # CRITICAL: Load chunk results from S3 if stored (to handle large payloads)
-        if chunk_analyses_s3_key and bucket_name:
-            try:
-                s3_response = s3_client.get_object(Bucket=bucket_name, Key=chunk_analyses_s3_key)
-                chunk_results_json = s3_response['Body'].read().decode('utf-8')
-                chunk_results = json.loads(chunk_results_json)
-                logger.info(f"Loaded chunk results from S3: {chunk_analyses_s3_key}")
-            except Exception as e:
-                logger.warning(f"Failed to load chunk results from S3 {chunk_analyses_s3_key}: {e}, using inline results")
         
         if not chunk_results:
             # Return empty result
