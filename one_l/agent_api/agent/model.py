@@ -34,8 +34,8 @@ try:
 except ImportError:
     # Fallback if constants not available
     class Constants:
-        CHUNK_SIZE_CHARACTERS = 100000
-        CHUNK_OVERLAP_CHARACTERS = 5000
+        CHUNK_SIZE_CHARACTERS = 50000
+        CHUNK_OVERLAP_CHARACTERS = 2000
     constants = Constants()
 
 # Import PDF utilities if available
@@ -342,7 +342,7 @@ def _extract_json_only(content: str) -> str:
     logger.warning(f"Could not extract valid JSON from response. Response preview: {content[:200]}...")
     return '{"explanation": "", "conflicts": []}'
 
-def _split_document_into_chunks(doc, chunk_size_characters=100000, chunk_overlap_characters=5000, is_pdf=False, pdf_bytes=None):
+def _split_document_into_chunks(doc, chunk_size_characters=50000, chunk_overlap_characters=2000, is_pdf=False, pdf_bytes=None):
     """
     Split a document into chunks using character-based chunking.
     
