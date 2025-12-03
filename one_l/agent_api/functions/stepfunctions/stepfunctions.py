@@ -552,8 +552,10 @@ class StepFunctionsConstruct(Construct):
             errors=["States.ALL"],
             result_path="$.error"
         )
+        # If cleanup_session fails, just call handle_error (not handle_error_chain)
+        # to avoid infinite recursion - cleanup is best-effort anyway
         cleanup_session.add_catch(
-            handle_error_chain,
+            handle_error,
             errors=["States.ALL"],
             result_path="$.error"
         )
