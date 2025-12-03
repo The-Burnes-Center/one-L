@@ -49,38 +49,42 @@ def lambda_handler(event, context):
         explanations = []
         global_additional_counter = 0
         
+        logger.info(f"Processing {len(chunk_results)} chunk results")
+        
         for chunk_idx, chunk_result_data in enumerate(chunk_results):
             try:
                 # CRITICAL: Chunk results are always stored in S3
-                # Load from S3 using results_s3_key
-                if isinstance(chunk_result_data, dict) and chunk_result_data.get('results_s3_key'):
-                    # This chunk's result is stored in S3 (always the case now)
-                    results_s3_key = chunk_result_data.get('results_s3_key')
-                    chunk_num = chunk_result_data.get('chunk_num', chunk_idx)
-                    
-                    try:
-                        s3_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
-                        chunk_result_json = s3_response['Body'].read().decode('utf-8')
-                        chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_json)
-                        logger.info(f"Loaded chunk {chunk_num} result from S3: {results_s3_key}")
-                    except Exception as e:
-                        logger.error(f"CRITICAL: Failed to load chunk {chunk_num} result from S3 {results_s3_key}: {e}")
-                        raise  # Fail fast - chunk results must be in S3
-                elif isinstance(chunk_result_data, dict) and 'conflicts' in chunk_result_data:
-                    # Fallback: inline dict (shouldn't happen, but handle for backward compatibility)
-                    logger.warning(f"Chunk {chunk_idx} result is inline (should be in S3) - loading inline")
-                    chunk_result = ConflictDetectionOutput.model_validate(chunk_result_data)
-                elif isinstance(chunk_result_data, str):
-                    # Fallback: inline JSON string (shouldn't happen, but handle for backward compatibility)
-                    logger.warning(f"Chunk {chunk_idx} result is inline JSON (should be in S3) - loading inline")
-                    chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_data)
-                else:
-                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: {type(chunk_result_data)}")
+                # Load from S3 using results_s3_key from analysis_result
+                if not isinstance(chunk_result_data, dict):
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: expected dict, got {type(chunk_result_data)}")
                     continue
+                
+                # Get analysis_result from chunk_result_data (from identify_conflicts step)
+                analysis_result = chunk_result_data.get('analysis_result')
+                if not isinstance(analysis_result, dict):
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: missing or invalid analysis_result")
+                    continue
+                
+                results_s3_key = analysis_result.get('results_s3_key')
+                if not results_s3_key:
+                    logger.error(f"Invalid chunk result format for chunk {chunk_idx}: missing results_s3_key in analysis_result")
+                    continue
+                
+                chunk_num = analysis_result.get('chunk_num', chunk_result_data.get('chunk_num', chunk_idx))
+                
+                # Load chunk result from S3
+                try:
+                    s3_response = s3_client.get_object(Bucket=bucket_name, Key=results_s3_key)
+                    chunk_result_json = s3_response['Body'].read().decode('utf-8')
+                    chunk_result = ConflictDetectionOutput.model_validate_json(chunk_result_json)
+                    logger.info(f"Loaded chunk {chunk_num} result from S3: {results_s3_key}")
+                except Exception as e:
+                    logger.error(f"CRITICAL: Failed to load chunk {chunk_num} result from S3 {results_s3_key}: {e}")
+                    raise  # Fail fast - chunk results must be in S3
                 
                 # Collect explanation
                 if chunk_result.explanation:
-                    explanations.append(f"Chunk {chunk_idx + 1}: {chunk_result.explanation}")
+                    explanations.append(f"Chunk {chunk_num + 1}: {chunk_result.explanation}")
                 
                 # Process conflicts and renumber Additional-[#] conflicts
                 for conflict in chunk_result.conflicts:
@@ -96,10 +100,10 @@ def lambda_handler(event, context):
                         # Keep vendor-provided IDs as-is
                         all_conflicts.append(conflict)
                 
-                logger.info(f"Merged {len(chunk_result.conflicts)} conflicts from chunk {chunk_idx + 1}")
+                logger.info(f"Merged {len(chunk_result.conflicts)} conflicts from chunk {chunk_num + 1}")
                 
             except Exception as e:
-                logger.warning(f"Error processing chunk {chunk_idx + 1}: {e}")
+                logger.warning(f"Error processing chunk {chunk_num + 1}: {e}")
                 continue
         
         # Deduplicate conflicts based on clarification_id and vendor_quote

@@ -441,6 +441,7 @@ class StepFunctionsConstruct(Construct):
                 "chunk_results": sfn.JsonPath.object_at("$.chunk_analyses"),  # Pass chunk references (contain S3 keys)
                 "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "session_id": sfn.JsonPath.string_at("$.session_id"),
                 "timestamp": sfn.JsonPath.string_at("$.timestamp")
             })
         )
