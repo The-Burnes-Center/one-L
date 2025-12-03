@@ -99,6 +99,9 @@ def lambda_handler(event, context):
         # Extract JSON
         response_json = _extract_json_only(content)
         
+        if not response_json:
+            raise ValueError("Failed to extract JSON from Claude response")
+        
         # Validate with Pydantic
         try:
             validated_output = StructureAnalysisOutput.model_validate_json(response_json)
