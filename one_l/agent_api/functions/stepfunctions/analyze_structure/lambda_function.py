@@ -8,7 +8,6 @@ import json
 import boto3
 import logging
 import os
-import io
 from agent_api.agent.prompts.structure_analysis_prompt import STRUCTURE_ANALYSIS_PROMPT
 from agent_api.agent.prompts.models import StructureAnalysisOutput
 from agent_api.agent.model import Model, _extract_json_only
@@ -61,6 +60,9 @@ def lambda_handler(event, context):
         
         if not s3_key or not bucket_name:
             raise ValueError("Either chunk_s3_key or document_s3_key, and bucket_name are required")
+        
+        if not knowledge_base_id or not region:
+            raise ValueError("knowledge_base_id and region are required")
         
         # Load document/chunk from S3
         response = s3_client.get_object(Bucket=bucket_name, Key=s3_key)
@@ -124,6 +126,9 @@ def lambda_handler(event, context):
             for content_block in response["output"]["message"]["content"]:
                 if content_block.get("text"):
                     content += content_block["text"]
+        
+        if not content:
+            raise ValueError("Empty response from Claude - no content received")
         
         # Extract JSON
         response_json = _extract_json_only(content)
