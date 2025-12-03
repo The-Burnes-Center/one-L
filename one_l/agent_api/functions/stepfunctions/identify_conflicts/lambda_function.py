@@ -110,7 +110,7 @@ def lambda_handler(event, context):
                     else:
                         kb_context += f"\nQuery {idx + 1} (ID: {query_id}):\n{query}\n"
                     
-                    for result_idx, result in enumerate(results[:15]):  # Increased from 10 to 15 results per query
+                    for result_idx, result in enumerate(results[:10]):  # Limit to first 10 results per query to reduce token usage
                         kb_context += f"\n  Result {result_idx + 1}:\n"
                         if isinstance(result, dict):
                             kb_context += f"    Document: {result.get('document', {}).get('title', 'Unknown')}\n"
