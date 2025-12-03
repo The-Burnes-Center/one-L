@@ -49,6 +49,7 @@ class KBQueryResult(BaseModel):
     """Model for KB query result."""
     query_id: int = Field(..., description="Query identifier")
     query: str = Field(..., description="Query string that was executed")
+    section: Optional[str] = Field(None, description="Vendor section/exception this query targets (from structure analysis)")
     results: List[Dict[str, Any]] = Field(default_factory=list, description="Query results from knowledge base")
     success: bool = Field(..., description="Whether query executed successfully")
     error: Optional[str] = Field(None, description="Error message if query failed")

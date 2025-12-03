@@ -75,9 +75,13 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
         elif isinstance(result, list):
             results = result
         
+        # Preserve section field from query_data for downstream conflict detection
+        section = query_data.get('section')
+        
         return {
             'query_id': query_id,
             'query': query,
+            'section': section,  # Preserve section to help identify which vendor section this query targets
             'results': results,
             'success': success,
             'error': error,
@@ -180,6 +184,7 @@ def lambda_handler(event, context):
                     all_results.append({
                         'query_id': query_data.get('query_id', 0),
                         'query': query_data.get('query', ''),
+                        'section': query_data.get('section'),  # Preserve section even on error
                         'results': [],
                         'success': False,
                         'error': str(e),
