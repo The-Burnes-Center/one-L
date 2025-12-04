@@ -114,7 +114,9 @@ def lambda_handler(event, context):
             if update_progress and job_id and timestamp:
                 update_progress(
                     job_id, timestamp, 'generating_redlines',
-                    f'Generated redlined document with {len(conflicts_list)} conflicts...'
+                    f'Generated redlined document with {len(conflicts_list)} conflicts...',
+                    session_id=session_id,
+                    user_id=user_id
                 )
             
             # Return plain result (Step Functions merges via result_path)

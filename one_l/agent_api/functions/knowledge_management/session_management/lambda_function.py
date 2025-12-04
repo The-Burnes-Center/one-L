@@ -242,231 +242,156 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False, cleanup_emp
             except Exception as cleanup_error:
                 logger.warning(f"Cleanup failed (non-fatal): {cleanup_error}")
         
-        # Try to get from DynamoDB
+        # Try to get from DynamoDB using GSI (FAST!)
         try:
             table = dynamodb.Table(SESSIONS_TABLE)
             sessions = []
             last_evaluated_key = None
             
-            # Handle pagination for scan operation (DynamoDB has 1MB limit per page)
+            # Use GSI to query sessions by user_id (much faster than scan)
             while True:
-                scan_kwargs = {
-                    'FilterExpression': 'user_id = :user_id',
-                    'ExpressionAttributeValues': {':user_id': user_id}
+                query_kwargs = {
+                    'IndexName': 'user-index',
+                    'KeyConditionExpression': 'user_id = :user_id',
+                    'ExpressionAttributeValues': {':user_id': user_id},
+                    'ScanIndexForward': False  # Most recent first
                 }
                 
                 if last_evaluated_key:
-                    scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                    query_kwargs['ExclusiveStartKey'] = last_evaluated_key
                 
-                response = table.scan(**scan_kwargs)
-                sessions.extend(response.get('Items', []))
-                
-                # Check if there are more pages
-                last_evaluated_key = response.get('LastEvaluatedKey')
-                if not last_evaluated_key:
-                    break
+                try:
+                    response = table.query(**query_kwargs)
+                    sessions.extend(response.get('Items', []))
+                    last_evaluated_key = response.get('LastEvaluatedKey')
+                    if not last_evaluated_key:
+                        break
+                except Exception as gsi_error:
+                    # Fallback to scan if GSI doesn't exist yet
+                    logger.warning(f"GSI query failed, falling back to scan: {gsi_error}")
+                    scan_kwargs = {
+                        'FilterExpression': 'user_id = :user_id',
+                        'ExpressionAttributeValues': {':user_id': user_id}
+                    }
+                    if last_evaluated_key:
+                        scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+                    response = table.scan(**scan_kwargs)
+                    sessions.extend(response.get('Items', []))
+                    last_evaluated_key = response.get('LastEvaluatedKey')
+                    if not last_evaluated_key:
+                        break
             
-            # Filter sessions with results if requested
-            if filter_by_results:
-                sessions = [s for s in sessions if s.get('has_results', False)]
-            else:
-                # Always filter out empty sessions (sessions without documents or active jobs)
-                # Verify by checking analysis_results table
-                if ANALYSIS_RESULTS_TABLE:
-                    analysis_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
-                    sessions_with_content = []
-                    for session in sessions:
-                        session_id = session.get('session_id')
-                        # Quick check: if has_results flag is True, include it
-                        if session.get('has_results', False):
-                            sessions_with_content.append(session)
-                            continue
-                        
-                        # Otherwise verify it has documents OR active jobs
-                        try:
-                            analysis_response = analysis_table.scan(
-                                FilterExpression='session_id = :session_id AND user_id = :user_id',
-                                ExpressionAttributeValues={
-                                    ':session_id': session_id,
-                                    ':user_id': user_id
-                                }
-                            )
-                            items = analysis_response.get('Items', [])
-                            
-                            # Separate completed analysis results from active jobs
-                            actual_results = []
-                            active_jobs = []
-                            
-                            for item in items:
-                                status = item.get('status', '').lower()
-                                stage = item.get('stage', '').lower()
-                                has_redlines = bool(item.get('redlined_document_s3_key'))
-                                
-                                # Check if this is an active job (not completed)
-                                is_active = (
-                                    status in ['processing', 'initialized', 'starting'] or
-                                    (status not in ['completed', 'failed'] and stage not in ['completed', 'failed'] and not has_redlines)
-                                )
-                                
-                                # Also include failed jobs (so UI can show error)
-                                is_failed = status == 'failed' and not has_redlines
-                                
-                                if is_active or is_failed:
-                                    active_jobs.append({
-                                        'job_id': item.get('analysis_id'),
-                                        'status': status or 'processing',
-                                        'stage': stage or 'initialized',
-                                        'timestamp': item.get('timestamp'),
-                                        'updated_at': item.get('updated_at')
-                                    })
-                                else:
-                                    # Filter out entries that look like job status entries (those starting with "job_")
-                                    if not item.get('analysis_id', '').startswith('job_'):
-                                        actual_results.append(item)
-                            
-                            # BACKEND ENFORCEMENT: Only keep the most recent active job per session
-                            if len(active_jobs) > 1:
-                                # Sort by timestamp descending (most recent first)
-                                active_jobs.sort(key=lambda x: x.get('timestamp', '') or x.get('updated_at', ''), reverse=True)
-                                
-                                # Separate processing and failed jobs
-                                processing_jobs = [j for j in active_jobs if j.get('status') == 'processing']
-                                failed_jobs = [j for j in active_jobs if j.get('status') == 'failed']
-                                
-                                if processing_jobs:
-                                    # If there are processing jobs, keep only the most recent one
-                                    active_jobs = [processing_jobs[0]]
-                                elif failed_jobs:
-                                    # If no processing jobs, keep only the most recent failed job
-                                    active_jobs = [failed_jobs[0]]
-                                else:
-                                    # Fallback: keep only the most recent job
-                                    active_jobs = [active_jobs[0]]
-                            
-                            # Keep session if it has documents OR active processing jobs
-                            if len(actual_results) > 0 or len(active_jobs) > 0:
-                                sessions_with_content.append(session)
-                        except Exception:
-                            # On error, include session to be safe (don't filter out on error)
-                            sessions_with_content.append(session)
-                    sessions = sessions_with_content
-            
-            # UNIFIED API: For each session, get its active_jobs and results
-            # This merges the functionality of action=list and action=session_results
+            # For each session, get its jobs using GSI (EFFICIENT!)
             if ANALYSIS_RESULTS_TABLE:
-                analysis_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
+                jobs_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
                 sessions_with_data = []
                 
                 for session in sessions:
                     session_id = session.get('session_id')
                     
-                    # Get analysis results for this session (same logic as get_session_analysis_results)
                     try:
-                        analysis_response = analysis_table.scan(
-                            FilterExpression='session_id = :session_id AND user_id = :user_id',
-                            ExpressionAttributeValues={
-                                ':session_id': session_id,
-                                ':user_id': user_id
-                            }
+                        # Query jobs for this session using GSI - FAST!
+                        jobs_response = jobs_table.query(
+                            IndexName='session-jobs-index',
+                            KeyConditionExpression='session_id = :session_id',
+                            ExpressionAttributeValues={':session_id': session_id},
+                            ScanIndexForward=False  # Most recent first
                         )
-                        items = analysis_response.get('Items', [])
                         
-                        # Separate completed analysis results from active jobs
+                        jobs = jobs_response.get('Items', [])
+                        
+                        # SIMPLE classification - clear logic
                         active_jobs = []
-                        analysis_results = []
+                        completed_results = []
+                        failed_jobs = []
                         
-                        for item in items:
-                            status = item.get('status', '').lower()
-                            stage = item.get('stage', '').lower()
-                            has_redlines = bool(item.get('redlined_document_s3_key'))
+                        for job in jobs:
+                            status = (job.get('status') or '').lower()
+                            stage = (job.get('stage') or '').lower()
+                            job_id = job.get('analysis_id') or job.get('job_id')
                             
-                            # Check if this is a completed result (has redlines)
-                            if has_redlines:
-                                if not item.get('analysis_id', '').startswith('job_'):
-                                    analysis_results.append(item)
+                            # Skip job status entries (those starting with "job_")
+                            if job_id and job_id.startswith('job_'):
                                 continue
                             
-                            # Check if this is a failed job
-                            if status == 'failed':
-                                active_jobs.append({
-                                    'job_id': item.get('analysis_id'),
+                            # Simple status-based classification
+                            if status == 'completed':
+                                # Completed job - always include as result
+                                completed_results.append({
+                                    'analysis_id': job_id,
+                                    'document_s3_key': job.get('document_s3_key'),
+                                    'timestamp': job.get('timestamp'),
+                                    'conflicts_count': job.get('conflicts_count', 0),
+                                    'conflicts': job.get('conflicts', []),
+                                    'document_name': job.get('document_s3_key', '').split('/')[-1] if job.get('document_s3_key') else 'Unknown Document',
+                                    'redlined_document_s3_key': job.get('redlined_document_s3_key'),
+                                    'analysis_data': job.get('analysis_data', '')
+                                })
+                            elif status == 'failed' and stage != 'cancelled':
+                                # Failed job (but not cancelled) - show in UI
+                                failed_jobs.append({
+                                    'job_id': job_id,
                                     'status': 'failed',
                                     'stage': stage or 'failed',
-                                    'progress': item.get('progress', 0),
-                                    'document_s3_key': item.get('document_s3_key'),
-                                    'timestamp': item.get('timestamp'),
-                                    'updated_at': item.get('updated_at'),
-                                    'stage_message': item.get('stage_message') or item.get('error_message', 'Processing failed'),
-                                    'error_message': item.get('error_message', '')
+                                    'progress': job.get('progress', 0),
+                                    'document_s3_key': job.get('document_s3_key'),
+                                    'timestamp': job.get('timestamp'),
+                                    'updated_at': job.get('updated_at'),
+                                    'stage_message': job.get('stage_message') or job.get('error_message', 'Processing failed'),
+                                    'error_message': job.get('error_message', '')
                                 })
-                                continue
-                            
-                            # Check if this is a completed job
-                            if status == 'completed':
-                                if not item.get('analysis_id', '').startswith('job_'):
-                                    analysis_results.append(item)
-                                continue
-                            
-                            # Check if this is an active/processing job
-                            is_active = (
-                                status in ['processing', 'initialized', 'starting'] or
-                                (status not in ['completed', 'failed'] and stage not in ['completed', 'failed'] and not has_redlines)
-                            )
-                            
-                            if is_active:
+                            elif status in ['pending', 'processing', 'initialized', 'starting']:
+                                # Active job
                                 active_jobs.append({
-                                    'job_id': item.get('analysis_id'),
+                                    'job_id': job_id,
                                     'status': status or 'processing',
                                     'stage': stage or 'initialized',
-                                    'progress': item.get('progress', 0),
-                                    'document_s3_key': item.get('document_s3_key'),
-                                    'timestamp': item.get('timestamp'),
-                                    'updated_at': item.get('updated_at'),
-                                    'stage_message': item.get('stage_message', '')
+                                    'progress': job.get('progress', 0),
+                                    'document_s3_key': job.get('document_s3_key'),
+                                    'timestamp': job.get('timestamp'),
+                                    'updated_at': job.get('updated_at'),
+                                    'stage_message': job.get('stage_message', '')
                                 })
                         
-                        # BACKEND ENFORCEMENT: Only keep the most recent active job per session
+                        # ENFORCE: Only one active job per session (keep most recent)
                         if len(active_jobs) > 1:
                             active_jobs.sort(key=lambda x: x.get('timestamp', '') or x.get('updated_at', ''), reverse=True)
-                            processing_jobs = [j for j in active_jobs if j.get('status') == 'processing']
-                            failed_jobs = [j for j in active_jobs if j.get('status') == 'failed']
-                            
-                            if processing_jobs:
-                                active_jobs = [processing_jobs[0]]
-                            elif failed_jobs:
-                                active_jobs = [failed_jobs[0]]
+                            # Prioritize processing over pending
+                            processing = [j for j in active_jobs if j.get('status') == 'processing']
+                            if processing:
+                                active_jobs = [processing[0]]
                             else:
                                 active_jobs = [active_jobs[0]]
                         
-                        # Format analysis results
-                        formatted_results = []
-                        for result in analysis_results:
-                            formatted_result = {
-                                'analysis_id': result.get('analysis_id'),
-                                'document_s3_key': result.get('document_s3_key'),
-                                'timestamp': result.get('timestamp'),
-                                'conflicts_count': result.get('conflicts_count', 0),
-                                'conflicts': result.get('conflicts', []),
-                                'document_name': result.get('document_s3_key', '').split('/')[-1] if result.get('document_s3_key') else 'Unknown Document',
-                                'redlined_document_s3_key': result.get('redlined_document_s3_key'),
-                                'analysis_data': result.get('analysis_data', '')
-                            }
-                            formatted_results.append(formatted_result)
+                        # Sort completed results by timestamp
+                        completed_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
                         
-                        # Sort results by timestamp descending
-                        formatted_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                        # Compute has_content automatically
+                        has_content = len(active_jobs) > 0 or len(completed_results) > 0 or len(failed_jobs) > 0
                         
-                        # Add active_jobs and results to session
+                        # Filter empty sessions if requested
+                        if filter_by_results and not has_content:
+                            continue  # Skip this session
+                        
+                        # Attach to session
                         session['active_jobs'] = active_jobs
-                        session['results'] = formatted_results
-                        session['total_results'] = len(formatted_results)
+                        session['results'] = completed_results
+                        session['failed_jobs'] = failed_jobs
+                        session['total_results'] = len(completed_results)
+                        session['has_content'] = has_content
                         
                     except Exception as session_error:
-                        logger.warning(f"Error getting data for session {session_id}: {session_error}")
+                        logger.warning(f"Error getting jobs for session {session_id}: {session_error}")
                         # On error, include session with empty arrays
                         session['active_jobs'] = []
                         session['results'] = []
+                        session['failed_jobs'] = []
                         session['total_results'] = 0
+                        session['has_content'] = False
+                        
+                        # Still include session if filter_by_results is False
+                        if filter_by_results:
+                            continue
                     
                     sessions_with_data.append(session)
                 
@@ -722,6 +647,40 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                 
             except Exception as e:
                 logger.warning(f"Error deleting S3 objects: {e}")
+            
+            # Delete all jobs for this session using GSI (EFFICIENT!)
+            if ANALYSIS_RESULTS_TABLE:
+                try:
+                    jobs_table = dynamodb.Table(ANALYSIS_RESULTS_TABLE)
+                    
+                    # Query jobs for this session using GSI - FAST!
+                    jobs_response = jobs_table.query(
+                        IndexName='session-jobs-index',
+                        KeyConditionExpression='session_id = :session_id',
+                        ExpressionAttributeValues={':session_id': session_id}
+                    )
+                    
+                    # Delete each job
+                    deleted_count = 0
+                    for job in jobs_response.get('Items', []):
+                        job_id = job.get('analysis_id') or job.get('job_id')
+                        job_timestamp = job.get('timestamp')
+                        
+                        if job_id and job_timestamp:
+                            try:
+                                jobs_table.delete_item(
+                                    Key={
+                                        'analysis_id': job_id,  # Handle both field names during migration
+                                        'timestamp': job_timestamp
+                                    }
+                                )
+                                deleted_count += 1
+                            except Exception as job_delete_error:
+                                logger.warning(f"Error deleting job {job_id}: {job_delete_error}")
+                    
+                    logger.info(f"Deleted {deleted_count} job(s) for session {session_id}")
+                except Exception as jobs_error:
+                    logger.warning(f"Error deleting jobs for session {session_id}: {jobs_error}")
             
             # Delete from DynamoDB - table has composite key (session_id + user_id)
             table.delete_item(

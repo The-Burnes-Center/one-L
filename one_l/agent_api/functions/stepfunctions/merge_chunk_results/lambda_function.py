@@ -137,11 +137,14 @@ def lambda_handler(event, context):
         # Update progress
         job_id = event.get('job_id')
         timestamp = event.get('timestamp')
-        session_id = event.get('session_id', 'unknown')
+        session_id = event.get('session_id')
+        user_id = event.get('user_id')
         if update_progress and job_id and timestamp:
             update_progress(
                 job_id, timestamp, 'merging_results',
-                f'Merged analysis results from {len(chunk_results)} chunks, found {len(deduplicated_conflicts)} conflicts...'
+                f'Merged analysis results from {len(chunk_results)} chunks, found {len(deduplicated_conflicts)} conflicts...',
+                session_id=session_id,
+                user_id=user_id
             )
         
         # CRITICAL: Always store result in S3 and return only S3 reference

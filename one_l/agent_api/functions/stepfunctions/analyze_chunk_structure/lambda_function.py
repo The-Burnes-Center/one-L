@@ -113,10 +113,14 @@ def lambda_handler(event, context):
         # Update progress (for chunk structure analysis)
         job_id = event.get('job_id')
         timestamp = event.get('timestamp')
+        session_id = event.get('session_id')
+        user_id = event.get('user_id')
         if update_progress and job_id and timestamp:
             update_progress(
                 job_id, timestamp, 'analyzing',
-                f'Analyzing chunk {chunk_num + 1} of {total_chunks}, generated {len(validated_output.queries)} queries...'
+                f'Analyzing chunk {chunk_num + 1} of {total_chunks}, generated {len(validated_output.queries)} queries...',
+                session_id=session_id,
+                user_id=user_id
             )
         
         # Return plain result (Step Functions uses result_path to merge with state)

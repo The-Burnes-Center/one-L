@@ -144,17 +144,22 @@ def lambda_handler(event, context):
         # Update progress
         job_id = event.get('job_id')
         timestamp = event.get('timestamp')
-        session_id = event.get('session_id', 'unknown')
+        session_id = event.get('session_id')
+        user_id = event.get('user_id')
         if update_progress and job_id and timestamp:
             if is_chunk and total_chunks > 1:
                 update_progress(
                     job_id, timestamp, 'analyzing',
-                    f'Analyzing chunk {chunk_num + 1} of {total_chunks}, generated {len(validated_output.queries)} queries...'
+                    f'Analyzing chunk {chunk_num + 1} of {total_chunks}, generated {len(validated_output.queries)} queries...',
+                    session_id=session_id,
+                    user_id=user_id
                 )
             else:
                 update_progress(
                     job_id, timestamp, 'analyzing',
-                    f'Analyzed document structure, generated {len(validated_output.queries)} queries for knowledge base lookup...'
+                    f'Analyzed document structure, generated {len(validated_output.queries)} queries for knowledge base lookup...',
+                    session_id=session_id,
+                    user_id=user_id
                 )
         
         # CRITICAL: Always store result in S3 and return only S3 reference

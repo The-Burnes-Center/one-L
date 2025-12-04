@@ -254,6 +254,29 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None,
         
         logger.info(f"Marked job {job_id} as completed (status=completed, stage=completed, progress=100%)")
         
+        # AUTO-UPDATE SESSION: Increment document_count and update timestamps
+        if session_id and user_id:
+            try:
+                sessions_table_name = os.environ.get('SESSIONS_TABLE')
+                if sessions_table_name:
+                    sessions_table = dynamodb.Table(sessions_table_name)
+                    sessions_table.update_item(
+                        Key={
+                            'session_id': session_id,
+                            'user_id': user_id
+                        },
+                        UpdateExpression='ADD document_count :inc '
+                                        'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
+                        ExpressionAttributeValues={
+                            ':inc': 1,
+                            ':updated': datetime.utcnow().isoformat(),
+                            ':has_results': True
+                        }
+                    )
+                    logger.info(f"Auto-updated session {session_id}: incremented document_count, set has_results=True")
+            except Exception as session_update_error:
+                logger.warning(f"Failed to auto-update session {session_id}: {session_update_error}")
+        
         # Send WebSocket notification for completion
         if session_id or user_id:
             _send_websocket_notification(

@@ -288,14 +288,25 @@ const SessionSidebar = ({
   // Expose refresh function to window for external triggers
   useEffect(() => {
     window.triggerSessionSidebarRefresh = () => {
-      if (sessions.length > 0 && currentUserId) {
-        loadSessionStatuses();
+      if (currentUserId) {
+        // CRITICAL: Always reload sessions list first (to pick up new/completed sessions)
+        // Then reload statuses for all sessions
+        loadSessions().then(() => {
+          // Small delay to ensure sessions state is updated before loading statuses
+          setTimeout(() => {
+            if (sessions.length > 0) {
+              loadSessionStatuses();
+            }
+          }, 100);
+        }).catch(error => {
+          console.error('Error refreshing sessions:', error);
+        });
       }
     };
     return () => {
       delete window.triggerSessionSidebarRefresh;
     };
-  }, [sessions, currentUserId, loadSessionStatuses]);
+  }, [sessions, currentUserId, loadSessions, loadSessionStatuses]);
 
   // Use centralized polling service for active jobs
   useEffect(() => {

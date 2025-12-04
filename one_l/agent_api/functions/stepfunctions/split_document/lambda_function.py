@@ -96,7 +96,9 @@ def lambda_handler(event, context):
         if update_progress and job_id and timestamp:
             update_progress(
                 job_id, timestamp, 'splitting',
-                f'Split document into {len(chunk_s3_keys)} chunks for analysis...'
+                f'Split document into {len(chunk_s3_keys)} chunks for analysis...',
+                session_id=session_id,
+                user_id=user_id
             )
         
         # Return just split results - context is preserved via result_path merging

@@ -199,6 +199,20 @@ class StorageConstruct(Construct):
                 type=dynamodb.AttributeType.STRING
             )
         )
+        
+        # Add GSI for querying by session (CRITICAL for efficient session queries)
+        self.analysis_table.add_global_secondary_index(
+            index_name="session-jobs-index",
+            partition_key=dynamodb.Attribute(
+                name="session_id",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp",
+                type=dynamodb.AttributeType.STRING
+            ),
+            projection_type=dynamodb.ProjectionType.ALL
+        )
     
     def create_outputs(self):
         """Create CloudFormation outputs."""
