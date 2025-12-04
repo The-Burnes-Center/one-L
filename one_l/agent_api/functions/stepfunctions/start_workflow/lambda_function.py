@@ -163,8 +163,16 @@ def lambda_handler(event, context):
                     logger.info(f"Cleaned up {len(old_jobs)} old processing job(s) for session {session_id}")
                 
                 # Update session title to use the document filename
-                # Extract filename from document_s3_key (e.g., "vendor-submissions/filename.pdf" -> "filename.pdf")
-                filename = document_s3_key.split('/')[-1] if document_s3_key else None
+                # Extract filename from document_s3_key (e.g., "vendor-submissions/uuid_filename.pdf" -> "filename.pdf")
+                # Remove UUID prefix if present (format: uuid_filename.pdf)
+                raw_filename = document_s3_key.split('/')[-1] if document_s3_key else None
+                if raw_filename:
+                    # Remove UUID prefix if present (format: uuid_filename.pdf -> filename.pdf)
+                    import re
+                    match = re.match(r'^[a-f0-9-]+_(.+)$', raw_filename, re.IGNORECASE)
+                    filename = match.group(1) if match else raw_filename
+                else:
+                    filename = None
                 if filename:
                     try:
                         sessions_table_name = os.environ.get('SESSIONS_TABLE')

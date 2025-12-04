@@ -94,11 +94,12 @@ const SessionSidebar = ({
     for (const session of sessions) {
       try {
         // UNIFIED API: Use data already included in session from getUserSessions
-        // Backend now includes active_jobs and results in the session object
+        // Backend now includes active_jobs, results, and failed_jobs in the session object
         const results = session.results || [];
         const activeJobsFromAPI = session.active_jobs || [];
+        const failedJobsFromAPI = session.failed_jobs || [];
         
-        // Extract document info
+        // Extract document info from completed results
         const documents = results.map(result => {
           // Check if redlines were actually generated
           const hasRedlines = !!(result.redlined_document_s3_key || result.redlined_document);
@@ -148,6 +149,33 @@ const SessionSidebar = ({
           errorMessage: job.stage_message || job.error_message
         }));
         
+        // Process failed jobs from API response
+        // These are jobs that failed but are not active anymore
+        const failedJobs = failedJobsFromAPI.map(job => ({
+          jobId: job.job_id || job.analysis_id,
+          status: 'failed',
+          progress: job.progress || 0,
+          stage: job.stage || 'failed',
+          documentS3Key: job.document_s3_key,
+          updatedAt: job.updated_at || job.timestamp,
+          errorMessage: job.stage_message || job.error_message || 'Processing failed'
+        }));
+        
+        // Convert failed jobs to failed documents for status display
+        failedJobs.forEach(failedJob => {
+          if (failedJob.documentS3Key) {
+            documents.push({
+              documentName: extractDocumentName(failedJob.documentS3Key),
+              status: 'failed',
+              hasRedlines: false,
+              conflictsFound: 0,
+              updatedAt: failedJob.updatedAt,
+              jobId: failedJob.jobId,
+              redlinedDocumentS3Key: null
+            });
+          }
+        });
+        
         // Backend enforces: only 1 active job per session
         // Remove completed jobs (they should be in documents, not activeJobs)
         activeJobs = activeJobs.filter(job => job.status !== 'completed');
@@ -182,10 +210,16 @@ const SessionSidebar = ({
           }
         }
         
+        // Calculate total conflicts count from all completed documents
+        const totalConflictsCount = documents
+          .filter(doc => doc.status === 'completed')
+          .reduce((sum, doc) => sum + (doc.conflictsFound || 0), 0);
+        
         statusMap[session.session_id] = {
           documents,
           activeJobs,
           documentCount: documents.length,
+          conflictsCount: totalConflictsCount,
           hasResults: documents.length > 0 || activeJobs.length > 0
         };
       } catch (error) {
@@ -194,6 +228,7 @@ const SessionSidebar = ({
           documents: [],
           activeJobs: [],
           documentCount: 0,
+          conflictsCount: 0,
           hasResults: false
         };
       }
@@ -217,7 +252,7 @@ const SessionSidebar = ({
     setSessionStatuses(prev => {
       const updated = { ...prev };
       if (!updated[session_id]) {
-        updated[session_id] = { documents: [], activeJobs: [], documentCount: 0, hasResults: false };
+        updated[session_id] = { documents: [], activeJobs: [], documentCount: 0, conflictsCount: 0, hasResults: false };
       }
       
       // Update or add job status
@@ -467,42 +502,45 @@ const SessionSidebar = ({
       const failedJob = status.activeJobs.find(job => job.status === 'failed');
       const job = processingJob || failedJob; // Prioritize processing over failed
       
-      if (!job) return { type: 'empty', label: 'Empty', color: '#666' };
-      
-      // Check for processing job first (highest priority)
-      if (job.status === 'processing') {
-        const progressValue = typeof job.progress === 'number' ? job.progress : parseInt(job.progress || 0, 10);
-        return { 
-          type: 'processing', 
-          label: `${progressValue}%`, 
-          color: '#3b82f6',
-          progress: progressValue
-        };
+      if (job) {
+        // Check for processing job first (highest priority)
+        if (job.status === 'processing') {
+          const progressValue = typeof job.progress === 'number' ? job.progress : parseInt(job.progress || 0, 10);
+          return { 
+            type: 'processing', 
+            label: `${progressValue}%`, 
+            color: '#3b82f6',
+            progress: progressValue
+          };
+        }
+        
+        // Check for failed job
+        if (job.status === 'failed') {
+          return { type: 'failed', label: 'Failed', color: '#ef4444' };
+        }
       }
-      
-      // Check for failed job
-      if (job.status === 'failed') {
+    }
+    
+    // Check for documents (completed or failed)
+    if (status.documents && status.documents.length > 0) {
+      // Check for failed documents first
+      const failedDocs = status.documents.filter(d => d.status === 'failed');
+      if (failedDocs.length > 0) {
         return { type: 'failed', label: 'Failed', color: '#ef4444' };
       }
-    }
-    
-    // Check for failed documents
-    const failedDocs = status.documents.filter(d => d.status === 'failed');
-    if (failedDocs.length > 0) {
-      return { type: 'failed', label: 'Failed', color: '#ef4444' };
-    }
-    
-    // Check for completed documents
-    if (status.documents.length > 0) {
-      // Completed: has redlines OR (no conflicts AND has analysis)
-      const completedDocs = status.documents.filter(d => 
-        d.status === 'completed'
-      );
+      
+      // Check for completed documents
+      const completedDocs = status.documents.filter(d => d.status === 'completed');
       if (completedDocs.length > 0) {
         return { type: 'completed', label: 'Complete', color: '#10b981' };
       }
+      
+      // If documents exist but status is unknown, still show something
+      // (shouldn't happen, but handle gracefully)
+      return { type: 'completed', label: 'Complete', color: '#10b981' };
     }
     
+    // Only return empty if truly no content
     return { type: 'empty', label: 'Empty', color: '#666' };
   };
 
@@ -722,6 +760,7 @@ const SessionSidebar = ({
             const displayName = getSessionDisplayName(session);
             const sessionData = sessionStatuses[session.session_id];
             const documentCount = sessionData?.documentCount || 0;
+            const conflictsCount = sessionData?.conflictsCount || 0;
             
             return (
               <div
@@ -798,12 +837,13 @@ const SessionSidebar = ({
                         </div>
                       )}
                       
-                      {/* Status Badge and Document Count */}
+                      {/* Status Badge, Conflicts Count, and Document Count */}
                       <div style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '8px',
-                        marginTop: '4px'
+                        marginTop: '4px',
+                        flexWrap: 'wrap'
                       }}>
                         <span style={{
                           fontSize: '11px',
@@ -827,6 +867,16 @@ const SessionSidebar = ({
                           )}
                           {status.label}
                         </span>
+                        
+                        {conflictsCount > 0 && status.type === 'completed' && (
+                          <span style={{
+                            fontSize: '11px',
+                            color: '#f59e0b',
+                            fontWeight: '500'
+                          }}>
+                            {conflictsCount} {conflictsCount === 1 ? 'conflict' : 'conflicts'}
+                          </span>
+                        )}
                         
                         {documentCount > 0 && (
                           <span style={{
