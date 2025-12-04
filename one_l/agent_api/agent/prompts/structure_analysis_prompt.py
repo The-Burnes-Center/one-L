@@ -21,21 +21,28 @@ Your response MUST be ONLY a valid JSON object matching the StructureAnalysisOut
 - Start with {{and end with}}
 - Follow this structure:
 ```
-{{"queries": [
+{{
+  "queries": [
     {{
       "query": "query string with 50-100+ unique terms",
-      "section": "section identifier",
+      "section": "optional section identifier",
       "max_results": 50,
       "query_id": 1
     }}
   ],
-  "chunk_structure": {{"sections": ["list of sections"],
+  "chunk_structure": {{
+    "sections": ["list of sections"],
     "vendor_exceptions": [],
     "document_references": ["Massachusetts documents referenced"],
-    "character_range": "characters 0-100000"}},
-  "explanation": "explanation of structure analysis"
+    "character_range": "characters 0-100000"
+  }},
+  "explanation": "optional explanation of structure analysis"
 }}
 ```
+CRITICAL: vendor_exceptions MUST be a list of objects (dictionaries), NOT strings. Each object must have:
+- "text": The exact vendor language verbatim (required)
+- "section": The section identifier where this exception was found (optional, can be null)
+- "clarification_id": Vendor's ID for this exception if available (optional, can be null)
 </critical>
 
 ## ANALYSIS PROCESS
@@ -80,7 +87,8 @@ Determine which Commonwealth documents each vendor section relates to:
 </document_families>
 
 For vendor language not tied to a specific document family (auto-renewal, exclusive remedy, unilateral discretion, long notice periods, online terms, incorporation by reference):
-- Preserve exact language in vendor_exceptions
+- Preserve exact language in vendor_exceptions as objects with "text", "section", and "clarification_id" fields
+- Each exception must be an object: {{"text": "exact language", "section": "section name or null", "clarification_id": "vendor ID or null"}}
 - Include in queries for Step 4
 
 IMPORTANT: 
