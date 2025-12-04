@@ -492,7 +492,53 @@ const SessionSidebar = ({
 
   const getSessionStatus = (session) => {
     const status = sessionStatuses[session.session_id];
-    if (!status) return { type: 'empty', label: 'Empty', color: '#666' };
+    
+    // If status hasn't loaded yet, check session data directly from backend
+    if (!status) {
+      // Use backend data directly if available
+      const backendResults = session.results || [];
+      const backendActiveJobs = session.active_jobs || [];
+      const backendFailedJobs = session.failed_jobs || [];
+      
+      // Check active jobs first
+      if (backendActiveJobs.length > 0) {
+        const processingJob = backendActiveJobs.find(job => job.status === 'processing');
+        const failedJob = backendActiveJobs.find(job => job.status === 'failed');
+        const job = processingJob || failedJob;
+        
+        if (job) {
+          if (job.status === 'processing') {
+            const progressValue = typeof job.progress === 'number' ? job.progress : parseInt(job.progress || 0, 10);
+            return { 
+              type: 'processing', 
+              label: `${progressValue}%`, 
+              color: '#3b82f6',
+              progress: progressValue
+            };
+          }
+          if (job.status === 'failed') {
+            return { type: 'failed', label: 'Failed', color: '#ef4444' };
+          }
+        }
+      }
+      
+      // Check failed jobs
+      if (backendFailedJobs.length > 0) {
+        return { type: 'failed', label: 'Failed', color: '#ef4444' };
+      }
+      
+      // Check completed results
+      if (backendResults.length > 0) {
+        return { type: 'completed', label: 'Complete', color: '#10b981' };
+      }
+      
+      // Check if session has results flag
+      if (session.has_results || session.has_content) {
+        return { type: 'completed', label: 'Complete', color: '#10b981' };
+      }
+      
+      return { type: 'empty', label: 'Empty', color: '#666' };
+    }
     
     // Check activeJobs first (since each session has only 1 job)
     // Prioritize processing jobs over failed jobs
@@ -759,8 +805,19 @@ const SessionSidebar = ({
             const status = getSessionStatus(session);
             const displayName = getSessionDisplayName(session);
             const sessionData = sessionStatuses[session.session_id];
-            const documentCount = sessionData?.documentCount || 0;
-            const conflictsCount = sessionData?.conflictsCount || 0;
+            
+            // Calculate document count and conflicts count
+            let documentCount = sessionData?.documentCount || 0;
+            let conflictsCount = sessionData?.conflictsCount || 0;
+            
+            // If status hasn't loaded yet, use backend data directly
+            if (!sessionData) {
+              const backendResults = session.results || [];
+              documentCount = backendResults.length;
+              conflictsCount = backendResults
+                .filter(result => result.conflicts_count > 0)
+                .reduce((sum, result) => sum + (result.conflicts_count || 0), 0);
+            }
             
             return (
               <div
@@ -893,14 +950,14 @@ const SessionSidebar = ({
                     <div style={{
                       display: 'flex',
                       gap: '4px',
-                      opacity: 0,
+                      opacity: 0.6,
                       transition: 'opacity 0.2s'
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.opacity = 1;
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.opacity = 0;
+                      e.currentTarget.style.opacity = 0.6;
                     }}
                     onClick={(e) => e.stopPropagation()}
                     >
@@ -915,9 +972,18 @@ const SessionSidebar = ({
                           color: '#888',
                           cursor: 'pointer',
                           padding: '4px',
-                          fontSize: '11px'
+                          fontSize: '11px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
                         }}
                         title="Rename session"
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = '#fff';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = '#888';
+                        }}
                       >
                         ✎
                       </button>
@@ -929,12 +995,27 @@ const SessionSidebar = ({
                         style={{
                           background: 'none',
                           border: 'none',
-                          color: '#888',
+                          color: '#ef4444',
                           cursor: 'pointer',
                           padding: '4px',
-                          fontSize: '11px'
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: '18px',
+                          height: '18px'
                         }}
                         title="Delete session"
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = '#ff6b6b';
+                          e.currentTarget.style.backgroundColor = '#ef444420';
+                          e.currentTarget.style.borderRadius = '4px';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = '#ef4444';
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                        }}
                       >
                         ×
                       </button>
