@@ -127,7 +127,10 @@ def _is_duplicate_content(text: str, threshold: float = DEDUPLICATION_THRESHOLD)
         return True
     
     # Simple similarity check with existing content signatures
-    for existing_sig in _content_cache:
+    # Create a list of keys to iterate over to avoid "dictionary changed size during iteration" error
+    # when multiple threads access the cache concurrently
+    existing_signatures = list(_content_cache.keys())
+    for existing_sig in existing_signatures:
         matches = sum(c1 == c2 for c1, c2 in zip(signature, existing_sig) if len(signature) == len(existing_sig))
         if len(existing_sig) > 0 and matches / len(existing_sig) > threshold:
             return True
