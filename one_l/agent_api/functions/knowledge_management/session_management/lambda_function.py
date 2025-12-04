@@ -457,6 +457,14 @@ def get_user_sessions(user_id: str, filter_by_results: bool = False, cleanup_emp
 def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str, Any]:
     """Update session title"""
     try:
+        # Validate inputs
+        if not session_id or not user_id:
+            logger.error(f"Missing required parameters: session_id={session_id}, user_id={user_id}")
+            return {
+                'success': False,
+                'error': 'session_id and user_id are required'
+            }
+        
         # Validate environment variables
         if not SESSIONS_TABLE:
             logger.error("SESSIONS_TABLE environment variable not set")
@@ -467,17 +475,65 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         
         table = dynamodb.Table(SESSIONS_TABLE)
         
+        # Log the key being used for debugging
+        logger.info(f"Updating session title: session_id={session_id} (type: {type(session_id).__name__}), user_id={user_id} (type: {type(user_id).__name__}), title={title}")
+        
+        # Validate key values are not None or empty
+        if not session_id or not isinstance(session_id, str):
+            logger.error(f"Invalid session_id: {session_id} (type: {type(session_id)})")
+            return {
+                'success': False,
+                'error': f'Invalid session_id: {session_id}'
+            }
+        if not user_id or not isinstance(user_id, str):
+            logger.error(f"Invalid user_id: {user_id} (type: {type(user_id)})")
+            return {
+                'success': False,
+                'error': f'Invalid user_id: {user_id}'
+            }
+        
         # Update the session - table has composite key (session_id + user_id)
-        response = table.update_item(
-            Key={'session_id': session_id, 'user_id': user_id},
-            UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
-            ExpressionAttributeValues={
-                ':title': title,
-                ':updated_at': datetime.now(timezone.utc).isoformat(),
-                ':last_activity': datetime.now(timezone.utc).isoformat()
-            },
-            ReturnValues='ALL_NEW'
-        )
+        # Note: Key order matters - partition key first, then sort key
+        # Try with session_id as partition key first (expected schema)
+        try:
+            response = table.update_item(
+                Key={
+                    'session_id': str(session_id),  # Ensure string type
+                    'user_id': str(user_id)  # Ensure string type
+                },
+                UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                ExpressionAttributeValues={
+                    ':title': str(title),
+                    ':updated_at': datetime.now(timezone.utc).isoformat(),
+                    ':last_activity': datetime.now(timezone.utc).isoformat()
+                },
+                ReturnValues='ALL_NEW'
+            )
+        except Exception as key_error:
+            # If that fails, try with user_id as partition key (alternative schema)
+            error_msg = str(key_error)
+            if 'ValidationException' in error_msg and 'key element does not match the schema' in error_msg:
+                logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
+                try:
+                    response = table.update_item(
+                        Key={
+                            'user_id': str(user_id),  # Try user_id as partition key
+                            'session_id': str(session_id)  # session_id as sort key
+                        },
+                        UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                        ExpressionAttributeValues={
+                            ':title': str(title),
+                            ':updated_at': datetime.now(timezone.utc).isoformat(),
+                            ':last_activity': datetime.now(timezone.utc).isoformat()
+                        },
+                        ReturnValues='ALL_NEW'
+                    )
+                    logger.info("Successfully updated with alternative key order (user_id, session_id)")
+                except Exception as alt_error:
+                    # If both fail, re-raise the original error
+                    raise key_error
+            else:
+                raise
         
         logger.info(f"Updated session title: {session_id} -> {title}")
         
@@ -493,7 +549,13 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         logger.error(f"Full error details: {repr(e)}")
         
         # Provide more specific error messages
-        if 'ConditionalCheckFailedException' in error_type:
+        if 'ValidationException' in error_type:
+            logger.error(f"ValidationException - Key schema mismatch. session_id={session_id}, user_id={user_id}")
+            return {
+                'success': False,
+                'error': f'Key schema mismatch. Please check session_id and user_id are correct. session_id={session_id}, user_id={user_id}'
+            }
+        elif 'ConditionalCheckFailedException' in error_type:
             return {
                 'success': False,
                 'error': 'Session not found or access denied'
@@ -615,12 +677,67 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
 def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
     """Delete a session and its associated files"""
     try:
+        # Validate inputs
+        if not session_id or not user_id:
+            logger.error(f"Missing required parameters for delete: session_id={session_id}, user_id={user_id}")
+            return {
+                'success': False,
+                'error': 'session_id and user_id are required'
+            }
+        
+        # Validate environment variables
+        if not SESSIONS_TABLE:
+            logger.error("SESSIONS_TABLE environment variable not set")
+            return {
+                'success': False,
+                'error': 'Configuration error: Sessions table not configured'
+            }
+        
         # First, get session info to find S3 prefix
         table = dynamodb.Table(SESSIONS_TABLE)
         
         try:
+            # Log the key being used for debugging
+            logger.info(f"Deleting session: session_id={session_id} (type: {type(session_id).__name__}), user_id={user_id} (type: {type(user_id).__name__})")
+            
+            # Validate key values are not None or empty
+            if not session_id or not isinstance(session_id, str):
+                logger.error(f"Invalid session_id for delete: {session_id} (type: {type(session_id)})")
+                return {
+                    'success': False,
+                    'error': f'Invalid session_id: {session_id}'
+                }
+            if not user_id or not isinstance(user_id, str):
+                logger.error(f"Invalid user_id for delete: {user_id} (type: {type(user_id)})")
+                return {
+                    'success': False,
+                    'error': f'Invalid user_id: {user_id}'
+                }
+            
             # Table has composite key (session_id + user_id), so both must be in Key
-            response = table.get_item(Key={'session_id': session_id, 'user_id': user_id})
+            # Try with session_id as partition key first (expected schema)
+            try:
+                response = table.get_item(Key={
+                    'session_id': str(session_id),  # Ensure string type
+                    'user_id': str(user_id)  # Ensure string type
+                })
+            except Exception as key_error:
+                # If that fails, try with user_id as partition key (alternative schema)
+                error_msg = str(key_error)
+                if 'ValidationException' in error_msg and 'key element does not match the schema' in error_msg:
+                    logger.warning(f"Key schema mismatch for get_item, trying alternative key order: {error_msg}")
+                    try:
+                        response = table.get_item(Key={
+                            'user_id': str(user_id),  # Try user_id as partition key
+                            'session_id': str(session_id)  # session_id as sort key
+                        })
+                        logger.info("Successfully retrieved with alternative key order (user_id, session_id)")
+                    except Exception as alt_error:
+                        # If both fail, re-raise the original error
+                        raise key_error
+                else:
+                    raise
+            
             session = response.get('Item')
             
             if not session:
@@ -683,9 +800,32 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                     logger.warning(f"Error deleting jobs for session {session_id}: {jobs_error}")
             
             # Delete from DynamoDB - table has composite key (session_id + user_id)
-            table.delete_item(
-                Key={'session_id': session_id, 'user_id': user_id}
-            )
+            # Try with session_id as partition key first (expected schema)
+            try:
+                table.delete_item(
+                    Key={
+                        'session_id': str(session_id),  # Ensure string type
+                        'user_id': str(user_id)  # Ensure string type
+                    }
+                )
+            except Exception as key_error:
+                # If that fails, try with user_id as partition key (alternative schema)
+                error_msg = str(key_error)
+                if 'ValidationException' in error_msg and 'key element does not match the schema' in error_msg:
+                    logger.warning(f"Key schema mismatch for delete_item, trying alternative key order: {error_msg}")
+                    try:
+                        table.delete_item(
+                            Key={
+                                'user_id': str(user_id),  # Try user_id as partition key
+                                'session_id': str(session_id)  # session_id as sort key
+                            }
+                        )
+                        logger.info("Successfully deleted with alternative key order (user_id, session_id)")
+                    except Exception as alt_error:
+                        # If both fail, re-raise the original error
+                        raise key_error
+                else:
+                    raise
             
             logger.info(f"Deleted session: {session_id}")
             
@@ -695,10 +835,27 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
             }
             
         except Exception as e:
-            logger.error(f"Error deleting session: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.error(f"Error deleting session ({error_type}): {error_msg}")
+            logger.error(f"Full error details: {repr(e)}")
+            
+            # Provide more specific error messages
+            if 'ValidationException' in error_type:
+                logger.error(f"ValidationException - Key schema mismatch. session_id={session_id}, user_id={user_id}")
+                return {
+                    'success': False,
+                    'error': f'Key schema mismatch. Please check session_id and user_id are correct. session_id={session_id}, user_id={user_id}'
+                }
+            elif 'ResourceNotFoundException' in error_type:
+                return {
+                    'success': False,
+                    'error': f'Sessions table not found: {SESSIONS_TABLE}'
+                }
+            
             return {
                 'success': False,
-                'error': str(e)
+                'error': f'Failed to delete session: {error_msg}'
             }
             
     except Exception as e:
@@ -1217,6 +1374,11 @@ def lambda_handler(event, context):
             if not session_id or not title:
                 return create_cors_response(400, {'error': 'session_id and title are required'})
             
+            if not user_id:
+                logger.error(f"Missing user_id in update request: body={body}, query_params={query_parameters}")
+                return create_cors_response(400, {'error': 'user_id is required'})
+            
+            logger.info(f"Update request: session_id={session_id}, user_id={user_id}, title={title}")
             result = update_session_title(session_id, user_id, title)
             return create_cors_response(200 if result['success'] else 500, result)
             
@@ -1226,6 +1388,11 @@ def lambda_handler(event, context):
             if not session_id:
                 return create_cors_response(400, {'error': 'session_id is required'})
             
+            if not user_id:
+                logger.error(f"Missing user_id in delete request: body={body}, query_params={query_parameters}")
+                return create_cors_response(400, {'error': 'user_id is required'})
+            
+            logger.info(f"Delete request: session_id={session_id}, user_id={user_id}")
             result = delete_session(session_id, user_id)
             return create_cors_response(200 if result['success'] else 500, result)
             
