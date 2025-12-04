@@ -41,6 +41,10 @@ except ImportError:
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Module-level cache to track conflicts per paragraph to preserve comments
+# Key: (document_id, paragraph_index) -> List of (start_pos, end_pos, comment, conflict_id)
+_paragraph_conflict_cache = {}
+
 # Pydantic model for conflict validation
 if PYDANTIC_AVAILABLE:
     class ConflictModel(BaseModel):
@@ -1192,7 +1196,12 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     Returns:
         Dictionary with redlining results
     """
-    logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs and {len(doc.tables)} tables")
+    # Clear the paragraph conflict cache at the start of processing a new document
+    # This ensures we don't carry over conflicts from previous documents
+    # Note: We clear all entries since document IDs may not be stable across processing
+    global _paragraph_conflict_cache
+    _paragraph_conflict_cache.clear()
+    logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs and {len(doc.tables)} tables (cleared conflict cache)")
     try:
         matches_found = 0
         paragraphs_with_redlines = []
@@ -2203,7 +2212,8 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
         # Check if normalized search text is in normalized paragraph
         if normalized_search in normalized_para:
             logger.info(f"TIER2_MATCH: Found exact normalized match in paragraph {para_idx}, page≈{para_idx // 20}")
-            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+            # Pass full conflict text, let _apply_redline_to_paragraph extract the specific phrase
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
             all_matches.append({'para_idx': para_idx, 'matched_text': 'normalized_match'})
             matched = True
         
@@ -2212,7 +2222,8 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
             similarity = similarity_ratio(normalized_search, normalized_para)
             if similarity > 0.65:
                 logger.info(f"TIER2_SIMILARITY: Found similarity match (ratio: {similarity:.3f}) in paragraph {para_idx}, page≈{para_idx // 20}")
-                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
+                # Pass full conflict text, let _apply_redline_to_paragraph extract the specific phrase
+                _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'similarity_match'})
                 matched = True
         
@@ -2223,7 +2234,8 @@ def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str
                 normalized_phrase = enhanced_normalize_text(phrase)
                 if normalized_phrase in normalized_para and len(normalized_phrase) > 15:
                     logger.info(f"TIER2_PHRASE: Found phrase match '{phrase[:50]}...' in paragraph {para_idx}, page≈{para_idx // 20}")
-                    _apply_redline_to_paragraph(paragraph, phrase[:100], redline_item)
+                    # Use the actual phrase found, not truncated version
+                    _apply_redline_to_paragraph(paragraph, phrase, redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'phrase_match'})
                     matched = True
                     break
@@ -2258,15 +2270,15 @@ def _tier3_cross_paragraph_matching(doc, vendor_conflict_text: str, redline_item
             
             # Try exact match in combined text
             if vendor_conflict_text in combined_text:
-
                 # Apply redlining to the first paragraph that contains part of the text
-                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
+                # Pass full conflict text, let _apply_redline_to_paragraph extract the specific phrase
+                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text, redline_item)
                 return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
             
             # Try case-insensitive match in combined text
             if vendor_conflict_text.lower() in combined_text.lower():
-
-                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
+                # Pass full conflict text, let _apply_redline_to_paragraph extract the specific phrase
+                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text, redline_item)
                 return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
     
     return None
@@ -2362,10 +2374,9 @@ def _tier5_tokenized_matching(doc, vendor_conflict_text: str, redline_item: Dict
         found, start_pos = token_sequence_match(search_tokens, para_tokens)
         
         if found:
-
-            # Reconstruct approximate text for redlining (use first part of vendor text)
-            redline_text = vendor_conflict_text[:min(len(vendor_conflict_text), 150)]
-            _apply_redline_to_paragraph(paragraph, redline_text, redline_item)
+            # Pass full conflict text, let _apply_redline_to_paragraph extract the specific phrase
+            # It will use the tokenized match position to find the actual text
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
             return {'para_idx': para_idx, 'matched_text': 'tokenized_match'}
     
     return None
@@ -2376,62 +2387,239 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
     Apply redline formatting to specific text within a paragraph.
     Preserves existing formatting and allows multiple conflicts in the same paragraph.
     Only redlines the specific conflict text, not the whole paragraph.
+    Improved to extract specific phrases even when conflict text is a full paragraph.
     """
     
     try:
         paragraph_text = paragraph.text
         
+        # Extract key phrases from conflict text if it's very long (likely a full paragraph)
+        # This helps us find the specific phrase to redline instead of the whole paragraph
+        def extract_key_phrases_for_matching(text, max_length=150):
+            """Extract the most distinctive phrase from conflict text for precise matching."""
+            # If text is short enough, use it as-is
+            if len(text) <= max_length:
+                return [text]
+            
+            # Split into sentences first
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            key_phrases = []
+            
+            # Prefer sentences that contain conflict-related keywords
+            conflict_keywords = ['shall', 'must', 'will', 'may', 'cannot', 'prohibited', 
+                               'waiver', 'liability', 'indemnification', 'termination',
+                               'breach', 'damages', 'warranty', 'disclaimer', 'non-transferable',
+                               'non-exclusive', 'exclusive', 'transferable', 'assign', 'assignment']
+            
+            # First, try to find sentences with conflict keywords (prioritize shorter, more specific ones)
+            keyword_sentences = []
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if len(sentence) >= 20:  # Lower minimum for more specific phrases
+                    keyword_count = sum(1 for keyword in conflict_keywords if keyword in sentence.lower())
+                    if keyword_count > 0:
+                        keyword_sentences.append((sentence, keyword_count))
+            
+            # Sort by keyword count (descending) then by length (ascending - prefer shorter, more specific)
+            keyword_sentences.sort(key=lambda x: (-x[1], len(x[0])))
+            key_phrases.extend([s for s, _ in keyword_sentences[:3]])
+            
+            # Also extract shorter phrases within sentences (between commas, semicolons, etc.)
+            for sentence in sentences:
+                # Split on common separators to get sub-phrases
+                sub_phrases = re.split(r'[,;:]|\sand\s|\sor\s|\sbut\s', sentence)
+                for phrase in sub_phrases:
+                    phrase = phrase.strip()
+                    # Prefer phrases with at least 2 words (not single words)
+                    word_count = len(phrase.split())
+                    # Look for phrases with conflict keywords that are shorter and more specific
+                    if 15 <= len(phrase) <= 100 and word_count >= 2:  # Prefer phrases, not single words
+                        if any(keyword in phrase.lower() for keyword in conflict_keywords):
+                            if phrase not in key_phrases:
+                                key_phrases.append(phrase)
+            
+            # If no keyword phrases found, use shortest meaningful sentences (more specific)
+            # Prefer sentences over single words
+            if not key_phrases:
+                sorted_sentences = sorted([s for s in sentences if len(s.strip()) >= 20], 
+                                         key=len)  # Ascending - prefer shorter
+                # Filter to ensure sentences have at least 2 words
+                multi_word_sentences = [s for s in sorted_sentences if len(s.split()) >= 2]
+                if multi_word_sentences:
+                    key_phrases = multi_word_sentences[:3]  # Top 3 shortest multi-word sentences
+                else:
+                    # Fallback to single-word sentences only if no multi-word options
+                    key_phrases = sorted_sentences[:3]
+            
+            # If still nothing, use first portion of text (but shorter)
+            # Prefer phrase boundaries (sentence end, comma, etc.) over mid-word breaks
+            if not key_phrases:
+                # Try to find a natural break point (sentence end, comma, etc.)
+                break_point = max_length
+                for delimiter in ['. ', '; ', ', ', ' ']:
+                    idx = text.find(delimiter, max_length - 50)
+                    if idx != -1 and idx < max_length:
+                        break_point = idx + len(delimiter)
+                        break
+                phrase = text[:break_point].strip()
+                # Ensure we have at least 2 words
+                if len(phrase.split()) >= 2:
+                    key_phrases = [phrase]
+                else:
+                    # If single word, try to extend to next word boundary
+                    next_space = text.find(' ', break_point)
+                    if next_space != -1 and next_space < max_length + 20:
+                        key_phrases = [text[:next_space].strip()]
+                    else:
+                        key_phrases = [phrase]  # Fallback to single word if necessary
+            
+            return key_phrases[:5]  # Limit to 5 phrases to try
+        
         # Try multiple approaches to find the conflict text
         start_pos = -1
         actual_conflict_text = conflict_text
         
-        # Approach 1: Exact match
+        # Approach 1: Exact match with full conflict text
         start_pos = paragraph_text.find(conflict_text)
         if start_pos != -1:
             actual_conflict_text = conflict_text
         else:
-            # Approach 2: Case-insensitive match
+            # Approach 2: Case-insensitive match with full conflict text
             start_pos = paragraph_text.lower().find(conflict_text.lower())
             if start_pos != -1:
                 actual_conflict_text = paragraph_text[start_pos:start_pos + len(conflict_text)]
             else:
-                # Approach 3: Try with normalized text variations
-                normalized_conflict = re.sub(r'[^\w\s]', ' ', conflict_text).strip()
-                normalized_para = re.sub(r'[^\w\s]', ' ', paragraph_text).strip()
+                # Approach 3: If conflict text is long (more than 100 chars), try to find key phrases within it
+                # This helps avoid redlining entire sentences when only a specific phrase conflicts
+                if len(conflict_text) > 100:
+                    key_phrases = extract_key_phrases_for_matching(conflict_text)
+                    logger.info(f"REDLINE_PHRASE_EXTRACT: Extracted {len(key_phrases)} key phrases from conflict text (length: {len(conflict_text)})")
+                    
+                    for phrase in key_phrases:
+                        phrase_start = paragraph_text.lower().find(phrase.lower())
+                        if phrase_start != -1:
+                            # Found a key phrase - use it for redlining (more precise than full text)
+                            actual_conflict_text = paragraph_text[phrase_start:phrase_start + len(phrase)]
+                            start_pos = phrase_start
+                            logger.info(f"REDLINE_PHRASE_MATCH: Found key phrase '{phrase[:50]}...' at position {start_pos} (original conflict text was {len(conflict_text)} chars)")
+                            break
                 
-                start_pos = normalized_para.lower().find(normalized_conflict.lower())
-                if start_pos != -1:
-                    # Find the actual text in the original paragraph
-                    # This is approximate - we'll highlight a reasonable portion
-                    actual_conflict_text = conflict_text[:50] + "..." if len(conflict_text) > 50 else conflict_text
-                    start_pos = paragraph_text.lower().find(actual_conflict_text.lower())
+                # Approach 4: Try with normalized text variations (only if phrase extraction didn't work)
+                if start_pos == -1:
+                    normalized_conflict = re.sub(r'[^\w\s]', ' ', conflict_text).strip()
+                    normalized_para = re.sub(r'[^\w\s]', ' ', paragraph_text).strip()
+                    
+                    normalized_start = normalized_para.lower().find(normalized_conflict.lower())
+                    if normalized_start != -1:
+                        # Map back to original paragraph - find approximate position
+                        # Count words to find approximate position
+                        normalized_words = normalized_conflict.split()
+                        para_words = normalized_para.split()
+                        
+                        # Try to find word sequence match
+                        for i in range(len(para_words) - len(normalized_words) + 1):
+                            if para_words[i:i+len(normalized_words)] == normalized_words:
+                                # Found word sequence, now find character position
+                                char_count = len(' '.join(para_words[:i]))
+                                start_pos = paragraph_text.lower().find(paragraph_text[char_count:char_count+50].lower())
+                                if start_pos != -1:
+                                    # Try to find exact length match
+                                    end_pos = start_pos + len(conflict_text)
+                                    if end_pos <= len(paragraph_text):
+                                        actual_conflict_text = paragraph_text[start_pos:end_pos]
+                                    else:
+                                        actual_conflict_text = paragraph_text[start_pos:]
+                                    break
+                                break
         
-        # If still not found, try to find a shorter substring match
+        # If still not found, try to find a shorter substring match (but be more conservative)
+        # Prefer phrases/sentences over single words
         if start_pos == -1:
-            # Try finding a significant portion (at least 20 chars or 50% of conflict text)
-            min_match_length = max(20, len(conflict_text) // 2)
-            for match_len in range(len(conflict_text), min_match_length - 1, -1):
+            # Try finding a significant portion (at least 30 chars or 60% of conflict text)
+            # This ensures we're matching substantial phrases, not just a few words
+            min_match_length = max(30, int(len(conflict_text) * 0.6))
+            
+            # First, try to find phrase boundaries (sentence endings, commas, etc.)
+            # to avoid matching just single words
+            for match_len in range(len(conflict_text), min_match_length - 1, -10):  # Step by 10 for efficiency
                 substring = conflict_text[:match_len]
+                
+                # Check if substring ends at a natural phrase boundary (not mid-word)
+                # Prefer substrings that end with punctuation or at word boundaries
+                if match_len < len(conflict_text):
+                    next_char = conflict_text[match_len] if match_len < len(conflict_text) else ''
+                    # If next char is punctuation or space, this is a good boundary
+                    if next_char in ' .,;:!?':
+                        # Good phrase boundary
+                        pass
+                    elif match_len > 50:  # For longer substrings, allow mid-word breaks
+                        pass
+                    else:
+                        # Try to find word boundary - look for space before this position
+                        last_space = substring.rfind(' ')
+                        if last_space > min_match_length:
+                            # Use substring up to last space (prefer complete words)
+                            substring = conflict_text[:last_space + 1]
+                            match_len = len(substring)
+                
                 start_pos = paragraph_text.lower().find(substring.lower())
                 if start_pos != -1:
                     actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
-                    break
+                    # Verify we're not matching just a single word (prefer phrases)
+                    word_count = len(actual_conflict_text.split())
+                    if word_count >= 2:  # Prefer phrases with at least 2 words
+                        logger.info(f"REDLINE_SUBSTRING_MATCH: Found phrase match (length: {match_len}, words: {word_count})")
+                        break
+                    elif word_count == 1 and match_len >= 20:  # Single word OK if it's substantial
+                        logger.info(f"REDLINE_SUBSTRING_MATCH: Found single word match (length: {match_len})")
+                        break
+                    else:
+                        # Single short word - continue searching for better match
+                        start_pos = -1
+                        continue
         
         # Only fall back to whole paragraph if conflict text is very short or not found at all
-        # and the paragraph itself is short (less than 100 chars)
+        # and the paragraph itself is short (less than 80 chars) - more conservative threshold
         if start_pos == -1:
-            if len(paragraph_text) < 100 and len(conflict_text) < 50:
-                # Small paragraph, might be the whole thing
+            if len(paragraph_text) < 80 and len(conflict_text) < 40:
+                # Very small paragraph, might be the whole thing
                 actual_conflict_text = paragraph_text
                 start_pos = 0
+                logger.info(f"REDLINE_FALLBACK: Using entire short paragraph (length: {len(paragraph_text)})")
             else:
                 logger.warning(f"Could not find conflict text '{conflict_text[:50]}...' in paragraph (length: {len(paragraph_text)}). Skipping redline.")
                 return
         
         end_pos = start_pos + len(actual_conflict_text)
         
-        # Collect all existing redlined ranges to preserve them
-        existing_redlined_ranges = []
+        # Track conflict metadata: (start, end, comment, conflict_id)
+        # Use paragraph's custom attribute to store conflict metadata if available
+        # Otherwise, we'll track it via existing redlined ranges
+        
+        # Get a unique identifier for this paragraph to track conflicts across multiple calls
+        # Use paragraph's parent document and paragraph index
+        try:
+            doc = paragraph._parent._parent if hasattr(paragraph._parent, '_parent') else None
+            para_idx = None
+            if doc and hasattr(doc, 'paragraphs'):
+                try:
+                    para_idx = list(doc.paragraphs).index(paragraph)
+                except (ValueError, AttributeError):
+                    para_idx = None
+            
+            # Create a cache key
+            doc_id = id(doc) if doc else id(paragraph)
+            cache_key = (doc_id, para_idx) if para_idx is not None else (doc_id, paragraph_text[:50])
+        except Exception:
+            # Fallback: use paragraph text as identifier
+            cache_key = (id(paragraph), paragraph_text[:50])
+        
+        # Retrieve existing conflicts for this paragraph from cache
+        existing_conflicts = _paragraph_conflict_cache.get(cache_key, [])
+        existing_redlined_ranges = [(start, end) for start, end, _, _ in existing_conflicts]
+        existing_comments_by_range = {(start, end): comment for start, end, comment, _ in existing_conflicts if comment}
+        
+        # Also extract redlined ranges from current runs (for first-time processing)
         current_pos = 0
         for run in paragraph.runs:
             run_text = run.text
@@ -2441,32 +2629,78 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             # Check if this run is already redlined
             is_redlined = (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) if run.font.color and run.font.color.rgb else False
             if is_redlined:
-                existing_redlined_ranges.append((run_start, run_end))
+                # Only add if not already in cache
+                if (run_start, run_end) not in existing_redlined_ranges:
+                    existing_redlined_ranges.append((run_start, run_end))
             
             current_pos = run_end
         
         # Check for overlap and log if needed
+        overlaps_existing = False
         for red_start, red_end in existing_redlined_ranges:
+            # Check if ranges truly overlap (not just adjacent)
             if not (end_pos <= red_start or start_pos >= red_end):
-                logger.info(f"REDLINE_OVERLAP: Conflict at {start_pos}-{end_pos} overlaps with existing redline at {red_start}-{red_end}")
+                overlaps_existing = True
+                overlap_amount = min(end_pos, red_end) - max(start_pos, red_start)
+                logger.info(f"REDLINE_OVERLAP: Conflict at {start_pos}-{end_pos} overlaps with existing redline at {red_start}-{red_end} (overlap: {overlap_amount} chars)")
+        
+        # Get current conflict metadata
+        current_comment = redline_item.get('comment', '')
+        current_conflict_id = redline_item.get('clarification_id', 'unknown')
+        
+        # Add this conflict to the cache
+        existing_conflicts.append((start_pos, end_pos, current_comment, current_conflict_id))
+        _paragraph_conflict_cache[cache_key] = existing_conflicts
         
         # Add new conflict range
         all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
         
-        # Merge overlapping ranges
+        # Update comments map with current conflict
+        if current_comment:
+            existing_comments_by_range[(start_pos, end_pos)] = current_comment
+        
+        # Merge overlapping ranges - BE VERY CONSERVATIVE: only merge if ranges truly overlap
+        # Don't merge adjacent ranges - keep them separate so each can have its own comment
         if all_redlined_ranges:
             all_redlined_ranges.sort(key=lambda x: x[0])
-            merged_ranges = [all_redlined_ranges[0]]
-            for current_start, current_end in all_redlined_ranges[1:]:
-                last_start, last_end = merged_ranges[-1]
-                if current_start <= last_end:
-                    # Overlapping - merge
-                    merged_ranges[-1] = (last_start, max(last_end, current_end))
-                else:
-                    # Non-overlapping - add new range
+            merged_ranges = []
+            range_conflicts = []  # List of lists: each merged range has list of (start, end, comment, conflict_id)
+            
+            for current_start, current_end in all_redlined_ranges:
+                merged = False
+                
+                # Check if this range overlaps with any existing merged range
+                for idx, (merged_start, merged_end) in enumerate(merged_ranges):
+                    # Only merge if ranges truly overlap (not just adjacent)
+                    # Use 0 overlap threshold - ranges must actually share characters
+                    if not (current_end <= merged_start or current_start >= merged_end):
+                        # Truly overlapping - merge
+                        merged_ranges[idx] = (min(merged_start, current_start), max(merged_end, current_end))
+                        # Add conflict metadata for this range
+                        if (current_start, current_end) == (start_pos, end_pos):
+                            # This is our new conflict
+                            range_conflicts[idx].append((current_start, current_end, current_comment, current_conflict_id))
+                        else:
+                            # This is an existing conflict (we don't have its comment, but preserve range)
+                            range_conflicts[idx].append((current_start, current_end, None, None))
+                        merged = True
+                        logger.info(f"REDLINE_MERGE: Merged truly overlapping ranges ({merged_start}-{merged_end} and {current_start}-{current_end})")
+                        break
+                
+                if not merged:
+                    # Non-overlapping - add as new range
                     merged_ranges.append((current_start, current_end))
+                    # Track conflict metadata
+                    if (current_start, current_end) == (start_pos, end_pos):
+                        # This is our new conflict
+                        range_conflicts.append([(current_start, current_end, current_comment, current_conflict_id)])
+                    else:
+                        # This is an existing conflict
+                        range_conflicts.append([(current_start, current_end, None, None)])
         else:
+            # No existing ranges, just add our new one
             merged_ranges = [(start_pos, end_pos)]
+            range_conflicts = [[(start_pos, end_pos, current_comment, current_conflict_id)]]
         
         # Rebuild paragraph preserving existing redlines and adding new conflict
         # Clear all runs
@@ -2476,7 +2710,7 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
         # Build paragraph with all redlined ranges marked
         current_pos = 0
         
-        for red_start, red_end in merged_ranges:
+        for idx, (red_start, red_end) in enumerate(merged_ranges):
             # Add text before this redlined range
             if red_start > current_pos:
                 before_text = paragraph_text[current_pos:red_start]
@@ -2489,13 +2723,42 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             conflict_run.font.color.rgb = RGBColor(255, 0, 0)
             conflict_run.font.strike = True
             
-            # Add comment only if this range includes our new conflict
-            if start_pos >= red_start and end_pos <= red_end:
-                comment = redline_item.get('comment', '')
-                if comment:
-                    author = "One L"
-                    initials = "1L"
-                    conflict_run.add_comment(comment, author=author, initials=initials)
+            # Add comment(s) for all conflicts in this range
+            # Check cache for all conflicts that overlap with this range
+            comments_for_range = []
+            for cached_start, cached_end, cached_comment, cached_id in existing_conflicts:
+                # Check if this cached conflict overlaps with current range
+                if not (cached_end <= red_start or cached_start >= red_end):
+                    if cached_comment:
+                        comments_for_range.append((cached_start, cached_end, cached_comment, cached_id))
+            
+            # Also check if our new conflict is in this range
+            if (start_pos >= red_start and end_pos <= red_end) and current_comment:
+                # Check if we already have this comment in the list
+                if not any(c == current_comment for _, _, c, _ in comments_for_range):
+                    comments_for_range.append((start_pos, end_pos, current_comment, current_conflict_id))
+            
+            # Add comments - try to add all unique comments
+            if comments_for_range:
+                # Sort by start position to maintain order
+                comments_for_range.sort(key=lambda x: x[0])
+                
+                # Add the first comment (python-docx typically allows one comment per run)
+                # If multiple conflicts, we'll add the most relevant one
+                first_comment = comments_for_range[0][2]
+                author = "One L"
+                initials = "1L"
+                conflict_run.add_comment(first_comment, author=author, initials=initials)
+                
+                if len(comments_for_range) > 1:
+                    # Log that we have multiple conflicts but can only show one comment
+                    conflict_ids = [cid for _, _, _, cid in comments_for_range]
+                    logger.info(f"REDLINE_MULTIPLE_CONFLICTS: Range {red_start}-{red_end} has {len(comments_for_range)} conflicts ({conflict_ids}), added comment for first conflict")
+            elif (start_pos >= red_start and end_pos <= red_end) and current_comment:
+                # Fallback: if this range includes our new conflict, add its comment
+                author = "One L"
+                initials = "1L"
+                conflict_run.add_comment(current_comment, author=author, initials=initials)
             
             current_pos = red_end
         
