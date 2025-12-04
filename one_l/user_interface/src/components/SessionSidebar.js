@@ -655,16 +655,35 @@ const SessionSidebar = ({
     }
     
     try {
-      await sessionAPI.updateSessionTitle(sessionIdToUpdate, currentUserId, editTitle.trim());
-      setSessions(prev => prev.map(s => 
-        s.session_id === sessionIdToUpdate 
-          ? { ...s, title: editTitle.trim() }
-          : s
-      ));
-      setEditingSession(null);
+      const response = await sessionAPI.updateSessionTitle(sessionIdToUpdate, currentUserId, editTitle.trim());
+      
+      // Handle API Gateway response format (may have body field)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      // Check if the update was successful
+      if (responseData && responseData.success !== false) {
+        setSessions(prev => prev.map(s => 
+          s.session_id === sessionIdToUpdate 
+            ? { ...s, title: editTitle.trim() }
+            : s
+        ));
+        setEditingSession(null);
+      } else {
+        const errorMsg = responseData?.error || 'Failed to update session title';
+        console.error('Error updating session title:', errorMsg);
+        alert(`Failed to update session title: ${errorMsg}`);
+      }
     } catch (error) {
       console.error('Error updating session title:', error);
-      alert('Failed to update session title');
+      alert(`Failed to update session title: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -674,15 +693,34 @@ const SessionSidebar = ({
     }
     
     try {
-      await sessionAPI.deleteSession(sessionIdToDelete, currentUserId);
-      setSessions(prev => prev.filter(s => s.session_id !== sessionIdToDelete));
+      const response = await sessionAPI.deleteSession(sessionIdToDelete, currentUserId);
       
-      if (sessionIdToDelete === sessionId) {
-        navigate('/');
+      // Handle API Gateway response format (may have body field)
+      let responseData = response;
+      if (response && response.body) {
+        try {
+          responseData = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+        } catch (e) {
+          console.error('Error parsing response body:', e);
+          responseData = response;
+        }
+      }
+      
+      // Check if the delete was successful
+      if (responseData && responseData.success !== false) {
+        setSessions(prev => prev.filter(s => s.session_id !== sessionIdToDelete));
+        
+        if (sessionIdToDelete === sessionId) {
+          navigate('/');
+        }
+      } else {
+        const errorMsg = responseData?.error || 'Failed to delete session';
+        console.error('Error deleting session:', errorMsg);
+        alert(`Failed to delete session: ${errorMsg}`);
       }
     } catch (error) {
       console.error('Error deleting session:', error);
-      alert('Failed to delete session');
+      alert(`Failed to delete session: ${error.message || 'Unknown error'}`);
     }
   };
 
