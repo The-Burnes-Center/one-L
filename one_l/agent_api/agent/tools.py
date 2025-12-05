@@ -1233,6 +1233,33 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     return redline_items
 
 
+def normalize_escaped_quotes(text: str) -> str:
+    """
+    Normalize escaped quotes in vendor_quote to match document text.
+    
+    Handles cases where vendor_quote contains literal \" or \' that need to match
+    document text with regular " or ' quotes.
+    
+    Since json.loads() already handles JSON escapes, if we see \"
+    it means literal backslash+quote. We normalize to just quote.
+    
+    Args:
+        text: Text that may contain escaped quotes
+        
+    Returns:
+        Text with escaped quotes normalized to regular quotes
+    """
+    if not text:
+        return text
+    
+    # Replace literal \" with " (backslash followed by quote)
+    text = text.replace('\\"', '"')
+    # Replace literal \' with ' (backslash followed by single quote)
+    text = text.replace("\\'", "'")
+    
+    return text
+
+
 def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> Dict[str, Any]:
     """
     Apply redlining to document with PRECISE matching.
@@ -1242,6 +1269,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     - Comments are anchored to the exact runs containing the text
     - Duplicates detected by vendor_quote field only
     - NO fallbacks that redline wrong text
+    - Normalizes escaped quotes (\") to match document text (")
     
     Args:
         doc: python-docx Document object
@@ -1268,13 +1296,18 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             """Normalize vendor_quote for duplicate detection."""
             if not text:
                 return ""
-            # Case-insensitive, whitespace normalized
-            normalized = re.sub(r'\s+', ' ', text.lower().strip())
+            # Normalize escaped quotes first, then case-insensitive, whitespace normalized
+            normalized = normalize_escaped_quotes(text)
+            normalized = re.sub(r'\s+', ' ', normalized.lower().strip())
             return normalized
         
         # Process each conflict
         for redline_item in redline_items:
             vendor_quote = redline_item.get('text', '').strip()
+            
+            # Normalize escaped quotes before matching
+            vendor_quote = normalize_escaped_quotes(vendor_quote)
+            
             if not vendor_quote:
                 logger.warning("SKIP: Empty vendor_quote")
                 continue
