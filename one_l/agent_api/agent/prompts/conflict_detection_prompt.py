@@ -36,65 +36,78 @@ If no conflicts are found: `{{"explanation": "Explanation why no conflicts were 
 ## Analysis Framework
 
 ### Step 1: Conflict Classification
-Identify conflicts using these taxonomies:
+
+**Use these taxonomies to classify conflicts**:
 
 <conflict_types>
-1. **Direct Conflicts**: Vendor language contradicting requirements
-2. **Modifications/Amendments**: Vendor alterations to standard terms
-3. **Additions**: New conditions/limitations vendor added
-4. **Omissions**: Required provisions vendor didn't address
-5. **Reversals**: Where vendor flips obligations
-6. **Ambiguities**: Where vendor weakens clear requirements
+1. **Direct Conflicts** — vendor language contradicts MA requirement  
+2. **Modifications/Amendments** — vendor changes a mandatory term  
+3. **Additions** — vendor introduces new restrictions, fees, or obligations  
+4. **Omissions** — vendor fails to include a required provision  
+5. **Reversals** — vendor flips the obligation from vendor to the Commonwealth  
+6. **Ambiguities** — vendor weakens or obscures mandatory requirements  
 </conflict_types>
 
-### Step 2: Priority Content Areas to Analyze
+### Step 2: PRIORITY CONTENT AREAS TO CHECK  - hidden changes vendors make in each critical area.
 
-<massachusetts_it_terms>
-- **Payment**: Late payment interest/fees, eliminated prompt payment discount
-- **Termination/Suspension**: Eliminated refunds, limited scenarios, requiring payment for remainder of term, vendor termination without notice
-- **Confidentiality**: Requiring Commonwealth/state to maintain confidentiality
-- **Record Retention**: Limited retention obligations, bypassing state records retention laws
-- **Assignment**: Permitting vendor assignment, restricting state's right to assign
-- **Subcontractor**: Excluding third parties from subcontractor definition
-- **Insurance**: Requiring state/buyer to carry insurance
-- **Liability**: Caps to contract value, linking indemnity to liability cap
-- **Indemnification**: ANY vendor indemnification, limited scope of damages, customer indemnifying vendor
-- **Limitation of liability**: Limiting liability to contract value or inconsistent caps
-- **Warranties**: Replacing Commonwealth warranties, external warranty references
-- **Risk of Loss**: Shifting risk to state/buyer
-- **Service Levels**: Unilateral reduction/degradation of service levels or security
-</massachusetts_it_terms>
+**Identify conflicts with these critical areas**:
 
-<general_clause_risks>
-- **EULAs**: Separate EULA agreements (not allowed)
-- **IP**: Limited customer ownership, vendor using customer data "for any business purpose"
-- **Dispute Resolution**: Non-MA governing law/jurisdiction/venue, waiving jury trial
-- **Incorporated Terms**: Additional/online terms or external documents by reference
-- **Order of Precedence**: Modifying Commonwealth's contract hierarchy
-- **Audit**: Modifications to state's audit rights
-- **Entire Agreement**: Making vendor's document the only applicable document
-- **SDP Requirement**: Satisfying SDP requirement via charity donation
-- **Remedies**: Limiting state's right to intercept/reduce/set-off
-- **Representations/warranties**: State/buyer making representations limiting liability
-- **High Risk Use**: Excluding uses where malfunction could cause death/injury
+**VERY IMPORTANT TO WATCH FOR: <massachusetts_it_terms> INCLUDING BUT NOT LIMITED TO:
+- **Payment**: Requiring late payment interest/fees, eliminating prompt payment discount
+- **Termination or Suspension**: Eliminating refunds for pre-paid services, limiting to specific scenarios, requiring payment for remainder of term, allowing vendor termination without notice/cure
+- **Confidentiality**: Requiring the Commonwealth/state and/or buyer/purchaser/Eligible Entity to maintain confidentiality
+- **Record Retention**: Limiting required retention obligations, or clauses that override or bypass state records retention laws (e.g., language like “notwithstanding state records retention laws”).
+- **Assignment**: Vendor terms that permit assignment, restricting the state's/buyers' right to assign
+- **Subcontractor**: Excluding certain third parties from the definition of subcontractors (e.g., cloud hosting providers, etc.)
+- **Insurance**: Requiring the state/buyer to carry insurance (e.g., liability insurance, property insurance, etc.) 
+- **Liability**: Caps to contract value or inconsistent with Commonwealth terms, linking indemnity to liability cap
+- **Indemnification**: ANY vendor indemnification (MA Constitution prohibits), changing to limited scope of damages (e.g., "solely by gross negligence"), customer indemnifying vendor, indemnify without defend, linking to liability caps/capping liability
+- **Limitation of liability**: Limiting liability to the value of contract (or other cap inconsistent with the applicable Commonwealth terms and conditions)
+- **Warranties**: Replacing Commonwealth warranties, external warranty references, carving out enabling software
+- **Risk of Loss**: Shifting the risk of loss to the state/buyer
+- **Service Levels and Updates**: Terms allowing the vendor to unilaterally reduce, suspend, or materially degrade service levels, functionality, or security (including via updates or new versions).
+- **Unilateral Modification Rights**: Vendor's right to modify terms unilaterally
+</massachusetts_it_terms>**
+
+<general_clause_risks> INCLUDING BUT NOT LIMITED TO:
+- **EULAs**: Separate EULA agreements are not allowed
+- **IP**: Limiting customer ownership, right to use customer data "for any business purpose"
+- **Dispute Resolution**: Non-MA governing law/jurisdiction/venue (including via external terms), waiving trial by jury, ADR over trial, contractor controlling litigation
+- **Incorporated Terms**: Additional terms, online terms, or external documents incorporated by reference
+- **Order of Precedence Conflicts**: Any attempt to modify or redefine the Commonwealth’s mandatory contract hierarchy — including altering the definition of “Contract,” introducing new governing terms, elevating vendor documents (e.g., MSAs, EULAs, online terms) above Massachusetts IT Terms, or changing which documents control in the event of conflict.
+- **Audit**: Modifications to state's rights to audit
+- **Entire Agreement**: Clauses that make the vendor's document the only document that applies to a contractual relationship
+- **SDP Requirement**: Satisfying the SDP requirement by vendor's donation to charity
+- **Remedies**: Limiting the state's right to intercept or seek reductions or set-off
+- **Representations and warranties**: Requiring the state/buyer to make representations, warranties, or covenants that could limit liability
+- **High Risk Use/Activities**: Excluding uses where software/hardware malfunction could result in death, personal injury, or environmental damage
+- **Time modifications**: Days/periods different from Commonwealth standards
+- **Hyperlinks**: Links to external documents/websites, links to external terms
 </general_clause_risks>
 
-### Step 3: Red Flag Language Indicators
+### Step 3: Red Flag Language Indicators - examples of specific wording vendors often use to soften obligations, limit liability, or shift risk.
+
+**Identify conflicts that include these language patterns**:
 
 <red_flag_phrases>
-- **Liability limitations**: "limitation of liability", "limited liability", "fees paid", "exclusive remedy"
-- **Warranty disclaimers**: "disclaims all warranties", "as is", "of any kind"
-- **Discretionary language**: "subject to", "at [Vendor's] discretion", "contingent"
-- **Effort standards**: "best efforts", any effort standards
-- **Agreement/conflict**: "entire agreement", "conflict", "precedence"
-- **Damages exclusions**: "indirect", "special", "consequential"
-- **Payment terms**: "no prompt payment discount", "penalty fee"
-- **Negligence language**: "negligence", "third-party claims"
-- **Confidentiality**: "confidential", "proprietary"
-- **Dispute resolution**: "arbitration", "mediation"
-- **Auto-renewal**: Any reference to auto-renewal (prohibited in Massachusetts)
-- **Time modifications**: Days/periods different from Commonwealth standards
-- **Hyperlinks**: Links to external documents/websites
+- **Liability limitations**: "limitation of liability", "limited liability", "limited to", "liability shall not exceed [amounts paid]", "fees paid", "service credits", "exclusive remedy", "not responsible"
+- **Warranty disclaimers**: "disclaims all warranties", "MAKES NO", "REPRESENTATIONS AND DISCLAIMS ALL WARRANTIES", "express or implied", "as is", "of any kind"
+- **Discretionary/conditional language**: "subject to", "as appropriate", "to the extent applicable", "as determined by [Vendor]", "at [Vendor's (sole)] discretion", "subject to availability", "contingent", "conditioned on", "on the condition that", "so long as", "as long as"
+- **Effort standards**: "best efforts", "effort" (flag all uses of effort standards)
+- **Agreement/conflict language**: "entire agreement", "conflict", "inconsistency", "precedence"
+- **Transfer/assignment**: "non-transferable"
+- **Damages exclusions**: "indirect", "special", "exemplary", "punitive", "consequential"
+- **Payment terms**: "no prompt payment discount", "no discount", "highest lawful rate", "penalty fee", "penalty", "liquidated damages"
+- **Remedies limitations**: "set-off", "intercept" (limiting state's rights)
+- **Negligence language**: "negligence", "negligent", "third-party claims"
+- **Exclusions**: "exclude", "excluded", "excluding"
+- **Breach language**: "breach", "material breach", "violation"
+- **Claims/notice requirements**: "claims must be made within", "notice of a claim", "notice", "consent"
+- **Confidentiality**: "confidential", "confidentiality", "proprietary"
+- **Modification rights**: "modify", "modified", "amend", "amended"
+- **Default language**: "default"
+- **Dispute resolution**: "American Arbitration Association", "JAMS", "mediate", "mediation", "dispute resolution", "arbitrate", "arbitration"
+- **Auto-renewal**: "auto-renew", any reference to auto-renewal (Massachusetts prohibits auto-renewal clauses)
 </red_flag_phrases>
 
 ## Analysis Instructions

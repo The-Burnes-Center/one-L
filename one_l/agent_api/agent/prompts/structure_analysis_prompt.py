@@ -86,7 +86,7 @@ Determine which Commonwealth documents each vendor section relates to:
 5. **Other**: Any other referenced documents, state-specific requirements, Massachusetts procurement regulations
 </document_families>
 
-For vendor language not tied to a specific document family (auto-renewal, exclusive remedy, unilateral discretion, long notice periods, online terms, incorporation by reference):
+For vendor language not tied to a specific document family (e.g., auto-renewal, exclusive remedy, sole discretion, “best efforts” or other effort standards, unusually long notice periods, online terms, hyperlinks to external terms, incorporation by reference):
 - Preserve exact language in vendor_exceptions as objects with "text", "section", and "clarification_id" fields
 - Each exception must be an object: {{"text": "exact language", "section": "section name or null", "clarification_id": "vendor ID or null"}}
 - Include in queries for Step 4
