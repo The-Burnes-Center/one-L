@@ -1235,439 +1235,110 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
 
 def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> Dict[str, Any]:
     """
-    Apply redlining to document by highlighting conflict text in red.
-    Multi-tier search strategy for maximum conflict detection accuracy.
-    Now processes both paragraphs and tables for comprehensive coverage.
-    Enhanced with additional conflict detection strategies.
+    Apply redlining to document with PRECISE matching.
+    
+    PRECISION APPROACH:
+    - Only redlines EXACT vendor_quote text (or case-insensitive match)
+    - Comments are anchored to the exact runs containing the text
+    - Duplicates detected by vendor_quote field only
+    - NO fallbacks that redline wrong text
     
     Args:
         doc: python-docx Document object
-        redline_items: List of conflict items with text to highlight
+        redline_items: List of conflict items with 'text' (vendor_quote) to highlight
         
     Returns:
         Dictionary with redlining results
     """
-    logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs and {len(doc.tables)} tables")
+    logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs")
+    
     try:
         matches_found = 0
         paragraphs_with_redlines = []
-        tables_with_redlines = []
         total_paragraphs = len(doc.paragraphs)
-        total_tables = len(doc.tables)
         failed_matches = []
         
-        # Enhanced logging: Document structure analysis
+        # Document structure logging
         logger.info(f"DOCUMENT_STRUCTURE: Total paragraphs: {total_paragraphs}")
-        logger.info(f"DOCUMENT_STRUCTURE: Total tables: {total_tables}")
-        logger.info(f"DOCUMENT_STRUCTURE: Total pages estimated: {total_paragraphs // 20}")  # Rough estimate
-        logger.info(f"REDLINE_ITEMS: Processing {len(redline_items)} conflicts")
         
-        # ENHANCEMENT 1: Generate additional conflict variations
-        enhanced_redline_items = _generate_conflict_variations(redline_items)
-        logger.info(f"ENHANCEMENT: Generated {len(enhanced_redline_items)} total conflicts (including variations)")
+        # Track seen vendor_quotes for duplicate detection (normalize for comparison)
+        seen_vendor_quotes = set()
         
-        # ENHANCEMENT 2: Cross-reference matching for related concepts
-        cross_reference_items = _generate_cross_reference_conflicts(enhanced_redline_items)
-        logger.info(f"ENHANCEMENT: Generated {len(cross_reference_items)} cross-reference conflicts")
-        
-        # Combine all conflicts for processing
-        all_conflicts = enhanced_redline_items + cross_reference_items
-        logger.info(f"ENHANCEMENT: Processing {len(all_conflicts)} total conflicts (original + variations + cross-references)")
-        
-
-        
-        # Track unmatched conflicts across tiers
-        unmatched_conflicts = all_conflicts.copy()
-        
-        # Track already redlined paragraphs to prevent duplicates
-        # Key: paragraph index, Value: set of normalized comment contents that redlined it
-        already_redlined_paragraphs = {}
-        already_redlined_tables = {}
-        
-        # Track seen comments by normalized content to prevent duplicates
-        seen_comments_in_doc = set()  # Set of normalized comment contents already added to document
-        
-        def normalize_comment_content(comment: str) -> str:
-            """Normalize comment content for duplicate detection."""
-            if not comment:
+        def normalize_vendor_quote(text: str) -> str:
+            """Normalize vendor_quote for duplicate detection."""
+            if not text:
                 return ""
-            # Remove serial numbers and extract core content
-            # Pattern: "CONFLICT {number} ({type}): {rationale}"
-            normalized = re.sub(r'^CONFLICT\s+\d+\s*\(', 'CONFLICT (', comment)
-            normalized = normalized.strip()
+            # Case-insensitive, whitespace normalized
+            normalized = re.sub(r'\s+', ' ', text.lower().strip())
             return normalized
         
-        def get_comment_signature(redline_item):
-            """Get normalized comment content for duplicate detection."""
-            comment = redline_item.get('comment', '').strip()
-            return normalize_comment_content(comment)
-        
-        # TIER 0: Ultra-aggressive matching for difficult cases
-        remaining_conflicts = []
-        logger.info(f"APPLY_TIER0: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-        
-        for redline_item in unmatched_conflicts:
-            vendor_conflict_text = redline_item.get('text', '').strip()
-            if not vendor_conflict_text:
+        # Process each conflict
+        for redline_item in redline_items:
+            vendor_quote = redline_item.get('text', '').strip()
+            if not vendor_quote:
+                logger.warning("SKIP: Empty vendor_quote")
                 continue
-                
-            # Enhanced logging: Track each conflict attempt
+            
+            # Check for duplicates based on vendor_quote only
+            normalized_quote = normalize_vendor_quote(vendor_quote)
+            if normalized_quote in seen_vendor_quotes:
+                logger.info(f"DUPLICATE_SKIP: vendor_quote already processed: '{vendor_quote[:50]}...'")
+                continue
+            
+            seen_vendor_quotes.add(normalized_quote)
+            
+            # Get conflict metadata for logging
             conflict_id = redline_item.get('id', 'Unknown')
             serial_num = redline_item.get('serial_number', 'N/A')
-            source_doc = redline_item.get('source_doc', 'Unknown')
-            logger.info(f"CONFLICT_ATTEMPT: Serial={serial_num}, ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
-                
-            found_match = _tier0_ultra_aggressive_matching(doc, vendor_conflict_text, redline_item)
+            comment = redline_item.get('comment', '')
             
-            if found_match:
-                para_idx = found_match['para_idx']
-                comment_signature = get_comment_signature(redline_item)
-                
-                # Check if this comment content was already added to the document
-                if comment_signature in seen_comments_in_doc:
-                    logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
-                    remaining_conflicts.append(redline_item)  # Try next tier
-                    continue
-                
-                # Check if this paragraph was already redlined by the same comment content
-                if para_idx in already_redlined_paragraphs:
-                    if comment_signature in already_redlined_paragraphs[para_idx]:
-                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined with same comment content")
-                        remaining_conflicts.append(redline_item)  # Try next tier
-                        continue
-                    else:
-                        # Different conflict - allow it in the same paragraph
-                        already_redlined_paragraphs[para_idx].add(comment_signature)
-                        logger.info(f"CONFLICT_MULTIPLE: Adding conflict to paragraph {para_idx} (already has {len(already_redlined_paragraphs[para_idx])-1} other conflict(s))")
-                else:
-                    already_redlined_paragraphs[para_idx] = {comment_signature}
-                
-                # Mark this comment as seen
-                seen_comments_in_doc.add(comment_signature)
-                
+            logger.info(f"PROCESSING: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:80]}...'")
+            
+            # Find exact match in document
+            match_result = _find_and_redline_exact_text(doc, vendor_quote, comment)
+            
+            if match_result:
                 matches_found += 1
+                para_idx = match_result['para_idx']
                 if para_idx not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(para_idx)
-                logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
+                logger.info(f"MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}")
             else:
-                # Try table matching if paragraph matching failed
-                table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
-                if table_match:
-                    table_idx = table_match['table_idx']
-                    comment_signature = get_comment_signature(redline_item)
-                    
-                    # Check if this comment content was already added to the document
-                    if comment_signature in seen_comments_in_doc:
-                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
-                        remaining_conflicts.append(redline_item)
-                        continue
-                    
-                    # Check if this table was already redlined with the same comment content
-                    if table_idx in already_redlined_tables:
-                        if comment_signature in already_redlined_tables[table_idx]:
-                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined with same comment content")
-                            remaining_conflicts.append(redline_item)
-                            continue
-                        else:
-                            already_redlined_tables[table_idx].add(comment_signature)
-                    else:
-                        already_redlined_tables[table_idx] = {comment_signature}
-                    
-                    # Mark this comment as seen
-                    seen_comments_in_doc.add(comment_signature)
-                    
-                    matches_found += 1
-                    if table_idx not in tables_with_redlines:
-                        tables_with_redlines.append(table_idx)
-                    logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Table={table_idx}")
-                else:
-                    remaining_conflicts.append(redline_item)
-                    logger.info(f"CONFLICT_NO_MATCH: Serial={serial_num}, ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                failed_matches.append({
+                    'text': vendor_quote,
+                    'id': conflict_id,
+                    'serial_number': serial_num
+                })
+                logger.warning(f"NO_MATCH: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:50]}...'")
         
-        # TIER 1: Standard exact matching (process remaining conflicts)
-        logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-        unmatched_conflicts = remaining_conflicts
-        remaining_conflicts = []
-        
-        for redline_item in unmatched_conflicts:
-            vendor_conflict_text = redline_item.get('text', '').strip()
-            if not vendor_conflict_text:
-                continue
-                
-            # Get base conflict ID for deduplication
-            base_conflict_id = get_base_conflict_id(redline_item)
-
-            # Enhanced logging: Track each conflict attempt
-            conflict_id = redline_item.get('id', 'Unknown')
-            serial_num = redline_item.get('serial_number', 'N/A')
-            source_doc = redline_item.get('source_doc', 'Unknown')
-            logger.info(f"CONFLICT_ATTEMPT: Serial={serial_num}, ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
-                
-            found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
-            
-            if found_match:
-                para_idx = found_match['para_idx']
-                comment_signature = get_comment_signature(redline_item)
-                
-                # Check if this comment content was already added to the document
-                if comment_signature in seen_comments_in_doc:
-                    logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
-                    remaining_conflicts.append(redline_item)
-                    continue
-                
-                # Check if already redlined with same comment content
-                if para_idx in already_redlined_paragraphs:
-                    if comment_signature in already_redlined_paragraphs[para_idx]:
-                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined with same comment content")
-                        remaining_conflicts.append(redline_item)
-                        continue
-                    else:
-                        already_redlined_paragraphs[para_idx].add(comment_signature)
-                else:
-                    already_redlined_paragraphs[para_idx] = {comment_signature}
-                
-                # Mark this comment as seen
-                seen_comments_in_doc.add(comment_signature)
-
-                matches_found += 1
-                if para_idx not in paragraphs_with_redlines:
-                    paragraphs_with_redlines.append(para_idx)
-                logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
-            else:
-                # Try semantic similarity matching before giving up
-                semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
-                if semantic_result:
-                    para_idx = semantic_result['para_idx']
-                    comment_signature = get_comment_signature(redline_item)
-                    
-                    # Check if this comment content was already added to the document
-                    if comment_signature in seen_comments_in_doc:
-                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
-                        remaining_conflicts.append(redline_item)
-                        continue
-                    
-                    # Check if already redlined with same comment content
-                    if para_idx in already_redlined_paragraphs:
-                        if comment_signature in already_redlined_paragraphs[para_idx]:
-                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined with same comment content")
-                            remaining_conflicts.append(redline_item)
-                            continue
-                        else:
-                            already_redlined_paragraphs[para_idx].add(comment_signature)
-                    else:
-                        already_redlined_paragraphs[para_idx] = {comment_signature}
-                    
-                    # Mark this comment as seen
-                    seen_comments_in_doc.add(comment_signature)
-
-                    matches_found += 1
-                    if para_idx not in paragraphs_with_redlines:
-                        paragraphs_with_redlines.append(para_idx)
-                    logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
-                else:
-                    # Try table matching if paragraph matching failed
-                    table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
-                    if table_match:
-                        table_idx = table_match['table_idx']
-                        comment_signature = get_comment_signature(redline_item)
-                        
-                        # Check if this comment content was already added to the document
-                        if comment_signature in seen_comments_in_doc:
-                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
-                            remaining_conflicts.append(redline_item)
-                            continue
-                        
-                        # Check if this table was already redlined with same comment content
-                        if table_idx in already_redlined_tables:
-                            if comment_signature in already_redlined_tables[table_idx]:
-                                logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined with same comment content")
-                                remaining_conflicts.append(redline_item)
-                                continue
-                            else:
-                                already_redlined_tables[table_idx].add(comment_signature)
-                        else:
-                            already_redlined_tables[table_idx] = {comment_signature}
-                        
-                        # Mark this comment as seen
-                        seen_comments_in_doc.add(comment_signature)
-
-                        matches_found += 1
-                        if table_idx not in tables_with_redlines:
-                            tables_with_redlines.append(table_idx)
-                        logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Table={table_idx}")
-                    else:
-                        remaining_conflicts.append(redline_item)
-                        logger.info(f"CONFLICT_NO_MATCH: Serial={serial_num}, ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
-        
-        # Early exit if all conflicts matched
-        if not remaining_conflicts:
-            pass
-        else:
-            pass
-            
-            # TIER 2: Fuzzy matching (only for unmatched conflicts)
-            logger.info(f"APPLY_TIER2: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-
-            unmatched_conflicts = remaining_conflicts
-            remaining_conflicts = []
-            
-            for redline_item in unmatched_conflicts:
-                vendor_conflict_text = redline_item.get('text', '').strip()
-                conflict_id = redline_item.get('id', 'Unknown')
-                found_match = _tier2_fuzzy_matching(doc, vendor_conflict_text, redline_item)
-                
-                if found_match:
-                    matches_found += 1
-                    if found_match['para_idx'] not in paragraphs_with_redlines:
-                        paragraphs_with_redlines.append(found_match['para_idx'])
-                    logger.info(f"TIER2_MATCHED: ID={conflict_id}, Paragraph={found_match['para_idx']}, Page≈{found_match['para_idx'] // 20}")
-                else:
-                    remaining_conflicts.append(redline_item)
-                    logger.info(f"TIER2_NO_MATCH: ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
-            
-            # Early exit if all conflicts matched
-            if not remaining_conflicts:
-                pass
-            else:
-                pass
-                
-                # TIER 3: Cross-paragraph matching (only for unmatched conflicts)
-                logger.info(f"APPLY_TIER3: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-                unmatched_conflicts = remaining_conflicts
-                remaining_conflicts = []
-                
-                for redline_item in unmatched_conflicts:
-                    vendor_conflict_text = redline_item.get('text', '').strip()
-                    found_match = _tier3_cross_paragraph_matching(doc, vendor_conflict_text, redline_item)
-                    
-                    if found_match:
-                        matches_found += 1
-                        for para_idx in found_match['para_indices']:
-                            if para_idx not in paragraphs_with_redlines:
-                                paragraphs_with_redlines.append(para_idx)
-
-                    else:
-                        remaining_conflicts.append(redline_item)
-                
-                # Early exit if all conflicts matched
-                if not remaining_conflicts:
-                    pass
-                else:
-                    pass
-                    
-                    # TIER 4: Partial phrase matching (only for unmatched conflicts)
-                    logger.info(f"APPLY_TIER4: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-                    unmatched_conflicts = remaining_conflicts
-                    remaining_conflicts = []
-                    
-                    for redline_item in unmatched_conflicts:
-                        vendor_conflict_text = redline_item.get('text', '').strip()
-                        found_match = _tier4_partial_phrase_matching(doc, vendor_conflict_text, redline_item)
-                        
-                        if found_match:
-                            matches_found += 1
-                            if found_match['para_idx'] not in paragraphs_with_redlines:
-                                paragraphs_with_redlines.append(found_match['para_idx'])
-
-                        else:
-                            remaining_conflicts.append(redline_item)
-                    
-                    # Early exit if all conflicts matched
-                    if not remaining_conflicts:
-                        pass
-                    else:
-                        pass
-                        
-                        # TIER 5: Tokenized matching (only for unmatched conflicts)
-                        logger.info(f"APPLY_TIER5: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
-
-                        unmatched_conflicts = remaining_conflicts
-                        remaining_conflicts = []
-                        
-                        for redline_item in unmatched_conflicts:
-                            vendor_conflict_text = redline_item.get('text', '').strip()
-                            found_match = _tier5_tokenized_matching(doc, vendor_conflict_text, redline_item)
-                            
-                            if found_match:
-                                matches_found += 1
-                                if found_match['para_idx'] not in paragraphs_with_redlines:
-                                    paragraphs_with_redlines.append(found_match['para_idx'])
-
-                            else:
-                                remaining_conflicts.append(redline_item)
-                        
-                        # Final failed matches
-                        logger.info(f"APPLY_FINAL: About to process {len(remaining_conflicts)} remaining conflicts as failed matches")
-                        for redline_item in remaining_conflicts:
-                            failed_matches.append({
-                                'text': redline_item.get('text', ''),
-                                'clarification_id': redline_item.get('clarification_id', 'Unknown')
-                            })
-        
-        # Enhanced logging: Page distribution analysis
+        # Log results
         if paragraphs_with_redlines:
             pages_affected = set(para_idx // 20 for para_idx in paragraphs_with_redlines)
             logger.info(f"PAGE_DISTRIBUTION: {len(pages_affected)} pages affected: {sorted(pages_affected)}")
-            logger.info(f"PARAGRAPH_DISTRIBUTION: {len(paragraphs_with_redlines)} paragraphs redlined: {sorted(paragraphs_with_redlines)}")
         
-        if tables_with_redlines:
-            logger.info(f"TABLE_DISTRIBUTION: {len(tables_with_redlines)} tables redlined: {sorted(tables_with_redlines)}")
+        success_rate = (matches_found / len(redline_items) * 100) if redline_items else 0
         
-        # ENSURE EVERY PAGE HAS REDLINING - Similar to PDF coverage guarantee
-        # More conservative estimate: ~15 paragraphs per page (was 20)
-        estimated_pages = max(1, total_paragraphs // 15)
-        pages_with_redlines_set = {}
-        
-        # Track how many redlines each page has
-        for para_idx in paragraphs_with_redlines:
-            page_num = para_idx // 15  # Use same divisor as estimation
-            if page_num not in pages_with_redlines_set:
-                pages_with_redlines_set[page_num] = 0
-            pages_with_redlines_set[page_num] += 1
-        
-        # Only add review notes to pages with ZERO conflict redlines (not pages with 1 redline)
-        # This reduces the number of review notes appearing in the document
-        pages_needing_coverage = []
-        for page_num in range(estimated_pages):
-            redline_count = pages_with_redlines_set.get(page_num, 0)
-            if redline_count == 0:  # Only pages with ZERO redlines get review notes
-                pages_needing_coverage.append(page_num)
-        
-        if pages_needing_coverage:
-            logger.info(f"DOCX_PAGE_COVERAGE: {len(pages_needing_coverage)} pages have zero redlines, adding single review note: {pages_needing_coverage}")
-            _ensure_docx_page_coverage(doc, pages_needing_coverage, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=1)
-            logger.info(f"DOCX_PAGE_COVERAGE: Added review notes to {len(pages_needing_coverage)} pages with zero conflicts")
-        
-        # DISABLED: User requested to remove excessive review notes
-        # Only add review notes to pages with ZERO conflict redlines, not all pages
-        # all_pages = list(range(estimated_pages))
-        # if all_pages:
-        #     logger.info(f"DOCX_PAGE_COVERAGE_FINAL: Ensuring all {len(all_pages)} estimated pages have minimum coverage")
-        #     _ensure_docx_page_coverage(doc, all_pages, paragraphs_with_redlines, estimated_pages, min_redlines_per_page=2)
-        # Log final summary
         if failed_matches:
-            logger.warning(f"REDLINING_FAILED: {len(failed_matches)} conflicts could not be matched")
+            logger.warning(f"REDLINING_INCOMPLETE: {len(failed_matches)} conflicts could not be matched")
             for failed in failed_matches:
-                logger.warning(f"FAILED_CONFLICT: {failed.get('id', 'Unknown')} - {failed.get('text', '')[:50]}...")
+                logger.warning(f"UNMATCHED: ID={failed.get('id', 'Unknown')} - '{failed.get('text', '')[:50]}...'")
         else:
             logger.info("REDLINING_SUCCESS: All conflicts successfully matched and redlined")
         
-        logger.info(f"REDLINE_RESULTS: Matches found: {matches_found}")
-        logger.info(f"REDLINE_RESULTS: Failed matches: {len(failed_matches)}")
-        logger.info(f"REDLINE_RESULTS: Success rate: {(matches_found/len(redline_items)*100):.1f}%")
+        logger.info(f"REDLINE_RESULTS: Matches={matches_found}, Failed={len(failed_matches)}, Success rate={success_rate:.1f}%")
         
         return {
             "total_paragraphs": total_paragraphs,
-            "total_tables": total_tables,
             "matches_found": matches_found,
             "paragraphs_with_redlines": paragraphs_with_redlines,
-            "tables_with_redlines": tables_with_redlines,
             "failed_matches": failed_matches,
             "pages_affected": len(set(para_idx // 20 for para_idx in paragraphs_with_redlines)) if paragraphs_with_redlines else 0
         }
         
     except Exception as e:
-        logger.error(f"Error in enhanced redlining: {str(e)}")
+        logger.error(f"Error in redlining: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {
             "total_paragraphs": 0,
             "matches_found": 0,
@@ -1676,1215 +1347,107 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         }
 
 
-def _ensure_docx_page_coverage(doc, pages_needing_coverage: List[int], existing_redlined_paras: List[int], estimated_pages: int, min_redlines_per_page: int = 2):
+def _find_and_redline_exact_text(doc, vendor_quote: str, comment: str) -> Optional[Dict[str, Any]]:
     """
-    Ensure every page of a DOCX document has at least some redlining.
-    More aggressive search with better page estimation.
+    Find exact vendor_quote text in document and apply redline with comment.
+    
+    PRECISION MATCHING:
+    1. Exact match first
+    2. Case-insensitive match as only fallback
+    3. Returns None if no match (don't redline wrong text)
     
     Args:
         doc: python-docx Document object
-        pages_needing_coverage: List of page numbers (0-indexed) that need redlining
-        existing_redlined_paras: List of paragraph indices that already have redlines
-        estimated_pages: Total estimated pages in document
-        min_redlines_per_page: Minimum number of redlines to ensure per page
+        vendor_quote: Exact text to find and redline
+        comment: Comment to attach to the redlined text
+        
+    Returns:
+        Match result dict or None if not found
     """
-    if not pages_needing_coverage:
-        return
-    
-    keywords = [
-        'security', 'compliance', 'liability', 'indemnification', 'insurance', 'warranty',
-        'confidential', 'data protection', 'privacy', 'access control', 'authentication',
-        'breach', 'notification', 'termination', 'remedy', 'damages', 'sla', 'uptime',
-        'availability', 'maintenance', 'backup', 'recovery', 'encryption', 'audit',
-        'vendor', 'customer', 'support', 'terms', 'conditions', 'policy', 'service',
-        'agreement', 'contract', 'provision', 'clause', 'requirement', 'obligation',
-        'protection', 'rights', 'responsibilities', 'limitation', 'exclusion', 'warranties',
-        'disclaimer', 'indemnity', 'hold harmless', 'defense', 'coverage', 'claim'
-    ]
-    
-    for page_num in pages_needing_coverage:
-        try:
-            # Use more conservative paragraph estimation (~15 per page)
-            para_start = page_num * 15
-            para_end = min((page_num + 1) * 15, len(doc.paragraphs))
-            
-            if para_start >= len(doc.paragraphs):
-                # Try to find any paragraph near the end
-                if len(doc.paragraphs) > 0:
-                    try:
-                        last_para = doc.paragraphs[-1]
-                        if last_para.text.strip():
-                            run = last_para.add_run(" [Legal-AI: Document reviewed]")
-                            run.font.color.rgb = RGBColor(128, 128, 128)
-                            run.font.italic = True
-                            if len(doc.paragraphs) - 1 not in existing_redlined_paras:
-                                existing_redlined_paras.append(len(doc.paragraphs) - 1)
-                            logger.info(f"DOCX_PAGE_COVERAGE: Added note to last paragraph for page {page_num + 1}")
-                    except Exception:
-                        pass
-                continue
-            
-            # More aggressive search: check paragraphs on this page AND nearby
-            search_range = range(max(0, para_start - 5), min(para_end + 10, len(doc.paragraphs)))
-            redlines_added_this_page = 0
-            
-            # Skip keyword redlining - only add review notes if page has no conflict redlines
-            # (User requested: no single-word redlining, only full conflict paragraphs)
-            
-            # Add ONLY ONE review note per page if page has no conflict redlines
-            # This prevents excessive review notes from appearing throughout the document
-            if redlines_added_this_page < min_redlines_per_page:
-                for para_idx in search_range:
-                    if redlines_added_this_page >= min_redlines_per_page:
-                        break
-                    if para_idx in existing_redlined_paras:
-                        continue
-                    if para_idx >= len(doc.paragraphs):
-                        break
-                    para = doc.paragraphs[para_idx]
-                    if para.text.strip() and len(para.text.strip()) > 5:
-                        try:
-                            # Only add ONE review note per page (not multiple)
-                            run = para.add_run(" [Legal-AI: Page reviewed for compliance]")
-                            run.font.color.rgb = RGBColor(128, 128, 128)
-                            run.font.italic = True
-                            existing_redlined_paras.append(para_idx)
-                            redlines_added_this_page += 1
-                            logger.info(f"DOCX_PAGE_COVERAGE: Added single review note to para {para_idx} (page {page_num + 1})")
-                            break  # Only add ONE note per page, then stop
-                        except Exception as note_err:
-                            logger.debug(f"DOCX_PAGE_COVERAGE: Note failed for para {para_idx}: {note_err}")
-                            continue
-            
-            if redlines_added_this_page == 0:
-                logger.warning(f"DOCX_PAGE_COVERAGE: Failed to add any redlines to page {page_num + 1}")
-                            
-        except Exception as page_err:
-            logger.warning(f"DOCX_PAGE_COVERAGE: Error processing page {page_num + 1}: {page_err}")
-            continue
-
-
-def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 0: Ultra-aggressive matching with sentence-level search."""
-    
-    def ultra_normalize_text(text):
-        """Ultra-aggressive text normalization."""
-        if not text:
-            return ""
-        
-        # Remove ALL punctuation and normalize everything
-        normalized = re.sub(r'[^\w\s]', ' ', text)  # Replace all punctuation with spaces
-        normalized = re.sub(r'\s+', ' ', normalized)  # Normalize all whitespace
-        normalized = normalized.lower().strip()
-        return normalized
-    
-    def extract_meaningful_words(text, min_length=3):
-        """Extract meaningful words from text."""
-        words = text.split()
-        meaningful_words = []
-        
-        for word in words:
-            if len(word) >= min_length and not word.lower() in ['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'man', 'oil', 'sit', 'try', 'use', 'she', 'too', 'any', 'may', 'say', 'she', 'use']:
-                meaningful_words.append(word)
-        
-        return meaningful_words
-    
-    def find_word_sequence_match(search_words, para_words, min_match_ratio=0.5):
-        """Find if a significant portion of search words appear in sequence in paragraph."""
-        if len(search_words) < 3:
-            return False
-        
-        # Try to find consecutive word sequences
-        for i in range(len(para_words) - len(search_words) + 1):
-            sequence = para_words[i:i + len(search_words)]
-            matches = sum(1 for j, word in enumerate(search_words) if word.lower() == sequence[j].lower())
-            if matches / len(search_words) >= min_match_ratio:
-                return True
-        
-        return False
-    
-    def extract_sentences_from_paragraph(para_text):
-        """Extract individual sentences from a paragraph."""
-        # Split on sentence boundaries but be careful with abbreviations
-        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', para_text)
-        return [s.strip() for s in sentences if s.strip()]
-    
-    # Ultra-normalize the search text
-    ultra_normalized_search = ultra_normalize_text(vendor_conflict_text)
-    search_words = extract_meaningful_words(ultra_normalized_search)
-    
-    logger.info(f"TIER0_SEARCH: Ultra-normalized: '{ultra_normalized_search[:100]}...'")
-    logger.info(f"TIER0_WORDS: Extracted {len(search_words)} meaningful words")
-    
-    # Track all matches found across the ENTIRE document (not just first match)
-    all_matches = []
-    
-    # Search through ALL paragraphs to find EVERY occurrence across ALL pages
-    for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text.strip()
-        if not para_text or len(para_text) < 10:
-            continue
-        
-        ultra_normalized_para = ultra_normalize_text(para_text)
-        para_words = extract_meaningful_words(ultra_normalized_para)
-        matched = False
-        
-        # Check if ultra-normalized search text is in ultra-normalized paragraph
-        # CRITICAL: Only pass the actual conflict text, not the entire paragraph
-        if ultra_normalized_search in ultra_normalized_para:
-            logger.info(f"TIER0_MATCH: Found ultra-normalized match in paragraph {para_idx}, page≈{para_idx // 20}")
-            # Use the original vendor conflict text, not the entire paragraph
-            _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
-            all_matches.append({'para_idx': para_idx, 'matched_text': 'ultra_normalized_match'})
-            matched = True
-        
-        # NEW: Try sentence-level matching within paragraphs
-        if not matched:
-            sentences = extract_sentences_from_paragraph(para_text)
-            for sentence_idx, sentence in enumerate(sentences):
-                ultra_normalized_sentence = ultra_normalize_text(sentence)
-                sentence_words = extract_meaningful_words(ultra_normalized_sentence)
-                
-                # Check if search text matches this sentence
-                if ultra_normalized_search in ultra_normalized_sentence:
-                    logger.info(f"TIER0_SENTENCE_MATCH: Found sentence-level match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
-                    # Try to find the actual conflict text within the sentence, fallback to sentence if needed
-                    if vendor_conflict_text.lower() in sentence.lower():
-                        _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
-                    else:
-                        # Use sentence as fallback, but _apply_redline_to_paragraph will try to find the conflict text
-                        _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
-                    all_matches.append({'para_idx': para_idx, 'matched_text': 'sentence_match'})
-                    matched = True
-                    break
-                
-                # Try word sequence matching within sentences
-                if len(search_words) >= 3 and find_word_sequence_match(search_words, sentence_words):
-                    logger.info(f"TIER0_SENTENCE_WORDS: Found sentence word sequence match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
-                    # Use the original vendor conflict text, not the entire sentence
-                    _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
-                    all_matches.append({'para_idx': para_idx, 'matched_text': 'sentence_word_sequence'})
-                    matched = True
-                    break
-        
-        # Try word sequence matching at paragraph level
-        if not matched and len(search_words) >= 3 and find_word_sequence_match(search_words, para_words):
-            logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}, page≈{para_idx // 20}")
-            # Use the original vendor conflict text, not the entire paragraph
-            _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
-            all_matches.append({'para_idx': para_idx, 'matched_text': 'word_sequence_match'})
-            matched = True
-        
-        # Try partial word matching (at least 70% of meaningful words match)
-        if not matched and len(search_words) >= 5:
-            word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
-            if word_matches / len(search_words) >= 0.7:
-                logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}")
-                # Use the original vendor conflict text, not the entire paragraph
-                _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
-                all_matches.append({'para_idx': para_idx, 'matched_text': 'word_partial_match'})
-                matched = True
-    
-    # Return first match for compatibility, but log ALL matches found across document
-    if all_matches:
-        unique_paras = len(set(m['para_idx'] for m in all_matches))
-        pages_affected = sorted(set(m['para_idx'] // 20 for m in all_matches))
-        logger.info(f"TIER0_COMPLETE: Found {len(all_matches)} total occurrences across {unique_paras} unique paragraphs on pages {pages_affected}")
-        return all_matches[0]  # Return first match for backward compatibility
-    
-    return None
-
-
-def _tier0_table_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 0: Ultra-aggressive table matching for conflicts in table cells."""
-    
-    def ultra_normalize_text(text):
-        """Ultra-aggressive text normalization."""
-        if not text:
-            return ""
-        
-        # Remove ALL punctuation and normalize everything
-        normalized = re.sub(r'[^\w\s]', ' ', text)  # Replace all punctuation with spaces
-        normalized = re.sub(r'\s+', ' ', normalized)  # Normalize all whitespace
-        normalized = normalized.lower().strip()
-        return normalized
-    
-    def extract_meaningful_words(text, min_length=3):
-        """Extract meaningful words from text."""
-        words = text.split()
-        meaningful_words = []
-        
-        for word in words:
-            if len(word) >= min_length and not word.lower() in ['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'man', 'oil', 'sit', 'try', 'use', 'she', 'too', 'any', 'may', 'say', 'she', 'use']:
-                meaningful_words.append(word)
-        
-        return meaningful_words
-    
-    def find_word_sequence_match(search_words, cell_words, min_match_ratio=0.5):  # Lowered from 0.6 to 0.5
-        """Find if a significant portion of search words appear in sequence in cell."""
-        if len(search_words) < 3:
-            return False
-        
-        # Try to find consecutive word sequences
-        for i in range(len(cell_words) - len(search_words) + 1):
-            sequence = cell_words[i:i + len(search_words)]
-            matches = sum(1 for j, word in enumerate(search_words) if word.lower() == sequence[j].lower())
-            if matches / len(search_words) >= min_match_ratio:
-                return True
-        
-        # Also check for shorter sequences (3-5 words) within the search words
-        if len(search_words) >= 5:
-            for seq_len in range(3, min(6, len(search_words))):
-                for start in range(len(search_words) - seq_len + 1):
-                    short_seq = search_words[start:start + seq_len]
-                    for i in range(len(cell_words) - seq_len + 1):
-                        cell_seq = cell_words[i:i + seq_len]
-                        if all(sw.lower() == cw.lower() for sw, cw in zip(short_seq, cell_seq)):
-                            return True
-        
-        return False
-    
-    def extract_key_phrases(text):
-        """Extract key phrases from text that are likely to appear in documents."""
-        # Remove quotes and normalize
-        text_no_quotes = re.sub(r'[""''`]', '', text)
-        # Extract capitalized phrases (like "Enterprise Security Office")
-        capitalized_phrases = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b', text_no_quotes)
-        # Extract noun phrases (2-4 words)
-        words = text_no_quotes.split()
-        noun_phrases = []
-        for i in range(len(words) - 1):
-            for length in [2, 3, 4]:
-                if i + length <= len(words):
-                    phrase = ' '.join(words[i:i+length])
-                    if len(phrase) > 10:  # Meaningful length
-                        noun_phrases.append(phrase)
-        return capitalized_phrases[:3] + noun_phrases[:5]  # Return top phrases
-    
-    # Ultra-normalize the search text
-    ultra_normalized_search = ultra_normalize_text(vendor_conflict_text)
-    search_words = extract_meaningful_words(ultra_normalized_search)
-    
-    logger.info(f"TIER0_TABLE_SEARCH: Ultra-normalized: '{ultra_normalized_search[:100]}...'")
-    logger.info(f"TIER0_TABLE_WORDS: Extracted {len(search_words)} meaningful words")
-    
-    # Track all matches found across ALL tables (not just first match)
-    all_matches = []
-    
-    # Search through ALL tables to find EVERY occurrence
-    for table_idx, table in enumerate(doc.tables):
-        for row_idx, row in enumerate(table.rows):
-            for cell_idx, cell in enumerate(row.cells):
-                cell_text = cell.text.strip()
-                if not cell_text or len(cell_text) < 10:
-                    continue
-                
-                ultra_normalized_cell = ultra_normalize_text(cell_text)
-                cell_words = extract_meaningful_words(ultra_normalized_cell)
-                matched = False
-                
-                # Check if ultra-normalized search text is in ultra-normalized cell
-                if ultra_normalized_search in ultra_normalized_cell:
-                    logger.info(f"TIER0_TABLE_MATCH: Found ultra-normalized match in table {table_idx}, cell ({row_idx},{cell_idx})")
-                    _apply_redline_to_table_cell(cell, cell_text, redline_item)
-                    all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'ultra_normalized_match'})
-                    matched = True
-                
-                # Try word sequence matching
-                if not matched and len(search_words) >= 3 and find_word_sequence_match(search_words, cell_words):
-                    logger.info(f"TIER0_TABLE_WORD_SEQUENCE: Found word sequence match in table {table_idx}, cell ({row_idx},{cell_idx})")
-                    _apply_redline_to_table_cell(cell, cell_text, redline_item)
-                    all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_sequence_match'})
-                    matched = True
-                
-                # Try partial word matching (at least 70% of meaningful words match)
-                if not matched and len(search_words) >= 5:
-                    word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_cell)
-                    if word_matches / len(search_words) >= 0.7:
-                        logger.info(f"TIER0_TABLE_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in table {table_idx}, cell ({row_idx},{cell_idx})")
-                        _apply_redline_to_table_cell(cell, cell_text, redline_item)
-                        all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'word_partial_match'})
-                        matched = True
-                
-                # NEW: Try key phrase matching for quoted or technical text
-                if not matched:
-                    key_phrases = extract_key_phrases(vendor_conflict_text)
-                    for phrase in key_phrases:
-                        if len(phrase) > 15:
-                            normalized_phrase = ultra_normalize_text(phrase)
-                            if normalized_phrase in ultra_normalized_cell:
-                                logger.info(f"TIER0_TABLE_PHRASE_MATCH: Found key phrase '{phrase[:50]}...' in table {table_idx}, cell ({row_idx},{cell_idx})")
-                                _apply_redline_to_table_cell(cell, cell_text, redline_item)
-                                all_matches.append({'table_idx': table_idx, 'row_idx': row_idx, 'cell_idx': cell_idx, 'matched_text': 'key_phrase_match'})
-                                matched = True
-                                break
-    
-    # Return first match for compatibility, but log all matches found
-    if all_matches:
-        unique_tables = len(set(m['table_idx'] for m in all_matches))
-        logger.info(f"TIER0_TABLE_COMPLETE: Found {len(all_matches)} total occurrences across {unique_tables} unique tables")
-        return all_matches[0]  # Return first match for backward compatibility
-    
-    return None
-
-
-def _generate_conflict_variations(redline_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Generate additional conflict variations to catch more matches - LIMITED to prevent duplicates."""
-    enhanced_items = []
-    
-    for item in redline_items:
-        # Add original item (always include)
-        enhanced_items.append(item)
-        
-        text = item.get('text', '').strip()
-        if not text or len(text) < 10:
-            continue
-        
-        # LIMIT: Only generate 2-3 most useful variations per conflict to prevent duplicates
-        variations_count = 0
-        max_variations = 3
-        
-        # Variation 1: Remove quotes and normalize punctuation (most useful)
-        normalized_text = re.sub(r'["""''`]', '"', text)
-        normalized_text = re.sub(r'[–—]', '-', normalized_text)
-        if normalized_text != text and variations_count < max_variations:
-            enhanced_items.append({
-                **item,
-                'text': normalized_text,
-                'variation_type': 'punctuation_normalized'
-            })
-            variations_count += 1
-        
-        # Variation 2: Remove common prefixes (only SMX and The are most common)
-        prefixes_to_remove = ['SMX ', 'The ']
-        for prefix in prefixes_to_remove:
-            if text.startswith(prefix) and variations_count < max_variations:
-                shortened_text = text[len(prefix):].strip()
-                if len(shortened_text) > 30:  # Only if meaningful length remains
-                    enhanced_items.append({
-                        **item,
-                        'text': shortened_text,
-                        'variation_type': f'prefix_removed_{prefix.strip()}'
-                    })
-                    variations_count += 1
-                    break  # Only remove first matching prefix
-        
-        # Variation 3: Remove parenthetical content (if it's significant)
-        no_parentheses = re.sub(r'\([^)]*\)', '', text).strip()
-        if no_parentheses != text and len(no_parentheses) > 30 and variations_count < max_variations:
-            enhanced_items.append({
-                **item,
-                'text': no_parentheses,
-                'variation_type': 'parentheses_removed'
-            })
-            variations_count += 1
-    
-    return enhanced_items
-
-
-def _generate_cross_reference_conflicts(redline_items: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Generate cross-reference conflicts for related concepts - DISABLED to prevent duplicates."""
-    # DISABLED: This function was creating too many false positive variations
-    # that matched the same paragraphs multiple times without adding value
-    return []
-
-
-def _tier1_5_semantic_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 1.5: Semantic similarity matching for related concepts."""
-    
-    def extract_key_concepts(text):
-        """Extract key concepts from text."""
-        # Extract technical terms, numbers, and important phrases
-        concepts = []
-        
-        # Technical terms
-        tech_terms = re.findall(r'\b(?:SLA|API|AWS|Azure|GCP|HIPAA|FedRAMP|SOC2|ISO|NIST|RBAC|VPN|SIEM|IDS|IPS)\b', text, re.IGNORECASE)
-        concepts.extend(tech_terms)
-        
-        # Numbers and percentages
-        numbers = re.findall(r'\b\d+(?:\.\d+)?%?\b', text)
-        concepts.extend(numbers)
-        
-        # Important phrases (3+ words)
-        phrases = re.findall(r'\b\w+(?:\s+\w+){2,}\b', text)
-        concepts.extend([p for p in phrases if len(p) > 10])
-        
-        return list(set(concepts))
-    
-    def calculate_concept_similarity(concepts1, concepts2):
-        """Calculate similarity between two sets of concepts."""
-        if not concepts1 or not concepts2:
-            return 0
-        
-        # Convert to lowercase for comparison
-        concepts1_lower = [c.lower() for c in concepts1]
-        concepts2_lower = [c.lower() for c in concepts2]
-        
-        # Calculate Jaccard similarity
-        intersection = len(set(concepts1_lower) & set(concepts2_lower))
-        union = len(set(concepts1_lower) | set(concepts2_lower))
-        
-        return intersection / union if union > 0 else 0
-    
-    # Extract concepts from the conflict text
-    conflict_concepts = extract_key_concepts(vendor_conflict_text)
-    logger.info(f"TIER1_5_SEMANTIC: Extracted {len(conflict_concepts)} concepts from conflict text")
-    
-    if not conflict_concepts:
-        return None
-    
-    best_match = None
-    best_similarity = 0
-    
     # Search through all paragraphs
     for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text.strip()
-        if not para_text or len(para_text) < 20:
+        para_text = paragraph.text
+        if not para_text.strip():
             continue
         
-        # Extract concepts from paragraph
-        para_concepts = extract_key_concepts(para_text)
-        if not para_concepts:
-            continue
+        # Strategy 1: Exact match
+        if vendor_quote in para_text:
+            start_pos = para_text.find(vendor_quote)
+            end_pos = start_pos + len(vendor_quote)
+            _apply_precise_redline(paragraph, para_text, start_pos, end_pos, comment)
+            logger.info(f"EXACT_MATCH: Found in paragraph {para_idx}")
+            return {'para_idx': para_idx, 'match_type': 'exact'}
         
-        # Calculate similarity
-        similarity = calculate_concept_similarity(conflict_concepts, para_concepts)
-        
-        if similarity > best_similarity and similarity > 0.2:  # Lowered threshold for more aggressive semantic matching
-            best_similarity = similarity
-            best_match = {
-                'para_idx': para_idx,
-                'similarity': similarity,
-                'matched_concepts': list(set([c.lower() for c in conflict_concepts]) & set([c.lower() for c in para_concepts]))
-            }
+        # Strategy 2: Case-insensitive match (only fallback)
+        if vendor_quote.lower() in para_text.lower():
+            start_pos = para_text.lower().find(vendor_quote.lower())
+            end_pos = start_pos + len(vendor_quote)
+            _apply_precise_redline(paragraph, para_text, start_pos, end_pos, comment)
+            logger.info(f"CASE_INSENSITIVE_MATCH: Found in paragraph {para_idx}")
+            return {'para_idx': para_idx, 'match_type': 'case_insensitive'}
     
-    if best_match:
-        logger.info(f"TIER1_5_SEMANTIC: Found semantic match in paragraph {best_match['para_idx']} with similarity {best_match['similarity']:.3f}")
-        logger.info(f"TIER1_5_SEMANTIC: Matching concepts: {best_match['matched_concepts']}")
-        _apply_redline_to_paragraph(doc.paragraphs[best_match['para_idx']], para_text, redline_item)
-        return best_match
-    
+    # No match found - return None (don't redline anything)
     return None
 
 
-def _tier1_exact_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 1: Enhanced exact and case-insensitive matching within paragraphs."""
-    
-    def create_text_variations(text):
-        """Create comprehensive text variations for matching."""
-        variations = [
-            text,  # Original text
-            text.strip('"\''),  # Remove quotes
-            text.replace('"', '"').replace('"', '"'),  # Smart quotes to regular
-            text.replace(''', "'").replace(''', "'"),  # Smart apostrophes
-            text.replace('"', '"').replace('"', '"'),  # Alternative quote normalization
-            text.replace(''', "'").replace(''', "'"),  # Alternative apostrophe normalization
-        # Additional variations for better matching
-            re.sub(r'\s+', ' ', text.strip()),  # Normalize whitespace
-            text.replace('\n', ' ').replace('\r', ' '),  # Remove line breaks
-            text.replace('\t', ' '),  # Replace tabs with spaces
-            re.sub(r'[^\w\s]', '', text),  # Remove punctuation
-            text.replace('  ', ' '),  # Remove double spaces
-            text.replace('   ', ' '),  # Remove triple spaces
-            # More aggressive normalization
-            re.sub(r'[^\w\s]', ' ', text).strip(),  # Replace punctuation with spaces
-            re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', ' ', text)).strip(),  # Combined normalization
-    ]
-    
-    # Remove duplicates while preserving order
-        return list(dict.fromkeys([v for v in variations if v.strip()]))
-    
-    # Create comprehensive variations of the text to try matching
-    text_variations = create_text_variations(vendor_conflict_text)
-    
-    # Enhanced logging for debugging
-    logger.info(f"TIER1_SEARCH: Looking for '{vendor_conflict_text[:50]}...' with {len(text_variations)} variations")
-    
-    def extract_sentences_from_paragraph(para_text):
-        """Extract individual sentences from a paragraph."""
-        # Split on sentence boundaries but be careful with abbreviations
-        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', para_text)
-        return [s.strip() for s in sentences if s.strip()]
-    
-    # Track all matches found across the ENTIRE document (not just first match)
-    all_matches = []
-    
-    # Search through ALL paragraphs to find EVERY occurrence across ALL pages
-    for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text.strip()
-        if not para_text:
-            continue
-            
-        matched = False
-            
-        # Try each text variation for matching
-        for i, text_variant in enumerate(text_variations):
-            if not text_variant or matched:
-                continue
-                
-            # Try exact substring match (most reliable with exact vendor quotes)
-            if text_variant in para_text:
-                logger.info(f"TIER1_MATCH: Found exact match (variation {i}) in paragraph {para_idx}, page≈{para_idx // 20}")
-                _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
-                all_matches.append({'para_idx': para_idx, 'matched_text': text_variant})
-                matched = True
-                break  # Found a match with this variation, no need to try others
-            
-            # Try case-insensitive match as fallback
-            elif text_variant.lower() in para_text.lower():
-                logger.info(f"TIER1_CASE_MATCH: Found case-insensitive match (variation {i}) in paragraph {para_idx}, page≈{para_idx // 20}")
-                # Find the actual text with correct case in the document
-                start_idx = para_text.lower().find(text_variant.lower())
-                actual_text = para_text[start_idx:start_idx + len(text_variant)]
-                _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
-                all_matches.append({'para_idx': para_idx, 'matched_text': actual_text})
-                matched = True
-                break
-            
-            # NEW: Try sentence-level matching within paragraphs
-            sentences = extract_sentences_from_paragraph(para_text)
-            for sentence_idx, sentence in enumerate(sentences):
-                if text_variant in sentence:
-                    logger.info(f"TIER1_SENTENCE_MATCH: Found sentence-level exact match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
-                    _apply_redline_to_paragraph(paragraph, text_variant, redline_item)
-                    all_matches.append({'para_idx': para_idx, 'matched_text': text_variant})
-                    matched = True
-                    break
-                
-                elif text_variant.lower() in sentence.lower():
-                    logger.info(f"TIER1_SENTENCE_CASE_MATCH: Found sentence-level case-insensitive match (variation {i}) in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
-                    start_idx = sentence.lower().find(text_variant.lower())
-                    actual_text = sentence[start_idx:start_idx + len(text_variant)]
-                    _apply_redline_to_paragraph(paragraph, actual_text, redline_item)
-                    all_matches.append({'para_idx': para_idx, 'matched_text': actual_text})
-                    matched = True
-                    break
-            
-            if matched:
-                break  # Found match, no need to try more variations for this paragraph
-    
-    # Return first match for compatibility, but log all matches found
-    if all_matches:
-        unique_paras = len(set(m['para_idx'] for m in all_matches))
-        pages_affected = sorted(set(m['para_idx'] // 20 for m in all_matches))
-        logger.info(f"TIER1_COMPLETE: Found {len(all_matches)} total occurrences across {unique_paras} unique paragraphs on pages {pages_affected}")
-        return all_matches[0]  # Return first match for backward compatibility
-    
-    return None
-
-
-def _tier2_fuzzy_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 2: Enhanced fuzzy matching with improved text normalization."""
-    
-    import difflib
-    
-    def enhanced_normalize_text(text):
-        """Enhanced text normalization for better matching."""
-        if not text:
-            return ""
-        
-        # Remove all punctuation except spaces and normalize quotes/dashes
-        normalized = re.sub(r'[""''`]', '"', text)  # Normalize quotes
-        normalized = re.sub(r'[–—]', '-', normalized)  # Normalize dashes
-        normalized = re.sub(r'[^\w\s]', ' ', normalized)  # Remove all punctuation except spaces
-        normalized = re.sub(r'\s+', ' ', normalized)  # Normalize all whitespace to single spaces
-        normalized = normalized.lower().strip()
-        return normalized
-    
-    def similarity_ratio(a, b):
-        """Calculate similarity ratio between two strings."""
-        return difflib.SequenceMatcher(None, a, b).ratio()
-    
-    def extract_key_phrases(text, min_length=10):
-        """Extract meaningful phrases from text for partial matching."""
-        # Split on common separators
-        phrases = re.split(r'[,.;:]|\sand\s|\sor\s|\sbut\s|\swith\s', text)
-        key_phrases = []
-        
-        for phrase in phrases:
-            phrase = phrase.strip()
-            if len(phrase) >= min_length and not phrase.lower().startswith(('the ', 'a ', 'an ', 'to ', 'for ', 'of ', 'in ', 'on ', 'at ')):
-                key_phrases.append(phrase)
-        
-        return key_phrases
-    
-    # Normalize the search text
-    normalized_search = enhanced_normalize_text(vendor_conflict_text)
-    
-    # Enhanced logging for debugging
-    logger.info(f"TIER2_SEARCH: Looking for normalized text: '{normalized_search[:100]}...'")
-    
-    # Track all matches found across the ENTIRE document (not just first match)
-    all_matches = []
-    
-    # Try fuzzy matching with normalized text - search ALL paragraphs
-    for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text.strip()
-        if not para_text or len(para_text) < 10:
-            continue
-        
-        normalized_para = enhanced_normalize_text(para_text)
-        matched = False
-        
-        # Check if normalized search text is in normalized paragraph
-        if normalized_search in normalized_para:
-            logger.info(f"TIER2_MATCH: Found exact normalized match in paragraph {para_idx}, page≈{para_idx // 20}")
-            _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
-            all_matches.append({'para_idx': para_idx, 'matched_text': 'normalized_match'})
-            matched = True
-        
-        # Try similarity matching with lowered threshold (more aggressive)
-        if not matched and len(normalized_search) > 30:
-            similarity = similarity_ratio(normalized_search, normalized_para)
-            if similarity > 0.65:
-                logger.info(f"TIER2_SIMILARITY: Found similarity match (ratio: {similarity:.3f}) in paragraph {para_idx}, page≈{para_idx // 20}")
-                _apply_redline_to_paragraph(paragraph, vendor_conflict_text[:100], redline_item)
-                all_matches.append({'para_idx': para_idx, 'matched_text': 'similarity_match'})
-                matched = True
-        
-        # Try partial phrase matching for longer texts (more aggressive)
-        if not matched and len(normalized_search) > 80:
-            key_phrases = extract_key_phrases(normalized_search)
-            for phrase in key_phrases:
-                normalized_phrase = enhanced_normalize_text(phrase)
-                if normalized_phrase in normalized_para and len(normalized_phrase) > 15:
-                    logger.info(f"TIER2_PHRASE: Found phrase match '{phrase[:50]}...' in paragraph {para_idx}, page≈{para_idx // 20}")
-                    _apply_redline_to_paragraph(paragraph, phrase[:100], redline_item)
-                    all_matches.append({'para_idx': para_idx, 'matched_text': 'phrase_match'})
-                    matched = True
-                    break
-    
-    # Return first match for compatibility, but log all matches found
-    if all_matches:
-        unique_paras = len(set(m['para_idx'] for m in all_matches))
-        pages_affected = sorted(set(m['para_idx'] // 20 for m in all_matches))
-        logger.info(f"TIER2_COMPLETE: Found {len(all_matches)} total occurrences across {unique_paras} unique paragraphs on pages {pages_affected}")
-        return all_matches[0]  # Return first match for backward compatibility
-    
-    return None
-
-
-def _tier3_cross_paragraph_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 3: Cross-paragraph matching for text that spans multiple paragraphs."""
-    
-    # Combine consecutive paragraphs and search across boundaries
-    for start_idx in range(len(doc.paragraphs) - 1):
-        # Try combining 2-5 consecutive paragraphs
-        for span in range(2, min(6, len(doc.paragraphs) - start_idx + 1)):
-            combined_text = ""
-            para_indices = []
-            
-            for i in range(start_idx, start_idx + span):
-                if doc.paragraphs[i].text.strip():
-                    combined_text += doc.paragraphs[i].text.strip() + " "
-                    para_indices.append(i)
-            
-            if not combined_text.strip():
-                continue
-            
-            # Try exact match in combined text
-            if vendor_conflict_text in combined_text:
-
-                # Apply redlining to the first paragraph that contains part of the text
-                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
-                return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
-            
-            # Try case-insensitive match in combined text
-            if vendor_conflict_text.lower() in combined_text.lower():
-
-                _apply_redline_to_paragraph(doc.paragraphs[para_indices[0]], vendor_conflict_text[:100], redline_item)
-                return {'para_indices': para_indices, 'matched_text': vendor_conflict_text}
-    
-    return None
-
-
-def _tier4_partial_phrase_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 4: Partial phrase matching for long sentences - match key phrases."""
-    
-    # Break long conflict text into key phrases (remove common words)
-    def extract_key_phrases(text, min_length=15):
-        """Extract meaningful phrases from text."""
-        # Split on sentence boundaries and conjunctions
-        phrases = re.split(r'[,.;:]|\sand\s|\sor\s|\sbut\s', text)
-        key_phrases = []
-        
-        for phrase in phrases:
-            phrase = phrase.strip()
-            if len(phrase) >= min_length and not phrase.lower().startswith(('the ', 'a ', 'an ', 'to ', 'for ')):
-                key_phrases.append(phrase)
-        
-        return key_phrases
-    
-    # Only try partial matching for longer conflict texts (lowered threshold)
-    if len(vendor_conflict_text) < 60:
-        return None
-    
-    key_phrases = extract_key_phrases(vendor_conflict_text)
-    
-    for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text.strip()
-        if not para_text or len(para_text) < 30:
-            continue
-        
-        # Check if any key phrase matches (more aggressive - lowered length threshold)
-        for phrase in key_phrases:
-            if len(phrase) > 15 and phrase.lower() in para_text.lower():
-
-                # Apply redlining to the found phrase instead of full text
-                start_idx = para_text.lower().find(phrase.lower())
-                actual_phrase = para_text[start_idx:start_idx + len(phrase)]
-                _apply_redline_to_paragraph(paragraph, actual_phrase, redline_item)
-                return {'para_idx': para_idx, 'matched_text': actual_phrase}
-    
-    return None
-
-
-def _tier5_tokenized_matching(doc, vendor_conflict_text: str, redline_item: Dict[str, str]) -> Dict[str, Any]:
-    """TIER 5: Tokenized matching to handle formatting differences and word boundary issues."""
-    
-    def tokenize_for_matching(text):
-        """Tokenize text for flexible matching."""
-        # Remove punctuation except periods in numbers
-        cleaned = re.sub(r'[^\w\s\.]', ' ', text)
-        # Split into tokens and remove empty strings
-        tokens = [token.lower().strip() for token in cleaned.split() if token.strip()]
-        return tokens
-    
-    def token_sequence_match(search_tokens, text_tokens, min_match_ratio=0.7):
-        """Find token sequence with minimum match ratio."""
-        search_len = len(search_tokens)
-        text_len = len(text_tokens)
-        
-        if search_len == 0 or text_len == 0:
-            return False, -1
-        
-        for start_idx in range(text_len - search_len + 1):
-            matched_tokens = 0
-            for i in range(search_len):
-                if search_tokens[i] == text_tokens[start_idx + i]:
-                    matched_tokens += 1
-            
-            match_ratio = matched_tokens / search_len
-            if match_ratio >= min_match_ratio:
-                return True, start_idx
-        
-        return False, -1
-    
-    # Tokenize the search text
-    search_tokens = tokenize_for_matching(vendor_conflict_text)
-    
-    # Only try tokenized matching for substantial texts
-    if len(search_tokens) < 5:
-        return None
-    
-    for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text.strip()
-        if not para_text:
-            continue
-        
-        para_tokens = tokenize_for_matching(para_text)
-        
-        # Try token sequence matching
-        found, start_pos = token_sequence_match(search_tokens, para_tokens)
-        
-        if found:
-
-            # Reconstruct approximate text for redlining (use first part of vendor text)
-            redline_text = vendor_conflict_text[:min(len(vendor_conflict_text), 150)]
-            _apply_redline_to_paragraph(paragraph, redline_text, redline_item)
-            return {'para_idx': para_idx, 'matched_text': 'tokenized_match'}
-    
-    return None
-
-
-def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dict[str, str]):
+def _apply_precise_redline(paragraph, para_text: str, start_pos: int, end_pos: int, comment: str):
     """
-    Apply redline formatting to specific text within a paragraph.
-    Preserves existing formatting and allows multiple conflicts in the same paragraph.
-    Only redlines the specific conflict text, not the whole paragraph.
-    Prevents duplicate comments on the same text.
-    """
+    Apply redline formatting to exact text range with run-based comment anchoring.
     
+    PRECISION APPROACH:
+    - Only redlines the exact text at start_pos:end_pos
+    - Anchors comment to the specific run containing the text
+    - Preserves surrounding text formatting
+    
+    Args:
+        paragraph: python-docx Paragraph object
+        para_text: Full paragraph text
+        start_pos: Start position of text to redline
+        end_pos: End position of text to redline
+        comment: Comment to attach to the redlined text
+    """
     try:
-        paragraph_text = paragraph.text
+        # Extract the three parts: before, target, after
+        before_text = para_text[:start_pos]
+        target_text = para_text[start_pos:end_pos]
+        after_text = para_text[end_pos:]
         
-        # If conflict_text matches the entire paragraph, that's okay - redline the whole paragraph
-        # User preference: better to redline entire paragraph than lose the conflict
-        if conflict_text.strip() == paragraph_text.strip():
-            logger.info(f"REDLINE_WHOLE_PARAGRAPH: Conflict text matches entire paragraph (length: {len(paragraph_text)}). Redlining entire paragraph as requested.")
-            actual_conflict_text = paragraph_text
-            start_pos = 0
-            end_pos = len(paragraph_text)
-        else:
-            # Try multiple approaches to find the conflict text
-            start_pos = -1
-            actual_conflict_text = conflict_text
-            
-            # Approach 1: Exact match
-            start_pos = paragraph_text.find(conflict_text)
-            if start_pos != -1:
-                actual_conflict_text = conflict_text
-            else:
-                # Approach 2: Case-insensitive match
-                start_pos = paragraph_text.lower().find(conflict_text.lower())
-                if start_pos != -1:
-                    actual_conflict_text = paragraph_text[start_pos:start_pos + len(conflict_text)]
-                else:
-                    # Approach 3: Try with normalized text variations
-                    normalized_conflict = re.sub(r'[^\w\s]', ' ', conflict_text).strip()
-                    normalized_para = re.sub(r'[^\w\s]', ' ', paragraph_text).strip()
-                    
-                    start_pos = normalized_para.lower().find(normalized_conflict.lower())
-                    if start_pos != -1:
-                        # Find the actual text in the original paragraph
-                        # This is approximate - we'll highlight a reasonable portion
-                        actual_conflict_text = conflict_text[:50] + "..." if len(conflict_text) > 50 else conflict_text
-                        start_pos = paragraph_text.lower().find(actual_conflict_text.lower())
-            
-            # If still not found, try to find a shorter substring match
-            if start_pos == -1:
-                # Try finding a significant portion (at least 20 chars or 50% of conflict text)
-                min_match_length = max(20, len(conflict_text) // 2)
-                for match_len in range(len(conflict_text), min_match_length - 1, -1):
-                    substring = conflict_text[:match_len]
-                    start_pos = paragraph_text.lower().find(substring.lower())
-                    if start_pos != -1:
-                        actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
-                        break
-            
-            # If still not found, be more permissive: try to find any significant substring
-            # User preference: better to redline something than lose the conflict
-            if start_pos == -1:
-                # Try finding progressively smaller substrings (down to 10 chars minimum)
-                min_match_length = max(10, len(conflict_text) // 4)  # More lenient: 25% of original text
-                found_substring = False
-                for match_len in range(len(conflict_text), min_match_length - 1, -5):  # Step by 5 for efficiency
-                    substring = conflict_text[:match_len]
-                    start_pos = paragraph_text.lower().find(substring.lower())
-                    if start_pos != -1:
-                        actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
-                        found_substring = True
-                        logger.info(f"REDLINE_PARTIAL_MATCH: Found partial match ({match_len} chars) for conflict text in paragraph")
-                        break
-                
-                # If still no match, redline the entire paragraph as last resort
-                # User preference: better to have the conflict than lose it
-                if not found_substring:
-                    logger.warning(f"REDLINE_FALLBACK_WHOLE: Could not find conflict text '{conflict_text[:50]}...' in paragraph (length: {len(paragraph_text)}). Redlining entire paragraph as fallback.")
-                    actual_conflict_text = paragraph_text
-                    start_pos = 0
-            
-            end_pos = start_pos + len(actual_conflict_text)
+        if not target_text.strip():
+            logger.warning(f"REDLINE_SKIP: Empty target text at {start_pos}-{end_pos}")
+            return
         
-        # Check if this exact text range is already redlined with the same comment content
-        # This prevents duplicate comments on the same text
-        comment = redline_item.get('comment', '').strip()
-        
-        # Normalize comment content for duplicate detection
-        def normalize_comment_for_dup_check(comment_text: str) -> str:
-            """Normalize comment content for duplicate detection."""
-            if not comment_text:
-                return ""
-            # Remove serial numbers and extract core content
-            normalized = re.sub(r'^CONFLICT\s+\d+\s*\(', 'CONFLICT (', comment_text)
-            normalized = normalized.strip()
-            return normalized
-        
-        normalized_comment = normalize_comment_for_dup_check(comment)
-        
-        # Collect existing redlined ranges
-        existing_redlined_ranges = []  # List of (start, end) tuples
-        
-        current_pos = 0
-        for run in paragraph.runs:
-            run_text = run.text
-            run_start = current_pos
-            run_end = current_pos + len(run_text)
-            
-            # Check if this run is already redlined
-            is_redlined = (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) if run.font.color and run.font.color.rgb else False
-            if is_redlined:
-                existing_redlined_ranges.append((run_start, run_end))
-            
-            current_pos = run_end
-        
-        # Check if this exact text range is already redlined
-        # We'll check for duplicate comments separately when adding the comment
-        for red_start, red_end in existing_redlined_ranges:
-            if red_start == start_pos and red_end == end_pos:
-                logger.info(f"REDLINE_DUPLICATE_SKIP: Exact text range {start_pos}-{end_pos} already redlined. Will check for duplicate comment when adding.")
-                # Don't return here - we still want to add the comment if it's different
-                break
-        
-        # Add new conflict range
-        all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
-        
-        # Only merge ranges that actually overlap (not just adjacent)
-        # This prevents merging separate conflicts that are close together
-        if all_redlined_ranges:
-            all_redlined_ranges.sort(key=lambda x: x[0])
-            merged_ranges = []
-            
-            for current_start, current_end in all_redlined_ranges:
-                merged = False
-                for i, (merged_start, merged_end) in enumerate(merged_ranges):
-                    # Only merge if ranges actually overlap (not just adjacent)
-                    if current_start < merged_end and current_end > merged_start:
-                        # Overlapping - merge the range
-                        merged_ranges[i] = (min(merged_start, current_start), max(merged_end, current_end))
-                        merged = True
-                        break
-                
-                if not merged:
-                    # Non-overlapping - add as new range
-                    merged_ranges.append((current_start, current_end))
-        else:
-            merged_ranges = [(start_pos, end_pos)]
-        
-        # Track normalized comments already added to prevent duplicates
-        # Use a module-level or function-level set to track comments across the document
-        if not hasattr(_apply_redline_to_paragraph, '_seen_comments'):
-            _apply_redline_to_paragraph._seen_comments = set()
-        
-        # Check if this normalized comment was already added
-        if normalized_comment and normalized_comment in _apply_redline_to_paragraph._seen_comments:
-            logger.info(f"REDLINE_COMMENT_DUPLICATE: Comment content already added to document. Skipping duplicate comment.")
-            # Still highlight the text, but don't add duplicate comment
-            comment = ""
-        
-        # Rebuild paragraph preserving existing redlines and adding new conflict
-        # Clear all runs
+        # Clear existing runs
         for run in paragraph.runs:
             run.clear()
         
-        # Build paragraph with all redlined ranges marked
-        current_pos = 0
+        # Rebuild paragraph with redlined section
+        # 1. Add text before redline (if any)
+        if before_text:
+            paragraph.add_run(before_text)
         
-        for red_start, red_end in merged_ranges:
-            # Add text before this redlined range
-            if red_start > current_pos:
-                before_text = paragraph_text[current_pos:red_start]
-                if before_text:
-                    paragraph.add_run(before_text)
-            
-            # Add redlined text
-            redlined_text = paragraph_text[red_start:red_end]
-            # Only create run if there's actual text (prevents empty runs)
-            if redlined_text.strip():
-                conflict_run = paragraph.add_run(redlined_text)
-                conflict_run.font.color.rgb = RGBColor(255, 0, 0)
-                conflict_run.font.strike = True
-                
-                # Add comment only if this range is exactly our new conflict's range and comment not duplicate
-                # CRITICAL: Only add comment to runs with actual text content
-                if red_start == start_pos and red_end == end_pos and comment and normalized_comment and redlined_text.strip():
-                    # Check if this normalized comment was already added
-                    if normalized_comment not in _apply_redline_to_paragraph._seen_comments:
-                        author = "One L"
-                        initials = "1L"
-                        conflict_run.add_comment(comment, author=author, initials=initials)
-                        _apply_redline_to_paragraph._seen_comments.add(normalized_comment)
-                        logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos} on text: '{redlined_text[:50]}...'")
-                    else:
-                        logger.info(f"REDLINE_COMMENT_SKIP: Comment content already exists in document. Skipping duplicate.")
-            else:
-                # Empty text range - skip adding run and comment
-                logger.warning(f"REDLINE_SKIP_EMPTY: Skipping empty text range at {red_start}-{red_end}")
-            
-            current_pos = red_end
+        # 2. Add redlined text with formatting and comment
+        redline_run = paragraph.add_run(target_text)
+        redline_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
+        redline_run.font.strike = True  # Strikethrough
         
-        # Add remaining text after last redlined range
-        if current_pos < len(paragraph_text):
-            after_text = paragraph_text[current_pos:]
-            if after_text:
-                paragraph.add_run(after_text)
-            
-        logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' at position {start_pos}-{end_pos} in paragraph (preserving existing formatting)")
+        # 3. Add comment anchored to this specific run
+        if comment and comment.strip():
+            try:
+                redline_run.add_comment(comment, author="One L", initials="1L")
+                logger.info(f"COMMENT_ADDED: '{comment[:50]}...' on text '{target_text[:30]}...'")
+            except Exception as comment_err:
+                logger.warning(f"COMMENT_FAILED: {comment_err}")
+        
+        # 4. Add text after redline (if any)
+        if after_text:
+            paragraph.add_run(after_text)
+        
+        logger.info(f"REDLINE_APPLIED: '{target_text[:50]}...' at position {start_pos}-{end_pos}")
         
     except Exception as e:
-        logger.error(f"Error applying redline to paragraph: {str(e)}")
+        logger.error(f"Error applying precise redline: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-
-
-def _apply_redline_to_table_cell(cell, cell_text: str, redline_item: Dict[str, str]):
-    """Apply redline formatting to specific text within a table cell."""
-    
-    try:
-        # Process each paragraph in the cell
-        for paragraph in cell.paragraphs:
-            para_text = paragraph.text.strip()
-            if not para_text:
-                continue
-            
-            # If cell_text matches the entire paragraph, that's okay - redline the whole paragraph
-            # User preference: better to redline entire paragraph than lose the conflict
-            if cell_text.strip() == para_text.strip():
-                logger.info(f"REDLINE_WHOLE_PARAGRAPH_TABLE: Conflict text matches entire table cell paragraph (length: {len(para_text)}). Redlining entire paragraph as requested.")
-                actual_conflict_text = para_text
-                start_pos = 0
-                end_pos = len(para_text)
-            else:
-                # Try multiple approaches to find the conflict text
-                start_pos = -1
-                actual_conflict_text = cell_text
-                
-                # Approach 1: Exact match
-                start_pos = para_text.find(cell_text)
-                if start_pos != -1:
-                    actual_conflict_text = cell_text
-                else:
-                    # Approach 2: Case-insensitive match
-                    start_pos = para_text.lower().find(cell_text.lower())
-                    if start_pos != -1:
-                        actual_conflict_text = para_text[start_pos:start_pos + len(cell_text)]
-                    else:
-                        # Approach 3: Try with normalized text variations
-                        normalized_conflict = re.sub(r'[^\w\s]', ' ', cell_text).strip()
-                        normalized_para = re.sub(r'[^\w\s]', ' ', para_text).strip()
-                        
-                        start_pos = normalized_para.lower().find(normalized_conflict.lower())
-                        if start_pos != -1:
-                            # Find the actual text in the original paragraph
-                            actual_conflict_text = cell_text[:50] + "..." if len(cell_text) > 50 else cell_text
-                            start_pos = para_text.lower().find(actual_conflict_text.lower())
-                            if start_pos == -1:
-                                # Last resort: highlight the entire paragraph
-                                actual_conflict_text = para_text
-                                start_pos = 0
-                
-                # If still not found, try shorter substring match
-                if start_pos == -1:
-                    min_match_length = max(20, len(cell_text) // 2)
-                    for match_len in range(len(cell_text), min_match_length - 1, -1):
-                        substring = cell_text[:match_len]
-                        start_pos = para_text.lower().find(substring.lower())
-                        if start_pos != -1:
-                            actual_conflict_text = para_text[start_pos:start_pos + match_len]
-                            break
-                
-                # If still not found, be more permissive: try to find any significant substring
-                # User preference: better to redline something than lose the conflict
-                if start_pos == -1:
-                    # Try finding progressively smaller substrings (down to 10 chars minimum)
-                    min_match_length = max(10, len(cell_text) // 4)  # More lenient: 25% of original text
-                    found_substring = False
-                    for match_len in range(len(cell_text), min_match_length - 1, -5):  # Step by 5 for efficiency
-                        substring = cell_text[:match_len]
-                        start_pos = para_text.lower().find(substring.lower())
-                        if start_pos != -1:
-                            actual_conflict_text = para_text[start_pos:start_pos + match_len]
-                            found_substring = True
-                            logger.info(f"REDLINE_PARTIAL_MATCH_TABLE: Found partial match ({match_len} chars) for conflict text in table cell")
-                            break
-                    
-                    # If still no match, redline the entire paragraph as last resort
-                    # User preference: better to have the conflict than lose it
-                    if not found_substring:
-                        logger.warning(f"REDLINE_FALLBACK_WHOLE_TABLE: Could not find conflict text '{cell_text[:50]}...' in table cell paragraph (length: {len(para_text)}). Redlining entire paragraph as fallback.")
-                        actual_conflict_text = para_text
-                        start_pos = 0
-                
-                end_pos = start_pos + len(actual_conflict_text)
-            
-            # Collect existing redlined ranges to preserve them
-            existing_redlined_ranges = []
-            current_pos = 0
-            for run in paragraph.runs:
-                run_text = run.text
-                run_start = current_pos
-                run_end = current_pos + len(run_text)
-                
-                is_redlined = (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) if run.font.color and run.font.color.rgb else False
-                if is_redlined:
-                    existing_redlined_ranges.append((run_start, run_end))
-                
-                current_pos = run_end
-            
-            # Check if this exact text range is already redlined
-            for red_start, red_end in existing_redlined_ranges:
-                if red_start == start_pos and red_end == end_pos:
-                    logger.info(f"REDLINE_DUPLICATE_SKIP: Exact text range {start_pos}-{end_pos} already redlined in table cell. Skipping duplicate.")
-                    break
-            else:
-                # Add new conflict range - only merge ranges that actually overlap (not just adjacent)
-                all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
-                if all_redlined_ranges:
-                    all_redlined_ranges.sort(key=lambda x: x[0])
-                    merged_ranges = []
-                    for current_start, current_end in all_redlined_ranges:
-                        merged = False
-                        for i, (merged_start, merged_end) in enumerate(merged_ranges):
-                            # Only merge if ranges actually overlap (not just adjacent)
-                            if current_start < merged_end and current_end > merged_start:
-                                # Overlapping - merge
-                                merged_ranges[i] = (min(merged_start, current_start), max(merged_end, current_end))
-                                merged = True
-                                break
-                        
-                        if not merged:
-                            # Non-overlapping - add as new range
-                            merged_ranges.append((current_start, current_end))
-                else:
-                    merged_ranges = [(start_pos, end_pos)]
-                
-                # Rebuild paragraph preserving existing redlines
-                for run in paragraph.runs:
-                    run.clear()
-                
-                current_pos = 0
-                for red_start, red_end in merged_ranges:
-                    # Add text before this redlined range
-                    if red_start > current_pos:
-                        before_text = para_text[current_pos:red_start]
-                        if before_text:
-                            paragraph.add_run(before_text)
-                    
-                    # Add redlined text
-                    redlined_text = para_text[red_start:red_end]
-                    # Only create run if there's actual text (prevents empty runs)
-                    if redlined_text.strip():
-                        conflict_run = paragraph.add_run(redlined_text)
-                        conflict_run.font.color.rgb = RGBColor(255, 0, 0)
-                        conflict_run.font.strike = True
-                        
-                        # Add comment only if this range is exactly our new conflict (prevents duplicates)
-                        # CRITICAL: Only add comment to runs with actual text content
-                        if red_start == start_pos and red_end == end_pos and redlined_text.strip():
-                            comment = redline_item.get('comment', '')
-                            if comment:
-                                author = "One L"
-                                initials = "1L"
-                                conflict_run.add_comment(comment, author=author, initials=initials)
-                                logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos} in table cell on text: '{redlined_text[:50]}...'")
-                    else:
-                        # Empty text range - skip adding run and comment
-                        logger.warning(f"REDLINE_SKIP_EMPTY: Skipping empty text range at {red_start}-{red_end} in table cell")
-                    
-                    current_pos = red_end
-                
-                # Add remaining text after last redlined range
-                if current_pos < len(para_text):
-                    after_text = para_text[current_pos:]
-                    if after_text:
-                        paragraph.add_run(after_text)
-                
-                logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' in table cell")
-                break  # Only redline the first matching paragraph in the cell
-                
-                current_pos = red_end
-            
-            # Add remaining text after last redlined range
-            if current_pos < len(para_text):
-                after_text = para_text[current_pos:]
-                if after_text:
-                    paragraph.add_run(after_text)
-            
-            logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' in table cell")
-            break  # Only redline the first matching paragraph in the cell
-            
-    except Exception as e:
-        logger.error(f"Error applying redline to table cell: {str(e)}")
 
 
 def _get_bucket_name(bucket_type: str) -> str:
