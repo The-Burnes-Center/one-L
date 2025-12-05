@@ -1197,9 +1197,14 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
         for item in redline_items:
             clarification_id = item.get('clarification_id', '')
             text_val = (item.get('text') or '').strip()
-            # Filter placeholders/empty like 'N/A' or too short strings
-            if not text_val or text_val.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available'] or len(text_val) < 5:
-                logger.warning(f"PARSE_FILTER: Skipping placeholder/empty conflict for ID={clarification_id} text='{text_val}'")
+            # Only filter truly empty or placeholder values - be more permissive with short text
+            # User preference: better to include conflicts than lose them
+            if not text_val or text_val.lower() in ['n/a', 'na', 'none', 'n.a.', 'n.a', 'not available']:
+                logger.warning(f"PARSE_FILTER: Skipping placeholder conflict for ID={clarification_id} text='{text_val}'")
+                continue
+            # Allow very short text (minimum 3 chars instead of 5) - user wants to preserve conflicts
+            if len(text_val) < 3:
+                logger.warning(f"PARSE_FILTER: Skipping extremely short conflict for ID={clarification_id} text='{text_val}' (length: {len(text_val)})")
                 continue
             
             # Create composite key: clarification_id + normalized text (first 100 chars for uniqueness)
@@ -2503,67 +2508,73 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
     try:
         paragraph_text = paragraph.text
         
-        # CRITICAL: If conflict_text is the entire paragraph, try to find the actual conflict within it
-        # This prevents Tier0 from highlighting entire paragraphs
-        if conflict_text.strip() == paragraph_text.strip() and len(paragraph_text) > 100:
-            logger.warning(f"REDLINE_PREVENT_WHOLE_PARAGRAPH: Conflict text matches entire paragraph (length: {len(paragraph_text)}). Attempting to find specific conflict text.")
-            # Try to extract a meaningful portion from the conflict item
-            original_conflict = redline_item.get('text', '').strip()
-            if original_conflict and len(original_conflict) < len(paragraph_text):
-                conflict_text = original_conflict
-                logger.info(f"REDLINE_USING_ORIGINAL: Using original conflict text (length: {len(original_conflict)}) instead of entire paragraph")
-            else:
-                logger.warning(f"REDLINE_SKIP: Cannot find specific conflict text in paragraph. Skipping redline to avoid highlighting entire paragraph.")
-                return
-        
-        # Try multiple approaches to find the conflict text
-        start_pos = -1
-        actual_conflict_text = conflict_text
-        
-        # Approach 1: Exact match
-        start_pos = paragraph_text.find(conflict_text)
-        if start_pos != -1:
-            actual_conflict_text = conflict_text
+        # If conflict_text matches the entire paragraph, that's okay - redline the whole paragraph
+        # User preference: better to redline entire paragraph than lose the conflict
+        if conflict_text.strip() == paragraph_text.strip():
+            logger.info(f"REDLINE_WHOLE_PARAGRAPH: Conflict text matches entire paragraph (length: {len(paragraph_text)}). Redlining entire paragraph as requested.")
+            actual_conflict_text = paragraph_text
+            start_pos = 0
+            end_pos = len(paragraph_text)
         else:
-            # Approach 2: Case-insensitive match
-            start_pos = paragraph_text.lower().find(conflict_text.lower())
+            # Try multiple approaches to find the conflict text
+            start_pos = -1
+            actual_conflict_text = conflict_text
+            
+            # Approach 1: Exact match
+            start_pos = paragraph_text.find(conflict_text)
             if start_pos != -1:
-                actual_conflict_text = paragraph_text[start_pos:start_pos + len(conflict_text)]
+                actual_conflict_text = conflict_text
             else:
-                # Approach 3: Try with normalized text variations
-                normalized_conflict = re.sub(r'[^\w\s]', ' ', conflict_text).strip()
-                normalized_para = re.sub(r'[^\w\s]', ' ', paragraph_text).strip()
+                # Approach 2: Case-insensitive match
+                start_pos = paragraph_text.lower().find(conflict_text.lower())
+                if start_pos != -1:
+                    actual_conflict_text = paragraph_text[start_pos:start_pos + len(conflict_text)]
+                else:
+                    # Approach 3: Try with normalized text variations
+                    normalized_conflict = re.sub(r'[^\w\s]', ' ', conflict_text).strip()
+                    normalized_para = re.sub(r'[^\w\s]', ' ', paragraph_text).strip()
+                    
+                    start_pos = normalized_para.lower().find(normalized_conflict.lower())
+                    if start_pos != -1:
+                        # Find the actual text in the original paragraph
+                        # This is approximate - we'll highlight a reasonable portion
+                        actual_conflict_text = conflict_text[:50] + "..." if len(conflict_text) > 50 else conflict_text
+                        start_pos = paragraph_text.lower().find(actual_conflict_text.lower())
+            
+            # If still not found, try to find a shorter substring match
+            if start_pos == -1:
+                # Try finding a significant portion (at least 20 chars or 50% of conflict text)
+                min_match_length = max(20, len(conflict_text) // 2)
+                for match_len in range(len(conflict_text), min_match_length - 1, -1):
+                    substring = conflict_text[:match_len]
+                    start_pos = paragraph_text.lower().find(substring.lower())
+                    if start_pos != -1:
+                        actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
+                        break
+            
+            # If still not found, be more permissive: try to find any significant substring
+            # User preference: better to redline something than lose the conflict
+            if start_pos == -1:
+                # Try finding progressively smaller substrings (down to 10 chars minimum)
+                min_match_length = max(10, len(conflict_text) // 4)  # More lenient: 25% of original text
+                found_substring = False
+                for match_len in range(len(conflict_text), min_match_length - 1, -5):  # Step by 5 for efficiency
+                    substring = conflict_text[:match_len]
+                    start_pos = paragraph_text.lower().find(substring.lower())
+                    if start_pos != -1:
+                        actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
+                        found_substring = True
+                        logger.info(f"REDLINE_PARTIAL_MATCH: Found partial match ({match_len} chars) for conflict text in paragraph")
+                        break
                 
-                start_pos = normalized_para.lower().find(normalized_conflict.lower())
-                if start_pos != -1:
-                    # Find the actual text in the original paragraph
-                    # This is approximate - we'll highlight a reasonable portion
-                    actual_conflict_text = conflict_text[:50] + "..." if len(conflict_text) > 50 else conflict_text
-                    start_pos = paragraph_text.lower().find(actual_conflict_text.lower())
-        
-        # If still not found, try to find a shorter substring match
-        if start_pos == -1:
-            # Try finding a significant portion (at least 20 chars or 50% of conflict text)
-            min_match_length = max(20, len(conflict_text) // 2)
-            for match_len in range(len(conflict_text), min_match_length - 1, -1):
-                substring = conflict_text[:match_len]
-                start_pos = paragraph_text.lower().find(substring.lower())
-                if start_pos != -1:
-                    actual_conflict_text = paragraph_text[start_pos:start_pos + match_len]
-                    break
-        
-        # Only fall back to whole paragraph if conflict text is very short or not found at all
-        # and the paragraph itself is short (less than 100 chars)
-        if start_pos == -1:
-            if len(paragraph_text) < 100 and len(conflict_text) < 50:
-                # Small paragraph, might be the whole thing
-                actual_conflict_text = paragraph_text
-                start_pos = 0
-            else:
-                logger.warning(f"Could not find conflict text '{conflict_text[:50]}...' in paragraph (length: {len(paragraph_text)}). Skipping redline.")
-                return
-        
-        end_pos = start_pos + len(actual_conflict_text)
+                # If still no match, redline the entire paragraph as last resort
+                # User preference: better to have the conflict than lose it
+                if not found_substring:
+                    logger.warning(f"REDLINE_FALLBACK_WHOLE: Could not find conflict text '{conflict_text[:50]}...' in paragraph (length: {len(paragraph_text)}). Redlining entire paragraph as fallback.")
+                    actual_conflict_text = paragraph_text
+                    start_pos = 0
+            
+            end_pos = start_pos + len(actual_conflict_text)
         
         # Check if this exact text range is already redlined with the same comment content
         # This prevents duplicate comments on the same text
@@ -2705,54 +2716,76 @@ def _apply_redline_to_table_cell(cell, cell_text: str, redline_item: Dict[str, s
             para_text = paragraph.text.strip()
             if not para_text:
                 continue
-                
-            # Try multiple approaches to find the conflict text
-            start_pos = -1
-            actual_conflict_text = cell_text
             
-            # Approach 1: Exact match
-            start_pos = para_text.find(cell_text)
-            if start_pos != -1:
-                actual_conflict_text = cell_text
+            # If cell_text matches the entire paragraph, that's okay - redline the whole paragraph
+            # User preference: better to redline entire paragraph than lose the conflict
+            if cell_text.strip() == para_text.strip():
+                logger.info(f"REDLINE_WHOLE_PARAGRAPH_TABLE: Conflict text matches entire table cell paragraph (length: {len(para_text)}). Redlining entire paragraph as requested.")
+                actual_conflict_text = para_text
+                start_pos = 0
+                end_pos = len(para_text)
             else:
-                # Approach 2: Case-insensitive match
-                start_pos = para_text.lower().find(cell_text.lower())
+                # Try multiple approaches to find the conflict text
+                start_pos = -1
+                actual_conflict_text = cell_text
+                
+                # Approach 1: Exact match
+                start_pos = para_text.find(cell_text)
                 if start_pos != -1:
-                    actual_conflict_text = para_text[start_pos:start_pos + len(cell_text)]
+                    actual_conflict_text = cell_text
                 else:
-                    # Approach 3: Try with normalized text variations
-                    normalized_conflict = re.sub(r'[^\w\s]', ' ', cell_text).strip()
-                    normalized_para = re.sub(r'[^\w\s]', ' ', para_text).strip()
+                    # Approach 2: Case-insensitive match
+                    start_pos = para_text.lower().find(cell_text.lower())
+                    if start_pos != -1:
+                        actual_conflict_text = para_text[start_pos:start_pos + len(cell_text)]
+                    else:
+                        # Approach 3: Try with normalized text variations
+                        normalized_conflict = re.sub(r'[^\w\s]', ' ', cell_text).strip()
+                        normalized_para = re.sub(r'[^\w\s]', ' ', para_text).strip()
+                        
+                        start_pos = normalized_para.lower().find(normalized_conflict.lower())
+                        if start_pos != -1:
+                            # Find the actual text in the original paragraph
+                            actual_conflict_text = cell_text[:50] + "..." if len(cell_text) > 50 else cell_text
+                            start_pos = para_text.lower().find(actual_conflict_text.lower())
+                            if start_pos == -1:
+                                # Last resort: highlight the entire paragraph
+                                actual_conflict_text = para_text
+                                start_pos = 0
+                
+                # If still not found, try shorter substring match
+                if start_pos == -1:
+                    min_match_length = max(20, len(cell_text) // 2)
+                    for match_len in range(len(cell_text), min_match_length - 1, -1):
+                        substring = cell_text[:match_len]
+                        start_pos = para_text.lower().find(substring.lower())
+                        if start_pos != -1:
+                            actual_conflict_text = para_text[start_pos:start_pos + match_len]
+                            break
+                
+                # If still not found, be more permissive: try to find any significant substring
+                # User preference: better to redline something than lose the conflict
+                if start_pos == -1:
+                    # Try finding progressively smaller substrings (down to 10 chars minimum)
+                    min_match_length = max(10, len(cell_text) // 4)  # More lenient: 25% of original text
+                    found_substring = False
+                    for match_len in range(len(cell_text), min_match_length - 1, -5):  # Step by 5 for efficiency
+                        substring = cell_text[:match_len]
+                        start_pos = para_text.lower().find(substring.lower())
+                        if start_pos != -1:
+                            actual_conflict_text = para_text[start_pos:start_pos + match_len]
+                            found_substring = True
+                            logger.info(f"REDLINE_PARTIAL_MATCH_TABLE: Found partial match ({match_len} chars) for conflict text in table cell")
+                            break
                     
-                    start_pos = normalized_para.lower().find(normalized_conflict.lower())
-                    if start_pos != -1:
-                        # Find the actual text in the original paragraph
-                        actual_conflict_text = cell_text[:50] + "..." if len(cell_text) > 50 else cell_text
-                        start_pos = para_text.lower().find(actual_conflict_text.lower())
-                        if start_pos == -1:
-                            # Last resort: highlight the entire paragraph
-                            actual_conflict_text = para_text
-                            start_pos = 0
-            
-            # If still not found, try shorter substring match
-            if start_pos == -1:
-                min_match_length = max(20, len(cell_text) // 2)
-                for match_len in range(len(cell_text), min_match_length - 1, -1):
-                    substring = cell_text[:match_len]
-                    start_pos = para_text.lower().find(substring.lower())
-                    if start_pos != -1:
-                        actual_conflict_text = para_text[start_pos:start_pos + match_len]
-                        break
-            
-            if start_pos == -1:
-                # Only fall back to whole paragraph if it's very short
-                if len(para_text) < 100 and len(cell_text) < 50:
-                    actual_conflict_text = para_text
-                    start_pos = 0
-                else:
-                    continue  # Try next paragraph in the cell
-            
-            end_pos = start_pos + len(actual_conflict_text)
+                    # If still no match, redline the entire paragraph as last resort
+                    # User preference: better to have the conflict than lose it
+                    if not found_substring:
+                        logger.warning(f"REDLINE_FALLBACK_WHOLE_TABLE: Could not find conflict text '{cell_text[:50]}...' in table cell paragraph (length: {len(para_text)}). Redlining entire paragraph as fallback.")
+                        actual_conflict_text = para_text
+                        start_pos = 0
+                
+                end_pos = start_pos + len(actual_conflict_text)
             
             # Collect existing redlined ranges to preserve them
             existing_redlined_ranges = []
