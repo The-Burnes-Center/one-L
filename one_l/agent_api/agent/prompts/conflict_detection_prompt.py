@@ -21,7 +21,7 @@ Your response must be ONLY a valid JSON object with this structure:
   "conflicts": [
     {{
       "clarification_id": "Vendor's ID or Additional-[#]",
-      "vendor_quote": "Exact text verbatim OR 'N/A - Missing provision' for omissions",
+      "vendor_quote": "Exact text verbatim OR 'N/A - Missing provision' for omissions of required provisions",
       "summary": "20-40 word context",
       "source_doc": "Massachusetts source document name OR 'N/A – Not tied to a specific Massachusetts clause'",
       "clause_ref": "Specific section or 'N/A' if not applicable",
@@ -50,11 +50,11 @@ If no conflicts are found: `{{"explanation": "Explanation why no conflicts were 
 
 ### Step 2: PRIORITY CONTENT AREAS TO CHECK  - hidden changes vendors make in each critical area.
 
-**Identify conflicts with these critical areas**:
+**Identify conflicts with these critical areas (massachusetts it terms, general clause risks, red flag language indicators) from the knowledge base:**:
 
-**VERY IMPORTANT TO WATCH FOR: <massachusetts_it_terms> INCLUDING BUT NOT LIMITED TO:
+**VERY IMPORTANT TO WATCH FOR: <massachusetts_it_terms_and_conditions> INCLUDING BUT NOT LIMITED TO:
 - **Payment**: Requiring late payment interest/fees, eliminating prompt payment discount
-- **Termination or Suspension**: Eliminating refunds for pre-paid services, limiting to specific scenarios, requiring payment for remainder of term, allowing vendor termination without notice/cure
+- **Termination or Suspension**: Eliminating refunds for pre-paid services, limiting to specific scenarios, requiring payment for remainder of term, allowing vendor termination without notice/cure, Force Majeure events
 - **Confidentiality**: Requiring the Commonwealth/state and/or buyer/purchaser/Eligible Entity to maintain confidentiality
 - **Record Retention**: Limiting required retention obligations, or clauses that override or bypass state records retention laws (e.g., language like “notwithstanding state records retention laws”).
 - **Assignment**: Vendor terms that permit assignment, restricting the state's/buyers' right to assign
@@ -70,18 +70,18 @@ If no conflicts are found: `{{"explanation": "Explanation why no conflicts were 
 </massachusetts_it_terms>**
 
 <general_clause_risks> INCLUDING BUT NOT LIMITED TO:
+- **Order of Precedence Conflicts**: Any attempt to modify or redefine the Commonwealth’s mandatory contract hierarchy — including altering the definition of “Contract,” introducing new governing terms, elevating vendor documents (e.g., MSAs, EULAs, online terms) above Massachusetts IT Terms, or changing which documents control in the event of conflict.
 - **EULAs**: Separate EULA agreements are not allowed
 - **IP**: Limiting customer ownership, right to use customer data "for any business purpose"
 - **Dispute Resolution**: Non-MA governing law/jurisdiction/venue (including via external terms), waiving trial by jury, ADR over trial, contractor controlling litigation
 - **Incorporated Terms**: Additional terms, online terms, or external documents incorporated by reference
-- **Order of Precedence Conflicts**: Any attempt to modify or redefine the Commonwealth’s mandatory contract hierarchy — including altering the definition of “Contract,” introducing new governing terms, elevating vendor documents (e.g., MSAs, EULAs, online terms) above Massachusetts IT Terms, or changing which documents control in the event of conflict.
 - **Audit**: Modifications to state's rights to audit
 - **Entire Agreement**: Clauses that make the vendor's document the only document that applies to a contractual relationship
 - **SDP Requirement**: Satisfying the SDP requirement by vendor's donation to charity
 - **Remedies**: Limiting the state's right to intercept or seek reductions or set-off
 - **Representations and warranties**: Requiring the state/buyer to make representations, warranties, or covenants that could limit liability
 - **High Risk Use/Activities**: Excluding uses where software/hardware malfunction could result in death, personal injury, or environmental damage
-- **Time modifications**: Days/periods different from Commonwealth standards
+- **Time modifications**: Days/periods different from Commonwealth standards (e.g., too long notice periods, modified deadlines, hours of operation, etc.)
 - **Hyperlinks**: Links to external documents/websites, links to external terms
 </general_clause_risks>
 
@@ -112,12 +112,12 @@ If no conflicts are found: `{{"explanation": "Explanation why no conflicts were 
 
 ## Analysis Instructions
 1. Analyze ONLY the content in the provided chunk
-2. Identify ALL conflicts with Massachusetts requirements
-3. Prioritize major IT Terms sections (Termination, Notice, Indemnification, Liability)
+2. Identify ALL conflicts with Massachusetts requirements from the knowledge base
+3. Prioritize major IT Term and Conditions sections (e.g., Termination, Notice, Indemnification, Liability, etc.)
 4. Do NOT infer vendor positions not explicitly in the chunk
 5. For each conflict found, complete ALL fields in the JSON structure
 6. If citing a Massachusetts source document, use ONLY actual document names
-7. For general risk patterns not tied to specific Massachusetts clauses, use "N/A – Not tied to a specific Massachusetts clause" as source_doc
+7. For general risk patterns not tied to specific document from the knowledge base, use "N/A – Not tied to a specific Massachusetts clause" as source_doc
 
 ## Critical Reminders
 - Output ONLY the raw JSON object starting with {{and ending with}}

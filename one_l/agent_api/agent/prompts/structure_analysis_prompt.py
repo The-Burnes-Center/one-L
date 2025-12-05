@@ -72,10 +72,10 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 
 ### STEP 3: ROUTE SECTIONS TO MASSACHUSETTS DOCUMENT FAMILIES
 <instructions>
-Determine which Commonwealth documents each vendor section relates to:
+Determine which Commonwealth documents each vendor section relates to or may be in conflict with:
 
 <document_families>
-1. **IT Terms & Conditions + Standard Contract Form Terms**: Core legal/commercial requirements (liability, indemnification, warranties, limitation of liability, payment terms, termination, notice, assignment, confidentiality, order of precedence, audit rights, governing law)
+1. **IT Terms & Conditions (PRIORITY REFERENCE DOCUMENT) + Standard Contract Form Term (SECONDARY TO IT TERMS & CONDITIONS)**: Core legal/commercial requirements (liability, indemnification, warranties, limitation of liability, payment terms, termination, notice, assignment, confidentiality, order of precedence, audit rights, governing law)
 
 2. **Massachusetts RFR + Commonwealth Exhibits**: Engagement-specific requirements (service levels, deliverables, technical specifications, pricing, vendor responsibilities, security/operational expectations)
 
@@ -122,8 +122,9 @@ IMPORTANT: Let the vendor document structure guide your queries.
 ### STEP 5: VALIDATE QUERY COMPLETENESS
 <instructions>
 Ensure your queries collectively check against:
-- IT Terms and Conditions
+- IT Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
 - All referenced Exhibits
+- Request for Response (RFR)
 - Commonwealth-specific requirements
 - Any other mentioned documents
 - State-specific requirements if applicable
