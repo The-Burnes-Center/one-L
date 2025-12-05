@@ -1256,7 +1256,84 @@ def normalize_escaped_quotes(text: str) -> str:
     text = text.replace('\\"', '"')
     # Replace literal \' with ' (backslash followed by single quote)
     text = text.replace("\\'", "'")
+    # Handle unicode escapes
+    text = text.replace('\\u0022', '"')  # Unicode double quote
+    text = text.replace('\\u0027', "'")  # Unicode single quote
     
+    return text
+
+
+def normalize_quotes(text: str) -> str:
+    """
+    Normalize various quote characters to standard ASCII quotes.
+    
+    Handles curly quotes, smart quotes, and other quote variants
+    that may differ between LLM output and document text.
+    
+    Args:
+        text: Text with various quote characters
+        
+    Returns:
+        Text with normalized ASCII quotes
+    """
+    if not text:
+        return text
+    
+    # Normalize double quotes (curly, smart, etc.) to standard "
+    text = text.replace('"', '"')  # Left double quotation mark
+    text = text.replace('"', '"')  # Right double quotation mark
+    text = text.replace('„', '"')  # Double low-9 quotation mark
+    text = text.replace('«', '"')  # Left-pointing double angle quotation
+    text = text.replace('»', '"')  # Right-pointing double angle quotation
+    
+    # Normalize single quotes (curly, smart, etc.) to standard '
+    text = text.replace(''', "'")  # Left single quotation mark
+    text = text.replace(''', "'")  # Right single quotation mark
+    text = text.replace('‚', "'")  # Single low-9 quotation mark
+    text = text.replace('‹', "'")  # Single left-pointing angle quotation
+    text = text.replace('›', "'")  # Single right-pointing angle quotation
+    
+    return text
+
+
+def normalize_whitespace(text: str) -> str:
+    """
+    Normalize all whitespace characters to single spaces.
+    
+    Handles newlines, tabs, multiple spaces, and other whitespace
+    that may differ between LLM output and document text.
+    
+    Args:
+        text: Text with various whitespace characters
+        
+    Returns:
+        Text with normalized whitespace (single spaces)
+    """
+    if not text:
+        return text
+    
+    # Replace all whitespace (newlines, tabs, multiple spaces) with single space
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def normalize_for_matching(text: str) -> str:
+    """
+    Apply all normalizations to prepare text for matching.
+    
+    Combines: escaped quotes, quote types, and whitespace normalization.
+    
+    Args:
+        text: Text to normalize
+        
+    Returns:
+        Fully normalized text ready for matching
+    """
+    if not text:
+        return text
+    
+    text = normalize_escaped_quotes(text)
+    text = normalize_quotes(text)
+    text = normalize_whitespace(text)
     return text
 
 
@@ -1265,11 +1342,12 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     Apply redlining to document with PRECISE matching.
     
     PRECISION APPROACH:
-    - Only redlines EXACT vendor_quote text (or case-insensitive match)
+    - Only redlines EXACT vendor_quote text (with normalization fallbacks)
+    - Handles multiple conflicts in the same paragraph
     - Comments are anchored to the exact runs containing the text
     - Duplicates detected by vendor_quote field only
-    - NO fallbacks that redline wrong text
-    - Normalizes escaped quotes (\") to match document text (")
+    - Normalizes: escaped quotes, quote types, whitespace
+    - Supports cross-paragraph matching for text split across paragraphs
     
     Args:
         doc: python-docx Document object
@@ -1281,8 +1359,6 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs")
     
     try:
-        matches_found = 0
-        paragraphs_with_redlines = []
         total_paragraphs = len(doc.paragraphs)
         failed_matches = []
         
@@ -1292,50 +1368,64 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         # Track seen vendor_quotes for duplicate detection (normalize for comparison)
         seen_vendor_quotes = set()
         
-        def normalize_vendor_quote(text: str) -> str:
+        def normalize_vendor_quote_for_dedup(text: str) -> str:
             """Normalize vendor_quote for duplicate detection."""
             if not text:
                 return ""
-            # Normalize escaped quotes first, then case-insensitive, whitespace normalized
-            normalized = normalize_escaped_quotes(text)
-            normalized = re.sub(r'\s+', ' ', normalized.lower().strip())
-            return normalized
+            return normalize_for_matching(text).lower()
         
-        # Process each conflict
+        # PHASE 1: Pre-scan - find all matches for all conflicts
+        # This allows us to handle multiple conflicts per paragraph
+        paragraph_matches = {}  # para_idx -> list of (start_pos, end_pos, comment, vendor_quote, conflict_id)
+        cross_para_matches = []  # List of cross-paragraph matches to handle separately
+        
         for redline_item in redline_items:
             vendor_quote = redline_item.get('text', '').strip()
-            
-            # Normalize escaped quotes before matching
-            vendor_quote = normalize_escaped_quotes(vendor_quote)
             
             if not vendor_quote:
                 logger.warning("SKIP: Empty vendor_quote")
                 continue
             
             # Check for duplicates based on vendor_quote only
-            normalized_quote = normalize_vendor_quote(vendor_quote)
+            normalized_quote = normalize_vendor_quote_for_dedup(vendor_quote)
             if normalized_quote in seen_vendor_quotes:
                 logger.info(f"DUPLICATE_SKIP: vendor_quote already processed: '{vendor_quote[:50]}...'")
                 continue
             
             seen_vendor_quotes.add(normalized_quote)
             
-            # Get conflict metadata for logging
-            conflict_id = redline_item.get('id', 'Unknown')
+            # Get conflict metadata
+            conflict_id = redline_item.get('id', redline_item.get('clarification_id', 'Unknown'))
             serial_num = redline_item.get('serial_number', 'N/A')
             comment = redline_item.get('comment', '')
             
-            logger.info(f"PROCESSING: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:80]}...'")
+            logger.info(f"SCANNING: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:80]}...'")
             
-            # Find exact match in document
-            match_result = _find_and_redline_exact_text(doc, vendor_quote, comment)
+            # Find match in document using tiered strategy
+            match_result = _find_text_match(doc, vendor_quote)
             
             if match_result:
-                matches_found += 1
-                para_idx = match_result['para_idx']
-                if para_idx not in paragraphs_with_redlines:
-                    paragraphs_with_redlines.append(para_idx)
-                logger.info(f"MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}")
+                if match_result['type'] == 'single_para':
+                    para_idx = match_result['para_idx']
+                    if para_idx not in paragraph_matches:
+                        paragraph_matches[para_idx] = []
+                    paragraph_matches[para_idx].append({
+                        'start_pos': match_result['start_pos'],
+                        'end_pos': match_result['end_pos'],
+                        'comment': comment,
+                        'vendor_quote': vendor_quote,
+                        'conflict_id': conflict_id,
+                        'match_type': match_result['match_type']
+                    })
+                    logger.info(f"FOUND: {match_result['match_type']} match in paragraph {para_idx}")
+                elif match_result['type'] == 'cross_para':
+                    cross_para_matches.append({
+                        'paragraphs': match_result['paragraphs'],
+                        'comment': comment,
+                        'vendor_quote': vendor_quote,
+                        'conflict_id': conflict_id
+                    })
+                    logger.info(f"FOUND: Cross-paragraph match spanning paragraphs {match_result['paragraphs']}")
             else:
                 failed_matches.append({
                     'text': vendor_quote,
@@ -1344,12 +1434,50 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 })
                 logger.warning(f"NO_MATCH: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:50]}...'")
         
+        # PHASE 2: Apply redlines - process each paragraph with its matches
+        matches_found = 0
+        paragraphs_with_redlines = []
+        
+        for para_idx, matches in paragraph_matches.items():
+            paragraph = doc.paragraphs[para_idx]
+            para_text = paragraph.text
+            
+            # Sort matches by start position DESCENDING (process end to start to preserve positions)
+            matches.sort(key=lambda x: x['start_pos'], reverse=True)
+            
+            logger.info(f"APPLYING: {len(matches)} redlines to paragraph {para_idx}")
+            
+            # Apply all redlines to this paragraph
+            success = _apply_multiple_redlines(paragraph, para_text, matches)
+            
+            if success:
+                matches_found += len(matches)
+                paragraphs_with_redlines.append(para_idx)
+        
+        # PHASE 3: Handle cross-paragraph matches
+        for cross_match in cross_para_matches:
+            para_indices = cross_match['paragraphs']
+            comment = cross_match['comment']
+            
+            # Apply redline to each paragraph in the cross-paragraph match
+            for para_idx in para_indices:
+                if para_idx < len(doc.paragraphs):
+                    paragraph = doc.paragraphs[para_idx]
+                    # Redline the entire paragraph text for cross-paragraph matches
+                    _apply_full_paragraph_redline(paragraph, comment)
+                    if para_idx not in paragraphs_with_redlines:
+                        paragraphs_with_redlines.append(para_idx)
+            
+            matches_found += 1
+            logger.info(f"CROSS_PARA_APPLIED: Redlined paragraphs {para_indices}")
+        
         # Log results
         if paragraphs_with_redlines:
             pages_affected = set(para_idx // 20 for para_idx in paragraphs_with_redlines)
             logger.info(f"PAGE_DISTRIBUTION: {len(pages_affected)} pages affected: {sorted(pages_affected)}")
         
-        success_rate = (matches_found / len(redline_items) * 100) if redline_items else 0
+        total_conflicts = len(redline_items) - len([r for r in redline_items if not r.get('text', '').strip()])
+        success_rate = (matches_found / total_conflicts * 100) if total_conflicts else 0
         
         if failed_matches:
             logger.warning(f"REDLINING_INCOMPLETE: {len(failed_matches)} conflicts could not be matched")
@@ -1380,107 +1508,290 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         }
 
 
-def _find_and_redline_exact_text(doc, vendor_quote: str, comment: str) -> Optional[Dict[str, Any]]:
+def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     """
-    Find exact vendor_quote text in document and apply redline with comment.
+    Find vendor_quote text in document using tiered matching strategy.
     
-    PRECISION MATCHING:
-    1. Exact match first
-    2. Case-insensitive match as only fallback
-    3. Returns None if no match (don't redline wrong text)
+    MATCHING TIERS:
+    1. Exact match (original text)
+    2. Normalized quotes match (handle ' vs " variations)
+    3. Normalized whitespace match (handle newline vs space)
+    4. Fully normalized match (quotes + whitespace + case-insensitive)
+    5. Cross-paragraph match (text spans multiple paragraphs)
     
     Args:
         doc: python-docx Document object
-        vendor_quote: Exact text to find and redline
-        comment: Comment to attach to the redlined text
+        vendor_quote: Text to find in document
         
     Returns:
         Match result dict or None if not found
     """
+    # Prepare normalized versions
+    quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
+    whitespace_normalized = normalize_whitespace(vendor_quote)
+    fully_normalized = normalize_for_matching(vendor_quote)
+    
     # Search through all paragraphs
     for para_idx, paragraph in enumerate(doc.paragraphs):
         para_text = paragraph.text
         if not para_text.strip():
             continue
         
-        # Strategy 1: Exact match
+        # TIER 1: Exact match
         if vendor_quote in para_text:
             start_pos = para_text.find(vendor_quote)
-            end_pos = start_pos + len(vendor_quote)
-            _apply_precise_redline(paragraph, para_text, start_pos, end_pos, comment)
-            logger.info(f"EXACT_MATCH: Found in paragraph {para_idx}")
-            return {'para_idx': para_idx, 'match_type': 'exact'}
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': start_pos + len(vendor_quote),
+                'match_type': 'exact'
+            }
         
-        # Strategy 2: Case-insensitive match (only fallback)
-        if vendor_quote.lower() in para_text.lower():
-            start_pos = para_text.lower().find(vendor_quote.lower())
-            end_pos = start_pos + len(vendor_quote)
-            _apply_precise_redline(paragraph, para_text, start_pos, end_pos, comment)
-            logger.info(f"CASE_INSENSITIVE_MATCH: Found in paragraph {para_idx}")
-            return {'para_idx': para_idx, 'match_type': 'case_insensitive'}
+        # TIER 2: Quote-normalized match
+        para_quote_normalized = normalize_quotes(para_text)
+        if quote_normalized in para_quote_normalized:
+            start_pos = para_quote_normalized.find(quote_normalized)
+            # Map back to original positions (approximate - quotes are same length)
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': start_pos + len(vendor_quote),
+                'match_type': 'quote_normalized'
+            }
+        
+        # TIER 3: Whitespace-normalized match
+        para_ws_normalized = normalize_whitespace(para_text)
+        if whitespace_normalized in para_ws_normalized:
+            # Find position in normalized text, then map back
+            norm_start = para_ws_normalized.find(whitespace_normalized)
+            # Map normalized position back to original position
+            start_pos = _map_normalized_to_original_position(para_text, norm_start)
+            end_pos = _map_normalized_to_original_position(para_text, norm_start + len(whitespace_normalized))
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'match_type': 'whitespace_normalized'
+            }
+        
+        # TIER 4: Fully normalized + case-insensitive match
+        para_fully_normalized = normalize_for_matching(para_text).lower()
+        if fully_normalized.lower() in para_fully_normalized:
+            norm_start = para_fully_normalized.find(fully_normalized.lower())
+            start_pos = _map_normalized_to_original_position(para_text, norm_start)
+            end_pos = _map_normalized_to_original_position(para_text, norm_start + len(fully_normalized))
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'match_type': 'fully_normalized'
+            }
     
-    # No match found - return None (don't redline anything)
+    # TIER 5: Cross-paragraph matching
+    cross_match = _find_cross_paragraph_match(doc, vendor_quote, fully_normalized)
+    if cross_match:
+        return cross_match
+    
     return None
 
 
-def _apply_precise_redline(paragraph, para_text: str, start_pos: int, end_pos: int, comment: str):
+def _map_normalized_to_original_position(original_text: str, normalized_pos: int) -> int:
     """
-    Apply redline formatting to exact text range with run-based comment anchoring.
+    Map a position in normalized text back to approximate position in original text.
     
-    PRECISION APPROACH:
-    - Only redlines the exact text at start_pos:end_pos
-    - Anchors comment to the specific run containing the text
-    - Preserves surrounding text formatting
+    This is an approximation since whitespace normalization changes positions.
+    
+    Args:
+        original_text: Original text before normalization
+        normalized_pos: Position in normalized text
+        
+    Returns:
+        Approximate position in original text
+    """
+    if normalized_pos <= 0:
+        return 0
+    
+    # Walk through original text, counting non-collapsed characters
+    normalized_count = 0
+    in_whitespace = False
+    
+    for i, char in enumerate(original_text):
+        if char in ' \t\n\r':
+            if not in_whitespace:
+                normalized_count += 1  # Collapsed whitespace counts as 1
+                in_whitespace = True
+        else:
+            normalized_count += 1
+            in_whitespace = False
+        
+        if normalized_count >= normalized_pos:
+            return i + 1
+    
+    return len(original_text)
+
+
+def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str) -> Optional[Dict[str, Any]]:
+    """
+    Find vendor_quote that spans multiple paragraphs.
+    
+    Joins consecutive paragraphs and searches for the text.
+    
+    Args:
+        doc: python-docx Document object
+        vendor_quote: Original text to find
+        normalized_quote: Normalized version of text
+        
+    Returns:
+        Match result dict or None if not found
+    """
+    paragraphs = doc.paragraphs
+    
+    # Try joining consecutive paragraphs (2-3 at a time)
+    for window_size in [2, 3]:
+        for start_idx in range(len(paragraphs) - window_size + 1):
+            # Join paragraphs with space
+            joined_paras = []
+            joined_text = ""
+            for i in range(window_size):
+                para_text = paragraphs[start_idx + i].text
+                if para_text.strip():
+                    joined_paras.append(start_idx + i)
+                    joined_text += para_text + " "
+            
+            if not joined_text.strip():
+                continue
+            
+            joined_text = joined_text.strip()
+            joined_normalized = normalize_for_matching(joined_text).lower()
+            
+            # Check if vendor_quote exists in joined text
+            if normalized_quote.lower() in joined_normalized:
+                logger.info(f"CROSS_PARA_MATCH: Found in paragraphs {joined_paras}")
+                return {
+                    'type': 'cross_para',
+                    'paragraphs': joined_paras,
+                    'match_type': 'cross_paragraph'
+                }
+    
+    return None
+
+
+def _apply_multiple_redlines(paragraph, para_text: str, matches: List[Dict]) -> bool:
+    """
+    Apply multiple redlines to a single paragraph.
+    
+    Processes matches from end to start to preserve character positions.
     
     Args:
         paragraph: python-docx Paragraph object
-        para_text: Full paragraph text
-        start_pos: Start position of text to redline
-        end_pos: End position of text to redline
-        comment: Comment to attach to the redlined text
+        para_text: Original paragraph text
+        matches: List of match dicts sorted by start_pos descending
+        
+    Returns:
+        True if successful, False otherwise
     """
     try:
-        # Extract the three parts: before, target, after
-        before_text = para_text[:start_pos]
-        target_text = para_text[start_pos:end_pos]
-        after_text = para_text[end_pos:]
+        # Build list of text segments with formatting info
+        # Start with the full text, then split at each redline point
+        segments = []  # List of (text, is_redline, comment)
         
-        if not target_text.strip():
-            logger.warning(f"REDLINE_SKIP: Empty target text at {start_pos}-{end_pos}")
+        current_pos = len(para_text)
+        
+        for match in matches:
+            start_pos = match['start_pos']
+            end_pos = match['end_pos']
+            comment = match['comment']
+            
+            # Bounds checking
+            start_pos = max(0, min(start_pos, len(para_text)))
+            end_pos = max(start_pos, min(end_pos, len(para_text)))
+            
+            # Add text after this redline (if any)
+            if current_pos > end_pos:
+                after_text = para_text[end_pos:current_pos]
+                if after_text:
+                    segments.insert(0, {'text': after_text, 'is_redline': False, 'comment': None})
+            
+            # Add the redlined text
+            target_text = para_text[start_pos:end_pos]
+            if target_text:
+                segments.insert(0, {'text': target_text, 'is_redline': True, 'comment': comment})
+            
+            current_pos = start_pos
+        
+        # Add any remaining text at the beginning
+        if current_pos > 0:
+            before_text = para_text[:current_pos]
+            if before_text:
+                segments.insert(0, {'text': before_text, 'is_redline': False, 'comment': None})
+        
+        # Clear existing runs
+        for run in paragraph.runs:
+            run.clear()
+        
+        # Rebuild paragraph with all segments
+        for segment in segments:
+            run = paragraph.add_run(segment['text'])
+            
+            if segment['is_redline']:
+                run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
+                run.font.strike = True  # Strikethrough
+                
+                # Add comment if present
+                if segment['comment'] and segment['comment'].strip():
+                    try:
+                        run.add_comment(segment['comment'], author="One L", initials="1L")
+                        logger.info(f"COMMENT_ADDED: '{segment['comment'][:50]}...' on text '{segment['text'][:30]}...'")
+                    except Exception as comment_err:
+                        logger.warning(f"COMMENT_FAILED: {comment_err}")
+        
+        logger.info(f"MULTI_REDLINE_APPLIED: {len(matches)} redlines in paragraph")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error applying multiple redlines: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+
+def _apply_full_paragraph_redline(paragraph, comment: str):
+    """
+    Apply redline to entire paragraph (for cross-paragraph matches).
+    
+    Args:
+        paragraph: python-docx Paragraph object
+        comment: Comment to attach
+    """
+    try:
+        para_text = paragraph.text
+        if not para_text.strip():
             return
         
         # Clear existing runs
         for run in paragraph.runs:
             run.clear()
         
-        # Rebuild paragraph with redlined section
-        # 1. Add text before redline (if any)
-        if before_text:
-            paragraph.add_run(before_text)
+        # Add redlined text
+        redline_run = paragraph.add_run(para_text)
+        redline_run.font.color.rgb = RGBColor(255, 0, 0)
+        redline_run.font.strike = True
         
-        # 2. Add redlined text with formatting and comment
-        redline_run = paragraph.add_run(target_text)
-        redline_run.font.color.rgb = RGBColor(255, 0, 0)  # Red color
-        redline_run.font.strike = True  # Strikethrough
-        
-        # 3. Add comment anchored to this specific run
+        # Add comment (only to first paragraph in cross-para match)
         if comment and comment.strip():
             try:
                 redline_run.add_comment(comment, author="One L", initials="1L")
-                logger.info(f"COMMENT_ADDED: '{comment[:50]}...' on text '{target_text[:30]}...'")
-            except Exception as comment_err:
-                logger.warning(f"COMMENT_FAILED: {comment_err}")
+            except Exception:
+                pass
         
-        # 4. Add text after redline (if any)
-        if after_text:
-            paragraph.add_run(after_text)
-        
-        logger.info(f"REDLINE_APPLIED: '{target_text[:50]}...' at position {start_pos}-{end_pos}")
+        logger.info(f"FULL_PARA_REDLINE: Applied to '{para_text[:50]}...'")
         
     except Exception as e:
-        logger.error(f"Error applying precise redline: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Error applying full paragraph redline: {str(e)}")
 
 
 def _get_bucket_name(bucket_type: str) -> str:

@@ -21,7 +21,7 @@ Your response must be ONLY a valid JSON object with this structure:
   "conflicts": [
     {{
       "clarification_id": "Vendor's ID or Additional-[#]",
-      "vendor_quote": "Exact text verbatim OR 'N/A - Missing provision' for omissions of required provisions",
+      "vendor_quote": "EXACT text copied CHARACTER-BY-CHARACTER from the vendor document",
       "summary": "20-40 word context",
       "source_doc": "Massachusetts source document name OR 'N/A – Not tied to a specific Massachusetts clause'",
       "clause_ref": "Specific section or 'N/A' if not applicable",
@@ -30,6 +30,16 @@ Your response must be ONLY a valid JSON object with this structure:
   ]
 }}
 ```
+
+## CRITICAL: vendor_quote Field Requirements
+The vendor_quote field MUST contain the EXACT text from the vendor document:
+- Copy text CHARACTER-BY-CHARACTER exactly as it appears in the document
+- Do NOT correct spelling errors (if document says "loss es", write "loss es" not "losses")
+- Do NOT change quote characters (preserve exact quote style: "quote" vs 'quote' vs "quote")
+- Do NOT fix grammar, punctuation, or formatting
+- Do NOT paraphrase or summarize - copy the EXACT verbatim text
+- Include any unusual spacing, capitalization, or punctuation exactly as written
+- For omissions (missing required provisions), use: "N/A - Missing provision"
 
 If no conflicts are found: `{{"explanation": "Explanation why no conflicts were found", "conflicts": []}}`
 
