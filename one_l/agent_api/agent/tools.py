@@ -724,6 +724,55 @@ def redline_document(
         if redline_items:
             logger.info(f"REDLINE_PARSE: First conflict preview: '{redline_items[0].get('text', '')[:100]}...'")
         
+        # Step 3.5: Assign sequential serial numbers based on comment content deduplication
+        # Track seen comments by normalized content to prevent duplicates and assign serial numbers
+        seen_comments = {}  # Key: normalized comment content, Value: serial_number
+        serial_number = 0
+        
+        for item in redline_items:
+            comment = item.get('comment', '').strip()
+            if not comment:
+                continue
+            
+            # Normalize comment content for duplicate detection (remove serial numbers if present)
+            # Extract the core content: everything after "CONFLICT" but before any existing serial number
+            normalized_comment = comment
+            # Remove any existing conflict ID pattern to get core content
+            normalized_comment = re.sub(r'^CONFLICT\s+\S+\s*\(', 'CONFLICT (', normalized_comment)
+            normalized_comment = normalized_comment.strip()
+            
+            # Check if we've seen this comment content before
+            if normalized_comment not in seen_comments:
+                serial_number += 1
+                seen_comments[normalized_comment] = serial_number
+                # Update comment with serial number
+                # Format: "CONFLICT {serial_number} ({type}): {rationale}"
+                # Extract type and rationale from existing comment
+                match = re.match(r'^CONFLICT\s+\S+\s*\(([^)]+)\):\s*(.+)', comment)
+                if match:
+                    conflict_type = match.group(1)
+                    rationale_and_ref = match.group(2)
+                    item['comment'] = f"CONFLICT {serial_number} ({conflict_type}): {rationale_and_ref}"
+                else:
+                    # Fallback: just prepend serial number
+                    item['comment'] = f"CONFLICT {serial_number}: {comment.replace('CONFLICT ', '').replace('CONFLICT', '')}"
+                item['serial_number'] = serial_number
+                logger.debug(f"Assigned serial number {serial_number} to conflict with comment: {normalized_comment[:100]}...")
+            else:
+                # Duplicate comment - use existing serial number
+                existing_serial = seen_comments[normalized_comment]
+                match = re.match(r'^CONFLICT\s+\S+\s*\(([^)]+)\):\s*(.+)', comment)
+                if match:
+                    conflict_type = match.group(1)
+                    rationale_and_ref = match.group(2)
+                    item['comment'] = f"CONFLICT {existing_serial} ({conflict_type}): {rationale_and_ref}"
+                else:
+                    item['comment'] = f"CONFLICT {existing_serial}: {comment.replace('CONFLICT ', '').replace('CONFLICT', '')}"
+                item['serial_number'] = existing_serial
+                logger.info(f"DUPLICATE_COMMENT: Found duplicate comment content, reusing serial number {existing_serial}")
+        
+        logger.info(f"REDLINE_SERIAL: Assigned {serial_number} unique serial numbers to {len(redline_items)} conflicts (based on comment content deduplication)")
+        
         if not redline_items:
             # Cleanup reference documents when no conflicts detected
             cleanup_result = None
@@ -1225,19 +1274,27 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         unmatched_conflicts = all_conflicts.copy()
         
         # Track already redlined paragraphs to prevent duplicates
-        # Key: paragraph index, Value: list of conflict IDs that redlined it
+        # Key: paragraph index, Value: set of normalized comment contents that redlined it
         already_redlined_paragraphs = {}
         already_redlined_tables = {}
         
-        # Get base conflict ID for deduplication (use clarification_id or first 100 chars as hash)
-        def get_base_conflict_id(redline_item):
-            """Get a unique identifier for the base conflict."""
-            conflict_id = redline_item.get('clarification_id') or redline_item.get('id')
-            if conflict_id and conflict_id != 'Unknown' and conflict_id != 'N/A':
-                return conflict_id
-            # Fallback: use first 50 chars of original text as hash
-            original_text = redline_item.get('text', '')[:50]
-            return f"hash_{hash(original_text)}"
+        # Track seen comments by normalized content to prevent duplicates
+        seen_comments_in_doc = set()  # Set of normalized comment contents already added to document
+        
+        def normalize_comment_content(comment: str) -> str:
+            """Normalize comment content for duplicate detection."""
+            if not comment:
+                return ""
+            # Remove serial numbers and extract core content
+            # Pattern: "CONFLICT {number} ({type}): {rationale}"
+            normalized = re.sub(r'^CONFLICT\s+\d+\s*\(', 'CONFLICT (', comment)
+            normalized = normalized.strip()
+            return normalized
+        
+        def get_comment_signature(redline_item):
+            """Get normalized comment content for duplicate detection."""
+            comment = redline_item.get('comment', '').strip()
+            return normalize_comment_content(comment)
         
         # TIER 0: Ultra-aggressive matching for difficult cases
         remaining_conflicts = []
@@ -1248,59 +1305,78 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             if not vendor_conflict_text:
                 continue
                 
-            # Get base conflict ID for deduplication
-            base_conflict_id = get_base_conflict_id(redline_item)
-            
             # Enhanced logging: Track each conflict attempt
             conflict_id = redline_item.get('id', 'Unknown')
+            serial_num = redline_item.get('serial_number', 'N/A')
             source_doc = redline_item.get('source_doc', 'Unknown')
-            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+            logger.info(f"CONFLICT_ATTEMPT: Serial={serial_num}, ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
                 
             found_match = _tier0_ultra_aggressive_matching(doc, vendor_conflict_text, redline_item)
             
             if found_match:
                 para_idx = found_match['para_idx']
-                # Check if this paragraph was already redlined by the same base conflict
-                # Allow different conflicts (different base_conflict_id) in the same paragraph
+                comment_signature = get_comment_signature(redline_item)
+                
+                # Check if this comment content was already added to the document
+                if comment_signature in seen_comments_in_doc:
+                    logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
+                    remaining_conflicts.append(redline_item)  # Try next tier
+                    continue
+                
+                # Check if this paragraph was already redlined by the same comment content
                 if para_idx in already_redlined_paragraphs:
-                    if base_conflict_id in already_redlined_paragraphs[para_idx]:
-                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                    if comment_signature in already_redlined_paragraphs[para_idx]:
+                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined with same comment content")
                         remaining_conflicts.append(redline_item)  # Try next tier
                         continue
                     else:
                         # Different conflict - allow it in the same paragraph
-                        already_redlined_paragraphs[para_idx].append(base_conflict_id)
-                        logger.info(f"CONFLICT_MULTIPLE: Adding conflict {base_conflict_id} to paragraph {para_idx} (already has {len(already_redlined_paragraphs[para_idx])-1} other conflict(s))")
+                        already_redlined_paragraphs[para_idx].add(comment_signature)
+                        logger.info(f"CONFLICT_MULTIPLE: Adding conflict to paragraph {para_idx} (already has {len(already_redlined_paragraphs[para_idx])-1} other conflict(s))")
                 else:
-                    already_redlined_paragraphs[para_idx] = [base_conflict_id]
+                    already_redlined_paragraphs[para_idx] = {comment_signature}
+                
+                # Mark this comment as seen
+                seen_comments_in_doc.add(comment_signature)
                 
                 matches_found += 1
                 if para_idx not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(para_idx)
-                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
+                logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
             else:
                 # Try table matching if paragraph matching failed
                 table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
                 if table_match:
                     table_idx = table_match['table_idx']
-                    # Check if this table was already redlined
+                    comment_signature = get_comment_signature(redline_item)
+                    
+                    # Check if this comment content was already added to the document
+                    if comment_signature in seen_comments_in_doc:
+                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
+                        remaining_conflicts.append(redline_item)
+                        continue
+                    
+                    # Check if this table was already redlined with the same comment content
                     if table_idx in already_redlined_tables:
-                        if base_conflict_id in already_redlined_tables[table_idx]:
-                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                        if comment_signature in already_redlined_tables[table_idx]:
+                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined with same comment content")
                             remaining_conflicts.append(redline_item)
                             continue
                         else:
-                            already_redlined_tables[table_idx].append(base_conflict_id)
+                            already_redlined_tables[table_idx].add(comment_signature)
                     else:
-                        already_redlined_tables[table_idx] = [base_conflict_id]
+                        already_redlined_tables[table_idx] = {comment_signature}
+                    
+                    # Mark this comment as seen
+                    seen_comments_in_doc.add(comment_signature)
                     
                     matches_found += 1
                     if table_idx not in tables_with_redlines:
                         tables_with_redlines.append(table_idx)
-                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                    logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Table={table_idx}")
                 else:
                     remaining_conflicts.append(redline_item)
-                    logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                    logger.info(f"CONFLICT_NO_MATCH: Serial={serial_num}, ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # TIER 1: Standard exact matching (process remaining conflicts)
         logger.info(f"APPLY_TIER1: Matches: {matches_found}, Remaining: {len(remaining_conflicts)}")
@@ -1317,71 +1393,105 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
 
             # Enhanced logging: Track each conflict attempt
             conflict_id = redline_item.get('id', 'Unknown')
+            serial_num = redline_item.get('serial_number', 'N/A')
             source_doc = redline_item.get('source_doc', 'Unknown')
-            logger.info(f"CONFLICT_ATTEMPT: ID={conflict_id}, BaseID={base_conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
+            logger.info(f"CONFLICT_ATTEMPT: Serial={serial_num}, ID={conflict_id}, Source={source_doc}, Text='{vendor_conflict_text[:100]}...'")
                 
             found_match = _tier1_exact_matching(doc, vendor_conflict_text, redline_item)
             
             if found_match:
                 para_idx = found_match['para_idx']
-                # Check if already redlined
+                comment_signature = get_comment_signature(redline_item)
+                
+                # Check if this comment content was already added to the document
+                if comment_signature in seen_comments_in_doc:
+                    logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
+                    remaining_conflicts.append(redline_item)
+                    continue
+                
+                # Check if already redlined with same comment content
                 if para_idx in already_redlined_paragraphs:
-                    if base_conflict_id in already_redlined_paragraphs[para_idx]:
-                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                    if comment_signature in already_redlined_paragraphs[para_idx]:
+                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined with same comment content")
                         remaining_conflicts.append(redline_item)
                         continue
                     else:
-                        already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                        already_redlined_paragraphs[para_idx].add(comment_signature)
                 else:
-                    already_redlined_paragraphs[para_idx] = [base_conflict_id]
+                    already_redlined_paragraphs[para_idx] = {comment_signature}
+                
+                # Mark this comment as seen
+                seen_comments_in_doc.add(comment_signature)
 
                 matches_found += 1
                 if para_idx not in paragraphs_with_redlines:
                     paragraphs_with_redlines.append(para_idx)
-                logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
+                logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
             else:
                 # Try semantic similarity matching before giving up
                 semantic_result = _tier1_5_semantic_matching(doc, vendor_conflict_text, redline_item)
                 if semantic_result:
                     para_idx = semantic_result['para_idx']
-                    # Check if already redlined
+                    comment_signature = get_comment_signature(redline_item)
+                    
+                    # Check if this comment content was already added to the document
+                    if comment_signature in seen_comments_in_doc:
+                        logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
+                        remaining_conflicts.append(redline_item)
+                        continue
+                    
+                    # Check if already redlined with same comment content
                     if para_idx in already_redlined_paragraphs:
-                        if base_conflict_id in already_redlined_paragraphs[para_idx]:
-                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined for base conflict {base_conflict_id}")
+                        if comment_signature in already_redlined_paragraphs[para_idx]:
+                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Paragraph {para_idx} already redlined with same comment content")
                             remaining_conflicts.append(redline_item)
                             continue
                         else:
-                            already_redlined_paragraphs[para_idx].append(base_conflict_id)
+                            already_redlined_paragraphs[para_idx].add(comment_signature)
                     else:
-                        already_redlined_paragraphs[para_idx] = [base_conflict_id]
+                        already_redlined_paragraphs[para_idx] = {comment_signature}
+                    
+                    # Mark this comment as seen
+                    seen_comments_in_doc.add(comment_signature)
 
                     matches_found += 1
                     if para_idx not in paragraphs_with_redlines:
                         paragraphs_with_redlines.append(para_idx)
-                    logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
+                    logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Paragraph={para_idx}, Page≈{para_idx // 20}")
                 else:
                     # Try table matching if paragraph matching failed
                     table_match = _tier0_table_matching(doc, vendor_conflict_text, redline_item)
                     if table_match:
                         table_idx = table_match['table_idx']
-                        # Check if this table was already redlined
+                        comment_signature = get_comment_signature(redline_item)
+                        
+                        # Check if this comment content was already added to the document
+                        if comment_signature in seen_comments_in_doc:
+                            logger.info(f"CONFLICT_SKIP_DUPLICATE: Comment content already added to document. Skipping duplicate.")
+                            remaining_conflicts.append(redline_item)
+                            continue
+                        
+                        # Check if this table was already redlined with same comment content
                         if table_idx in already_redlined_tables:
-                            if base_conflict_id in already_redlined_tables[table_idx]:
-                                logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined for base conflict {base_conflict_id}")
+                            if comment_signature in already_redlined_tables[table_idx]:
+                                logger.info(f"CONFLICT_SKIP_DUPLICATE: Table {table_idx} already redlined with same comment content")
                                 remaining_conflicts.append(redline_item)
                                 continue
                             else:
-                                already_redlined_tables[table_idx].append(base_conflict_id)
+                                already_redlined_tables[table_idx].add(comment_signature)
                         else:
-                            already_redlined_tables[table_idx] = [base_conflict_id]
+                            already_redlined_tables[table_idx] = {comment_signature}
+                        
+                        # Mark this comment as seen
+                        seen_comments_in_doc.add(comment_signature)
 
                         matches_found += 1
                         if table_idx not in tables_with_redlines:
                             tables_with_redlines.append(table_idx)
-                        logger.info(f"CONFLICT_MATCHED: ID={conflict_id}, BaseID={base_conflict_id}, Table={table_idx}")
+                        logger.info(f"CONFLICT_MATCHED: Serial={serial_num}, ID={conflict_id}, Table={table_idx}")
                     else:
                         remaining_conflicts.append(redline_item)
-                        logger.info(f"CONFLICT_NO_MATCH: ID={conflict_id}, BaseID={base_conflict_id}, Text='{vendor_conflict_text[:50]}...'")
+                        logger.info(f"CONFLICT_NO_MATCH: Serial={serial_num}, ID={conflict_id}, Text='{vendor_conflict_text[:50]}...'")
         
         # Early exit if all conflicts matched
         if not remaining_conflicts:
@@ -1714,9 +1824,11 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         matched = False
         
         # Check if ultra-normalized search text is in ultra-normalized paragraph
+        # CRITICAL: Only pass the actual conflict text, not the entire paragraph
         if ultra_normalized_search in ultra_normalized_para:
             logger.info(f"TIER0_MATCH: Found ultra-normalized match in paragraph {para_idx}, page≈{para_idx // 20}")
-            _apply_redline_to_paragraph(paragraph, para_text, redline_item)
+            # Use the original vendor conflict text, not the entire paragraph
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
             all_matches.append({'para_idx': para_idx, 'matched_text': 'ultra_normalized_match'})
             matched = True
         
@@ -1730,7 +1842,12 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
                 # Check if search text matches this sentence
                 if ultra_normalized_search in ultra_normalized_sentence:
                     logger.info(f"TIER0_SENTENCE_MATCH: Found sentence-level match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
-                    _apply_redline_to_paragraph(paragraph, sentence, redline_item)
+                    # Try to find the actual conflict text within the sentence, fallback to sentence if needed
+                    if vendor_conflict_text.lower() in sentence.lower():
+                        _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
+                    else:
+                        # Use sentence as fallback, but _apply_redline_to_paragraph will try to find the conflict text
+                        _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'sentence_match'})
                     matched = True
                     break
@@ -1738,7 +1855,8 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
                 # Try word sequence matching within sentences
                 if len(search_words) >= 3 and find_word_sequence_match(search_words, sentence_words):
                     logger.info(f"TIER0_SENTENCE_WORDS: Found sentence word sequence match in paragraph {para_idx}, sentence {sentence_idx}, page≈{para_idx // 20}")
-                    _apply_redline_to_paragraph(paragraph, sentence, redline_item)
+                    # Use the original vendor conflict text, not the entire sentence
+                    _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
                     all_matches.append({'para_idx': para_idx, 'matched_text': 'sentence_word_sequence'})
                     matched = True
                     break
@@ -1746,7 +1864,8 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
         # Try word sequence matching at paragraph level
         if not matched and len(search_words) >= 3 and find_word_sequence_match(search_words, para_words):
             logger.info(f"TIER0_WORD_SEQUENCE: Found word sequence match in paragraph {para_idx}, page≈{para_idx // 20}")
-            _apply_redline_to_paragraph(paragraph, para_text, redline_item)
+            # Use the original vendor conflict text, not the entire paragraph
+            _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
             all_matches.append({'para_idx': para_idx, 'matched_text': 'word_sequence_match'})
             matched = True
         
@@ -1755,7 +1874,8 @@ def _tier0_ultra_aggressive_matching(doc, vendor_conflict_text: str, redline_ite
             word_matches = sum(1 for word in search_words if word.lower() in ultra_normalized_para)
             if word_matches / len(search_words) >= 0.7:
                 logger.info(f"TIER0_WORD_PARTIAL: Found {word_matches}/{len(search_words)} word match in paragraph {para_idx}")
-                _apply_redline_to_paragraph(paragraph, para_text, redline_item)
+                # Use the original vendor conflict text, not the entire paragraph
+                _apply_redline_to_paragraph(paragraph, vendor_conflict_text, redline_item)
                 all_matches.append({'para_idx': para_idx, 'matched_text': 'word_partial_match'})
                 matched = True
     
@@ -2376,10 +2496,24 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
     Apply redline formatting to specific text within a paragraph.
     Preserves existing formatting and allows multiple conflicts in the same paragraph.
     Only redlines the specific conflict text, not the whole paragraph.
+    Prevents duplicate comments on the same text.
     """
     
     try:
         paragraph_text = paragraph.text
+        
+        # CRITICAL: If conflict_text is the entire paragraph, try to find the actual conflict within it
+        # This prevents Tier0 from highlighting entire paragraphs
+        if conflict_text.strip() == paragraph_text.strip() and len(paragraph_text) > 100:
+            logger.warning(f"REDLINE_PREVENT_WHOLE_PARAGRAPH: Conflict text matches entire paragraph (length: {len(paragraph_text)}). Attempting to find specific conflict text.")
+            # Try to extract a meaningful portion from the conflict item
+            original_conflict = redline_item.get('text', '').strip()
+            if original_conflict and len(original_conflict) < len(paragraph_text):
+                conflict_text = original_conflict
+                logger.info(f"REDLINE_USING_ORIGINAL: Using original conflict text (length: {len(original_conflict)}) instead of entire paragraph")
+            else:
+                logger.warning(f"REDLINE_SKIP: Cannot find specific conflict text in paragraph. Skipping redline to avoid highlighting entire paragraph.")
+                return
         
         # Try multiple approaches to find the conflict text
         start_pos = -1
@@ -2430,8 +2564,25 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
         
         end_pos = start_pos + len(actual_conflict_text)
         
-        # Collect all existing redlined ranges to preserve them
-        existing_redlined_ranges = []
+        # Check if this exact text range is already redlined with the same comment content
+        # This prevents duplicate comments on the same text
+        comment = redline_item.get('comment', '').strip()
+        
+        # Normalize comment content for duplicate detection
+        def normalize_comment_for_dup_check(comment_text: str) -> str:
+            """Normalize comment content for duplicate detection."""
+            if not comment_text:
+                return ""
+            # Remove serial numbers and extract core content
+            normalized = re.sub(r'^CONFLICT\s+\d+\s*\(', 'CONFLICT (', comment_text)
+            normalized = normalized.strip()
+            return normalized
+        
+        normalized_comment = normalize_comment_for_dup_check(comment)
+        
+        # Collect existing redlined ranges
+        existing_redlined_ranges = []  # List of (start, end) tuples
+        
         current_pos = 0
         for run in paragraph.runs:
             run_text = run.text
@@ -2445,28 +2596,49 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             
             current_pos = run_end
         
-        # Check for overlap and log if needed
+        # Check if this exact text range is already redlined
+        # We'll check for duplicate comments separately when adding the comment
         for red_start, red_end in existing_redlined_ranges:
-            if not (end_pos <= red_start or start_pos >= red_end):
-                logger.info(f"REDLINE_OVERLAP: Conflict at {start_pos}-{end_pos} overlaps with existing redline at {red_start}-{red_end}")
+            if red_start == start_pos and red_end == end_pos:
+                logger.info(f"REDLINE_DUPLICATE_SKIP: Exact text range {start_pos}-{end_pos} already redlined. Will check for duplicate comment when adding.")
+                # Don't return here - we still want to add the comment if it's different
+                break
         
         # Add new conflict range
         all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
         
-        # Merge overlapping ranges
+        # Only merge ranges that actually overlap (not just adjacent)
+        # This prevents merging separate conflicts that are close together
         if all_redlined_ranges:
             all_redlined_ranges.sort(key=lambda x: x[0])
-            merged_ranges = [all_redlined_ranges[0]]
-            for current_start, current_end in all_redlined_ranges[1:]:
-                last_start, last_end = merged_ranges[-1]
-                if current_start <= last_end:
-                    # Overlapping - merge
-                    merged_ranges[-1] = (last_start, max(last_end, current_end))
-                else:
-                    # Non-overlapping - add new range
+            merged_ranges = []
+            
+            for current_start, current_end in all_redlined_ranges:
+                merged = False
+                for i, (merged_start, merged_end) in enumerate(merged_ranges):
+                    # Only merge if ranges actually overlap (not just adjacent)
+                    if current_start < merged_end and current_end > merged_start:
+                        # Overlapping - merge the range
+                        merged_ranges[i] = (min(merged_start, current_start), max(merged_end, current_end))
+                        merged = True
+                        break
+                
+                if not merged:
+                    # Non-overlapping - add as new range
                     merged_ranges.append((current_start, current_end))
         else:
             merged_ranges = [(start_pos, end_pos)]
+        
+        # Track normalized comments already added to prevent duplicates
+        # Use a module-level or function-level set to track comments across the document
+        if not hasattr(_apply_redline_to_paragraph, '_seen_comments'):
+            _apply_redline_to_paragraph._seen_comments = set()
+        
+        # Check if this normalized comment was already added
+        if normalized_comment and normalized_comment in _apply_redline_to_paragraph._seen_comments:
+            logger.info(f"REDLINE_COMMENT_DUPLICATE: Comment content already added to document. Skipping duplicate comment.")
+            # Still highlight the text, but don't add duplicate comment
+            comment = ""
         
         # Rebuild paragraph preserving existing redlines and adding new conflict
         # Clear all runs
@@ -2489,13 +2661,17 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             conflict_run.font.color.rgb = RGBColor(255, 0, 0)
             conflict_run.font.strike = True
             
-            # Add comment only if this range includes our new conflict
-            if start_pos >= red_start and end_pos <= red_end:
-                comment = redline_item.get('comment', '')
-                if comment:
+            # Add comment only if this range is exactly our new conflict's range and comment not duplicate
+            if red_start == start_pos and red_end == end_pos and comment and normalized_comment:
+                # Check if this normalized comment was already added
+                if normalized_comment not in _apply_redline_to_paragraph._seen_comments:
                     author = "One L"
                     initials = "1L"
                     conflict_run.add_comment(comment, author=author, initials=initials)
+                    _apply_redline_to_paragraph._seen_comments.add(normalized_comment)
+                    logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos}")
+                else:
+                    logger.info(f"REDLINE_COMMENT_SKIP: Comment content already exists in document. Skipping duplicate.")
             
             current_pos = red_end
         
@@ -2585,45 +2761,70 @@ def _apply_redline_to_table_cell(cell, cell_text: str, redline_item: Dict[str, s
                 
                 current_pos = run_end
             
-            # Add new conflict range and merge overlapping ranges
-            all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
-            if all_redlined_ranges:
-                all_redlined_ranges.sort(key=lambda x: x[0])
-                merged_ranges = [all_redlined_ranges[0]]
-                for current_start, current_end in all_redlined_ranges[1:]:
-                    last_start, last_end = merged_ranges[-1]
-                    if current_start <= last_end:
-                        merged_ranges[-1] = (last_start, max(last_end, current_end))
-                    else:
-                        merged_ranges.append((current_start, current_end))
+            # Check if this exact text range is already redlined
+            for red_start, red_end in existing_redlined_ranges:
+                if red_start == start_pos and red_end == end_pos:
+                    logger.info(f"REDLINE_DUPLICATE_SKIP: Exact text range {start_pos}-{end_pos} already redlined in table cell. Skipping duplicate.")
+                    break
             else:
-                merged_ranges = [(start_pos, end_pos)]
-            
-            # Rebuild paragraph preserving existing redlines
-            for run in paragraph.runs:
-                run.clear()
-            
-            current_pos = 0
-            for red_start, red_end in merged_ranges:
-                # Add text before this redlined range
-                if red_start > current_pos:
-                    before_text = para_text[current_pos:red_start]
-                    if before_text:
-                        paragraph.add_run(before_text)
+                # Add new conflict range - only merge ranges that actually overlap (not just adjacent)
+                all_redlined_ranges = existing_redlined_ranges + [(start_pos, end_pos)]
+                if all_redlined_ranges:
+                    all_redlined_ranges.sort(key=lambda x: x[0])
+                    merged_ranges = []
+                    for current_start, current_end in all_redlined_ranges:
+                        merged = False
+                        for i, (merged_start, merged_end) in enumerate(merged_ranges):
+                            # Only merge if ranges actually overlap (not just adjacent)
+                            if current_start < merged_end and current_end > merged_start:
+                                # Overlapping - merge
+                                merged_ranges[i] = (min(merged_start, current_start), max(merged_end, current_end))
+                                merged = True
+                                break
+                        
+                        if not merged:
+                            # Non-overlapping - add as new range
+                            merged_ranges.append((current_start, current_end))
+                else:
+                    merged_ranges = [(start_pos, end_pos)]
                 
-                # Add redlined text
-                redlined_text = para_text[red_start:red_end]
-                conflict_run = paragraph.add_run(redlined_text)
-                conflict_run.font.color.rgb = RGBColor(255, 0, 0)
-                conflict_run.font.strike = True
+                # Rebuild paragraph preserving existing redlines
+                for run in paragraph.runs:
+                    run.clear()
                 
-                # Add comment only if this range includes our new conflict
-                if start_pos >= red_start and end_pos <= red_end:
-                    comment = redline_item.get('comment', '')
-                    if comment:
-                        author = "One L"
-                        initials = "1L"
-                        conflict_run.add_comment(comment, author=author, initials=initials)
+                current_pos = 0
+                for red_start, red_end in merged_ranges:
+                    # Add text before this redlined range
+                    if red_start > current_pos:
+                        before_text = para_text[current_pos:red_start]
+                        if before_text:
+                            paragraph.add_run(before_text)
+                    
+                    # Add redlined text
+                    redlined_text = para_text[red_start:red_end]
+                    conflict_run = paragraph.add_run(redlined_text)
+                    conflict_run.font.color.rgb = RGBColor(255, 0, 0)
+                    conflict_run.font.strike = True
+                    
+                    # Add comment only if this range is exactly our new conflict (prevents duplicates)
+                    if red_start == start_pos and red_end == end_pos:
+                        comment = redline_item.get('comment', '')
+                        if comment:
+                            author = "One L"
+                            initials = "1L"
+                            conflict_run.add_comment(comment, author=author, initials=initials)
+                            logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos} in table cell")
+                    
+                    current_pos = red_end
+                
+                # Add remaining text after last redlined range
+                if current_pos < len(para_text):
+                    after_text = para_text[current_pos:]
+                    if after_text:
+                        paragraph.add_run(after_text)
+                
+                logger.info(f"REDLINE_APPLIED: Successfully redlined text '{actual_conflict_text[:50]}...' in table cell")
+                break  # Only redline the first matching paragraph in the cell
                 
                 current_pos = red_end
             
