@@ -113,8 +113,15 @@ def lambda_handler(event, context):
                     for result_idx, result in enumerate(results[:10]):  # Limit to first 10 results per query to reduce token usage
                         kb_context += f"\n  Result {result_idx + 1}:\n"
                         if isinstance(result, dict):
-                            kb_context += f"    Document: {result.get('document', {}).get('title', 'Unknown')}\n"
-                            kb_context += f"    Content: {result.get('content', {}).get('text', '')[:500]}...\n"
+                            # Extract document name from 'source' field (extracted by _extract_source_from_result)
+                            document_name = result.get('source', 'Unknown')
+                            # Extract content from 'text' field
+                            content_text = result.get('text', '')
+                            kb_context += f"    Document: {document_name}\n"
+                            if content_text:
+                                kb_context += f"    Content: {content_text[:500]}...\n"
+                            else:
+                                kb_context += f"    Content: (empty)\n"
         
         # Prepare chunk context - always include if chunk_num/total_chunks provided
         # For single documents: chunk_num=0, total_chunks=1
