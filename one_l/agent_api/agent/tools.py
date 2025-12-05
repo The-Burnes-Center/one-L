@@ -736,8 +736,9 @@ def redline_document(
             
             # Normalize comment content for duplicate detection (remove serial numbers if present)
             # Extract the core content: everything after "CONFLICT" but before any existing serial number
+            # Preserve the Reference section for normalization
             normalized_comment = comment
-            # Remove any existing conflict ID pattern to get core content
+            # Remove any existing conflict ID pattern to get core content (but keep Reference section)
             normalized_comment = re.sub(r'^CONFLICT\s+\S+\s*\(', 'CONFLICT (', normalized_comment)
             normalized_comment = normalized_comment.strip()
             
@@ -746,25 +747,25 @@ def redline_document(
                 serial_number += 1
                 seen_comments[normalized_comment] = serial_number
                 # Update comment with serial number
-                # Format: "CONFLICT {serial_number} ({type}): {rationale}"
-                # Extract type and rationale from existing comment
-                match = re.match(r'^CONFLICT\s+\S+\s*\(([^)]+)\):\s*(.+)', comment)
+                # Format: "CONFLICT {serial_number} ({type}): {rationale}\n\nReference: {source_doc} ({clause_ref})"
+                # Extract type and everything after (including rationale and Reference section)
+                match = re.match(r'^CONFLICT\s+\S+\s*\(([^)]+)\):\s*(.+)', comment, re.DOTALL)
                 if match:
                     conflict_type = match.group(1)
-                    rationale_and_ref = match.group(2)
+                    rationale_and_ref = match.group(2)  # This includes rationale + Reference section
                     item['comment'] = f"CONFLICT {serial_number} ({conflict_type}): {rationale_and_ref}"
                 else:
-                    # Fallback: just prepend serial number
+                    # Fallback: just prepend serial number, preserve entire comment including Reference
                     item['comment'] = f"CONFLICT {serial_number}: {comment.replace('CONFLICT ', '').replace('CONFLICT', '')}"
                 item['serial_number'] = serial_number
                 logger.debug(f"Assigned serial number {serial_number} to conflict with comment: {normalized_comment[:100]}...")
             else:
                 # Duplicate comment - use existing serial number
                 existing_serial = seen_comments[normalized_comment]
-                match = re.match(r'^CONFLICT\s+\S+\s*\(([^)]+)\):\s*(.+)', comment)
+                match = re.match(r'^CONFLICT\s+\S+\s*\(([^)]+)\):\s*(.+)', comment, re.DOTALL)
                 if match:
                     conflict_type = match.group(1)
-                    rationale_and_ref = match.group(2)
+                    rationale_and_ref = match.group(2)  # This includes rationale + Reference section
                     item['comment'] = f"CONFLICT {existing_serial} ({conflict_type}): {rationale_and_ref}"
                 else:
                     item['comment'] = f"CONFLICT {existing_serial}: {comment.replace('CONFLICT ', '').replace('CONFLICT', '')}"
@@ -2657,21 +2658,27 @@ def _apply_redline_to_paragraph(paragraph, conflict_text: str, redline_item: Dic
             
             # Add redlined text
             redlined_text = paragraph_text[red_start:red_end]
-            conflict_run = paragraph.add_run(redlined_text)
-            conflict_run.font.color.rgb = RGBColor(255, 0, 0)
-            conflict_run.font.strike = True
-            
-            # Add comment only if this range is exactly our new conflict's range and comment not duplicate
-            if red_start == start_pos and red_end == end_pos and comment and normalized_comment:
-                # Check if this normalized comment was already added
-                if normalized_comment not in _apply_redline_to_paragraph._seen_comments:
-                    author = "One L"
-                    initials = "1L"
-                    conflict_run.add_comment(comment, author=author, initials=initials)
-                    _apply_redline_to_paragraph._seen_comments.add(normalized_comment)
-                    logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos}")
-                else:
-                    logger.info(f"REDLINE_COMMENT_SKIP: Comment content already exists in document. Skipping duplicate.")
+            # Only create run if there's actual text (prevents empty runs)
+            if redlined_text.strip():
+                conflict_run = paragraph.add_run(redlined_text)
+                conflict_run.font.color.rgb = RGBColor(255, 0, 0)
+                conflict_run.font.strike = True
+                
+                # Add comment only if this range is exactly our new conflict's range and comment not duplicate
+                # CRITICAL: Only add comment to runs with actual text content
+                if red_start == start_pos and red_end == end_pos and comment and normalized_comment and redlined_text.strip():
+                    # Check if this normalized comment was already added
+                    if normalized_comment not in _apply_redline_to_paragraph._seen_comments:
+                        author = "One L"
+                        initials = "1L"
+                        conflict_run.add_comment(comment, author=author, initials=initials)
+                        _apply_redline_to_paragraph._seen_comments.add(normalized_comment)
+                        logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos} on text: '{redlined_text[:50]}...'")
+                    else:
+                        logger.info(f"REDLINE_COMMENT_SKIP: Comment content already exists in document. Skipping duplicate.")
+            else:
+                # Empty text range - skip adding run and comment
+                logger.warning(f"REDLINE_SKIP_EMPTY: Skipping empty text range at {red_start}-{red_end}")
             
             current_pos = red_end
         
@@ -2802,18 +2809,24 @@ def _apply_redline_to_table_cell(cell, cell_text: str, redline_item: Dict[str, s
                     
                     # Add redlined text
                     redlined_text = para_text[red_start:red_end]
-                    conflict_run = paragraph.add_run(redlined_text)
-                    conflict_run.font.color.rgb = RGBColor(255, 0, 0)
-                    conflict_run.font.strike = True
-                    
-                    # Add comment only if this range is exactly our new conflict (prevents duplicates)
-                    if red_start == start_pos and red_end == end_pos:
-                        comment = redline_item.get('comment', '')
-                        if comment:
-                            author = "One L"
-                            initials = "1L"
-                            conflict_run.add_comment(comment, author=author, initials=initials)
-                            logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos} in table cell")
+                    # Only create run if there's actual text (prevents empty runs)
+                    if redlined_text.strip():
+                        conflict_run = paragraph.add_run(redlined_text)
+                        conflict_run.font.color.rgb = RGBColor(255, 0, 0)
+                        conflict_run.font.strike = True
+                        
+                        # Add comment only if this range is exactly our new conflict (prevents duplicates)
+                        # CRITICAL: Only add comment to runs with actual text content
+                        if red_start == start_pos and red_end == end_pos and redlined_text.strip():
+                            comment = redline_item.get('comment', '')
+                            if comment:
+                                author = "One L"
+                                initials = "1L"
+                                conflict_run.add_comment(comment, author=author, initials=initials)
+                                logger.info(f"REDLINE_COMMENT_ADDED: Added comment for conflict at {start_pos}-{end_pos} in table cell on text: '{redlined_text[:50]}...'")
+                    else:
+                        # Empty text range - skip adding run and comment
+                        logger.warning(f"REDLINE_SKIP_EMPTY: Skipping empty text range at {red_start}-{red_end} in table cell")
                     
                     current_pos = red_end
                 
