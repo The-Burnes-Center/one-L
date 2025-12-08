@@ -1555,8 +1555,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         if not para_text.strip():
             continue
         
-        logger.debug(f"MATCH_CHECK: Paragraph {para_idx}, length={len(para_text)}, preview='{para_text[:150]}...'")
-        
         # TIER 1: Exact match
         if vendor_quote in para_text:
             start_pos = para_text.find(vendor_quote)
@@ -1571,8 +1569,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 2: Quote-normalized match (quotes only, preserve whitespace)
         para_quote_normalized = normalize_quotes(para_text)
-        logger.debug(f"MATCH_TIER2: para_quote_normalized preview='{para_quote_normalized[:150]}...'")
-        logger.debug(f"MATCH_TIER2: Looking for quote_normalized='{quote_normalized[:150]}...'")
         if quote_normalized in para_quote_normalized:
             start_pos = para_quote_normalized.find(quote_normalized)
             logger.info(f"MATCH_FOUND: TIER 2 (quote_normalized) in paragraph {para_idx} at position {start_pos}")
@@ -1587,8 +1583,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 3: Quote + whitespace normalized match
         para_quote_ws_normalized = normalize_whitespace(normalize_quotes(para_text))
-        logger.debug(f"MATCH_TIER3: para_quote_ws_normalized preview='{para_quote_ws_normalized[:150]}...'")
-        logger.debug(f"MATCH_TIER3: Looking for quote_ws_normalized='{quote_ws_normalized[:150]}...'")
         if quote_ws_normalized in para_quote_ws_normalized:
             # Find position in normalized text, then map back
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
@@ -1606,8 +1600,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 4: Fully normalized + case-insensitive match
         para_fully_normalized = normalize_for_matching(para_text).lower()
-        logger.debug(f"MATCH_TIER4: para_fully_normalized preview='{para_fully_normalized[:150]}...'")
-        logger.debug(f"MATCH_TIER4: Looking for fully_normalized.lower()='{fully_normalized.lower()[:150]}...'")
         if fully_normalized.lower() in para_fully_normalized:
             norm_start = para_fully_normalized.find(fully_normalized.lower())
             logger.info(f"MATCH_FOUND: TIER 4 (fully_normalized) in paragraph {para_idx} at normalized position {norm_start}")
@@ -1631,6 +1623,23 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     logger.warning(f"MATCH_FAILED: Checked {len([p for p in doc.paragraphs if p.text.strip()])} non-empty paragraphs")
     logger.warning(f"MATCH_FAILED: quote_normalized='{quote_normalized[:200]}...'")
     logger.warning(f"MATCH_FAILED: fully_normalized='{fully_normalized[:200]}...'")
+    
+    # Try to find partial matches to help diagnose
+    vendor_quote_lower = vendor_quote.lower()
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text
+        if not para_text.strip():
+            continue
+        # Check if any significant portion matches
+        para_lower = para_text.lower()
+        # Look for a 50-character substring match
+        for i in range(len(vendor_quote_lower) - 50):
+            substring = vendor_quote_lower[i:i+50]
+            if substring in para_lower:
+                logger.warning(f"MATCH_PARTIAL: Found 50-char substring match in paragraph {para_idx}: '{substring}'")
+                logger.warning(f"MATCH_PARTIAL: Paragraph {para_idx} text: '{para_text[:300]}...'")
+                break
+    
     # Log a sample paragraph for debugging
     sample_paras = [p.text for p in doc.paragraphs if p.text.strip()][:3]
     for i, para in enumerate(sample_paras):
