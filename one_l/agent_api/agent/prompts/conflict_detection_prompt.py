@@ -30,6 +30,7 @@ Your response must be ONLY a valid JSON object with this structure:
   ]
 }}
 ```
+**IMPORTANT: Use the exact field names as shown above.**
 
 ## CRITICAL: vendor_quote Field Requirements
 The vendor_quote field MUST contain the EXACT text from the vendor document:
@@ -37,7 +38,7 @@ The vendor_quote field MUST contain the EXACT text from the vendor document:
 - Do NOT correct spelling errors (if document says "loss es", write "loss es" not "losses")
 - Do NOT change quote characters (preserve exact quote style: "quote" vs 'quote' vs "quote")
 - Do NOT fix grammar, punctuation, or formatting
-- Do NOT paraphrase or summarize - copy the EXACT verbatim text
+- Do NOT paraphrase or summarize - copy the EXACT text word-for-word
 - Include any unusual spacing, capitalization, or punctuation exactly as written
 - For omissions (missing required provisions), use: "N/A - Missing provision"
 

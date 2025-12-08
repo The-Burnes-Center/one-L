@@ -182,6 +182,8 @@ def lambda_handler(event, context):
             logger.info(f"Pydantic validation successful: {len(validated_output.conflicts)} conflicts")
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e.errors()}")
+            # Log the problematic JSON for debugging
+            logger.error(f"Problematic JSON (first 1000 chars): {response_json[:1000]}")
             raise ValueError(f"Invalid response structure: {e}")
         
         # Update progress
