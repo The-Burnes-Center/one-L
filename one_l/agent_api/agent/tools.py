@@ -1032,8 +1032,10 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                                     if validated_conflict.clause_ref and validated_conflict.clause_ref.strip() and validated_conflict.clause_ref.lower() not in ['n/a', 'na', 'none']:
                                         comment += f" ({validated_conflict.clause_ref.strip()})"
                                 
-                                # Normalize escaped quotes in vendor_quote to match document text
-                                vendor_quote_text = normalize_escaped_quotes(validated_conflict.vendor_quote.strip())
+                                # Normalize vendor_quote to match document text
+                                # Apply all normalizations: escaped quotes, quote types, and whitespace
+                                vendor_quote_text = normalize_for_matching(validated_conflict.vendor_quote.strip())
+                                logger.debug(f"PARSE_VENDOR_QUOTE: Original='{validated_conflict.vendor_quote[:100]}...', Normalized='{vendor_quote_text[:100]}...'")
                                 
                                 redline_items.append({
                                     'text': vendor_quote_text,
@@ -1071,8 +1073,8 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
                                 vendor_quote_clean = vendor_quote_clean[1:-1]
                             
-                            # Normalize escaped quotes to match document text (e.g., \" becomes ")
-                            vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
+                            # Normalize vendor quote to match document text (escaped quotes, quote types, whitespace)
+                            vendor_quote_clean = normalize_for_matching(vendor_quote_clean)
                             
                             # Create redline item using exact vendor quote for matching
                             if vendor_quote_clean.strip():  # Only add if we have actual text
@@ -1172,8 +1174,8 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
                         vendor_quote_clean = vendor_quote_clean[1:-1]
                     
-                    # Normalize escaped quotes to match document text (e.g., \" becomes ")
-                    vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
+                    # Normalize vendor quote to match document text (escaped quotes, quote types, whitespace)
+                    vendor_quote_clean = normalize_for_matching(vendor_quote_clean)
                     
                     # Create redline item using exact vendor quote for matching
                     if vendor_quote_clean.strip():  # Only add if we have actual text
@@ -1409,6 +1411,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             comment = redline_item.get('comment', '')
             
             logger.info(f"SCANNING: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:80]}...'")
+            logger.debug(f"SCANNING_DETAIL: Full vendor_quote length={len(vendor_quote)}, first 200 chars: '{vendor_quote[:200]}'")
             
             # Find match in document using tiered strategy
             match_result = _find_text_match(doc, vendor_quote)
@@ -1523,8 +1526,8 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     
     MATCHING TIERS:
     1. Exact match (original text)
-    2. Normalized quotes match (handle ' vs " variations)
-    3. Normalized whitespace match (handle newline vs space)
+    2. Quote-normalized match (handle ' vs " vs curly quotes)
+    3. Quote + whitespace normalized match (handle quote and whitespace variations)
     4. Fully normalized match (quotes + whitespace + case-insensitive)
     5. Cross-paragraph match (text spans multiple paragraphs)
     
@@ -1537,8 +1540,12 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     """
     # Prepare normalized versions
     quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
-    whitespace_normalized = normalize_whitespace(vendor_quote)
+    quote_ws_normalized = normalize_whitespace(quote_normalized)
     fully_normalized = normalize_for_matching(vendor_quote)
+    
+    logger.debug(f"MATCH_PREP: vendor_quote length={len(vendor_quote)}, quote_normalized length={len(quote_normalized)}, fully_normalized length={len(fully_normalized)}")
+    logger.debug(f"MATCH_PREP: vendor_quote preview='{vendor_quote[:100]}...'")
+    logger.debug(f"MATCH_PREP: fully_normalized preview='{fully_normalized[:100]}...'")
     
     # Search through all paragraphs
     for para_idx, paragraph in enumerate(doc.paragraphs):
@@ -1549,6 +1556,7 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         # TIER 1: Exact match
         if vendor_quote in para_text:
             start_pos = para_text.find(vendor_quote)
+            logger.info(f"MATCH_FOUND: TIER 1 (exact) in paragraph {para_idx} at position {start_pos}")
             return {
                 'type': 'single_para',
                 'para_idx': para_idx,
@@ -1557,10 +1565,11 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 'match_type': 'exact'
             }
         
-        # TIER 2: Quote-normalized match
+        # TIER 2: Quote-normalized match (quotes only, preserve whitespace)
         para_quote_normalized = normalize_quotes(para_text)
         if quote_normalized in para_quote_normalized:
             start_pos = para_quote_normalized.find(quote_normalized)
+            logger.info(f"MATCH_FOUND: TIER 2 (quote_normalized) in paragraph {para_idx} at position {start_pos}")
             # Map back to original positions (approximate - quotes are same length)
             return {
                 'type': 'single_para',
@@ -1570,26 +1579,28 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 'match_type': 'quote_normalized'
             }
         
-        # TIER 3: Whitespace-normalized match
-        para_ws_normalized = normalize_whitespace(para_text)
-        if whitespace_normalized in para_ws_normalized:
+        # TIER 3: Quote + whitespace normalized match
+        para_quote_ws_normalized = normalize_whitespace(normalize_quotes(para_text))
+        if quote_ws_normalized in para_quote_ws_normalized:
             # Find position in normalized text, then map back
-            norm_start = para_ws_normalized.find(whitespace_normalized)
+            norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
+            logger.info(f"MATCH_FOUND: TIER 3 (quote_whitespace_normalized) in paragraph {para_idx} at normalized position {norm_start}")
             # Map normalized position back to original position
             start_pos = _map_normalized_to_original_position(para_text, norm_start)
-            end_pos = _map_normalized_to_original_position(para_text, norm_start + len(whitespace_normalized))
+            end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
             return {
                 'type': 'single_para',
                 'para_idx': para_idx,
                 'start_pos': start_pos,
                 'end_pos': end_pos,
-                'match_type': 'whitespace_normalized'
+                'match_type': 'quote_whitespace_normalized'
             }
         
         # TIER 4: Fully normalized + case-insensitive match
         para_fully_normalized = normalize_for_matching(para_text).lower()
         if fully_normalized.lower() in para_fully_normalized:
             norm_start = para_fully_normalized.find(fully_normalized.lower())
+            logger.info(f"MATCH_FOUND: TIER 4 (fully_normalized) in paragraph {para_idx} at normalized position {norm_start}")
             start_pos = _map_normalized_to_original_position(para_text, norm_start)
             end_pos = _map_normalized_to_original_position(para_text, norm_start + len(fully_normalized))
             return {
@@ -1603,8 +1614,11 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     # TIER 5: Cross-paragraph matching
     cross_match = _find_cross_paragraph_match(doc, vendor_quote, fully_normalized)
     if cross_match:
+        logger.info(f"MATCH_FOUND: TIER 5 (cross_paragraph) across paragraphs {cross_match.get('paragraphs', [])}")
         return cross_match
     
+    logger.warning(f"MATCH_FAILED: Could not find vendor_quote in document. vendor_quote='{vendor_quote[:100]}...'")
+    logger.debug(f"MATCH_FAILED: Checked {len([p for p in doc.paragraphs if p.text.strip()])} non-empty paragraphs")
     return None
 
 
