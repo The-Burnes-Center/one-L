@@ -1032,10 +1032,10 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                                     if validated_conflict.clause_ref and validated_conflict.clause_ref.strip() and validated_conflict.clause_ref.lower() not in ['n/a', 'na', 'none']:
                                         comment += f" ({validated_conflict.clause_ref.strip()})"
                                 
-                                # Normalize vendor_quote to match document text
-                                # Apply all normalizations: escaped quotes, quote types, and whitespace
-                                vendor_quote_text = normalize_for_matching(validated_conflict.vendor_quote.strip())
-                                logger.debug(f"PARSE_VENDOR_QUOTE: Original='{validated_conflict.vendor_quote[:100]}...', Normalized='{vendor_quote_text[:100]}...'")
+                                # Store original vendor_quote (only normalize escaped quotes for JSON parsing)
+                                # Full normalization will happen during matching to preserve original structure
+                                vendor_quote_text = normalize_escaped_quotes(validated_conflict.vendor_quote.strip())
+                                logger.debug(f"PARSE_VENDOR_QUOTE: Original='{validated_conflict.vendor_quote[:100]}...', Stored='{vendor_quote_text[:100]}...'")
                                 
                                 redline_items.append({
                                     'text': vendor_quote_text,
@@ -1073,8 +1073,8 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
                                 vendor_quote_clean = vendor_quote_clean[1:-1]
                             
-                            # Normalize vendor quote to match document text (escaped quotes, quote types, whitespace)
-                            vendor_quote_clean = normalize_for_matching(vendor_quote_clean)
+                            # Only normalize escaped quotes - full normalization happens during matching
+                            vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
                             
                             # Create redline item using exact vendor quote for matching
                             if vendor_quote_clean.strip():  # Only add if we have actual text
@@ -1174,8 +1174,8 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
                         vendor_quote_clean = vendor_quote_clean[1:-1]
                     
-                    # Normalize vendor quote to match document text (escaped quotes, quote types, whitespace)
-                    vendor_quote_clean = normalize_for_matching(vendor_quote_clean)
+                    # Only normalize escaped quotes - full normalization happens during matching
+                    vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
                     
                     # Create redline item using exact vendor quote for matching
                     if vendor_quote_clean.strip():  # Only add if we have actual text
@@ -1539,19 +1539,23 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         Match result dict or None if not found
     """
     # Prepare normalized versions
+    # Note: vendor_quote may already be normalized from parsing, so we normalize again (idempotent)
     quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
     quote_ws_normalized = normalize_whitespace(quote_normalized)
     fully_normalized = normalize_for_matching(vendor_quote)
     
-    logger.debug(f"MATCH_PREP: vendor_quote length={len(vendor_quote)}, quote_normalized length={len(quote_normalized)}, fully_normalized length={len(fully_normalized)}")
-    logger.debug(f"MATCH_PREP: vendor_quote preview='{vendor_quote[:100]}...'")
-    logger.debug(f"MATCH_PREP: fully_normalized preview='{fully_normalized[:100]}...'")
+    logger.info(f"MATCH_PREP: vendor_quote length={len(vendor_quote)}, quote_normalized length={len(quote_normalized)}, fully_normalized length={len(fully_normalized)}")
+    logger.info(f"MATCH_PREP: vendor_quote preview='{vendor_quote[:150]}...'")
+    logger.info(f"MATCH_PREP: quote_normalized preview='{quote_normalized[:150]}...'")
+    logger.info(f"MATCH_PREP: fully_normalized preview='{fully_normalized[:150]}...'")
     
     # Search through all paragraphs
     for para_idx, paragraph in enumerate(doc.paragraphs):
         para_text = paragraph.text
         if not para_text.strip():
             continue
+        
+        logger.debug(f"MATCH_CHECK: Paragraph {para_idx}, length={len(para_text)}, preview='{para_text[:150]}...'")
         
         # TIER 1: Exact match
         if vendor_quote in para_text:
@@ -1567,6 +1571,8 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 2: Quote-normalized match (quotes only, preserve whitespace)
         para_quote_normalized = normalize_quotes(para_text)
+        logger.debug(f"MATCH_TIER2: para_quote_normalized preview='{para_quote_normalized[:150]}...'")
+        logger.debug(f"MATCH_TIER2: Looking for quote_normalized='{quote_normalized[:150]}...'")
         if quote_normalized in para_quote_normalized:
             start_pos = para_quote_normalized.find(quote_normalized)
             logger.info(f"MATCH_FOUND: TIER 2 (quote_normalized) in paragraph {para_idx} at position {start_pos}")
@@ -1581,6 +1587,8 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 3: Quote + whitespace normalized match
         para_quote_ws_normalized = normalize_whitespace(normalize_quotes(para_text))
+        logger.debug(f"MATCH_TIER3: para_quote_ws_normalized preview='{para_quote_ws_normalized[:150]}...'")
+        logger.debug(f"MATCH_TIER3: Looking for quote_ws_normalized='{quote_ws_normalized[:150]}...'")
         if quote_ws_normalized in para_quote_ws_normalized:
             # Find position in normalized text, then map back
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
@@ -1598,6 +1606,8 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 4: Fully normalized + case-insensitive match
         para_fully_normalized = normalize_for_matching(para_text).lower()
+        logger.debug(f"MATCH_TIER4: para_fully_normalized preview='{para_fully_normalized[:150]}...'")
+        logger.debug(f"MATCH_TIER4: Looking for fully_normalized.lower()='{fully_normalized.lower()[:150]}...'")
         if fully_normalized.lower() in para_fully_normalized:
             norm_start = para_fully_normalized.find(fully_normalized.lower())
             logger.info(f"MATCH_FOUND: TIER 4 (fully_normalized) in paragraph {para_idx} at normalized position {norm_start}")
@@ -1617,8 +1627,15 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         logger.info(f"MATCH_FOUND: TIER 5 (cross_paragraph) across paragraphs {cross_match.get('paragraphs', [])}")
         return cross_match
     
-    logger.warning(f"MATCH_FAILED: Could not find vendor_quote in document. vendor_quote='{vendor_quote[:100]}...'")
-    logger.debug(f"MATCH_FAILED: Checked {len([p for p in doc.paragraphs if p.text.strip()])} non-empty paragraphs")
+    logger.warning(f"MATCH_FAILED: Could not find vendor_quote in document. vendor_quote='{vendor_quote[:200]}...'")
+    logger.warning(f"MATCH_FAILED: Checked {len([p for p in doc.paragraphs if p.text.strip()])} non-empty paragraphs")
+    logger.warning(f"MATCH_FAILED: quote_normalized='{quote_normalized[:200]}...'")
+    logger.warning(f"MATCH_FAILED: fully_normalized='{fully_normalized[:200]}...'")
+    # Log a sample paragraph for debugging
+    sample_paras = [p.text for p in doc.paragraphs if p.text.strip()][:3]
+    for i, para in enumerate(sample_paras):
+        logger.warning(f"MATCH_FAILED: Sample paragraph {i} (first 200 chars): '{para[:200]}...'")
+        logger.warning(f"MATCH_FAILED: Sample paragraph {i} normalized: '{normalize_for_matching(para)[:200]}...'")
     return None
 
 
