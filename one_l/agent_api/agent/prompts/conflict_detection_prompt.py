@@ -35,12 +35,17 @@ Your response must be ONLY a valid JSON object with this structure:
 ## CRITICAL: vendor_quote Field Requirements
 The vendor_quote field MUST contain the EXACT text from the vendor document:
 - Copy text CHARACTER-BY-CHARACTER exactly as it appears in the document
+- **CRITICAL: Extract the COMPLETE quote - do NOT truncate or cut off the text mid-sentence**
+- Include the ENTIRE clause, sentence, or provision - copy from the beginning to the end of the relevant text
+- If a clause spans multiple sentences, include ALL sentences until the clause is complete
+- Do NOT stop at arbitrary word limits - include the full text until the clause naturally ends
 - Do NOT correct spelling errors (if document says "loss es", write "loss es" not "losses")
 - Do NOT change quote characters (preserve exact quote style: "quote" vs 'quote' vs "quote")
 - Do NOT fix grammar, punctuation, or formatting
 - Do NOT paraphrase or summarize - copy the EXACT text word-for-word
 - Include any unusual spacing, capitalization, or punctuation exactly as written
 - For omissions (missing required provisions), use: "N/A - Missing provision"
+- **Example of CORRECT extraction**: If the document says "You will indemnify, defend and hold [company name] harmless from and against any Claims or Losses asserted, claimed, assessed or adjudged against any Indemnified Party by any third party", extract the ENTIRE sentence, not just "You will indemnify, defend and hold [company name] harmless from and against any Claims or Losses"
 
 If no conflicts are found: `{{"explanation": "Explanation why no conflicts were found", "conflicts": []}}`
 

@@ -1053,6 +1053,11 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                                 if vendor_quote_before_norm != vendor_quote_text:
                                     logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, normalization changed the text")
                                 
+                                # Validate for truncated quotes
+                                is_truncated = _validate_vendor_quote_completeness(vendor_quote_text, validated_conflict.clarification_id)
+                                if is_truncated:
+                                    logger.warning(f"PARSE_VALIDATION: ID={validated_conflict.clarification_id}, vendor_quote appears to be TRUNCATED/INCOMPLETE. Length={len(vendor_quote_text)}, ends_with='{vendor_quote_text[-30:]}'")
+                                
                                 redline_items.append({
                                     'text': vendor_quote_text,
                                     'comment': comment,
@@ -1268,6 +1273,51 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
     return redline_items
 
 
+def _validate_vendor_quote_completeness(vendor_quote: str, clarification_id: str) -> bool:
+    """
+    Validate if vendor quote appears to be complete or truncated.
+    
+    Checks for signs that the quote was cut off mid-sentence or is incomplete.
+    
+    Args:
+        vendor_quote: The vendor quote text to validate
+        clarification_id: ID of the conflict for logging
+        
+    Returns:
+        True if quote appears truncated, False if complete
+    """
+    if not vendor_quote or len(vendor_quote.strip()) < 10:
+        return True  # Too short to be meaningful
+    
+    stripped = vendor_quote.rstrip()
+    
+    # Check if quote ends with proper punctuation (complete sentence/clause)
+    ends_with_punctuation = stripped.endswith(('.', '!', '?', ';', ':', ')', ']', '}'))
+    
+    # Check if quote ends with common connecting words (likely truncated)
+    common_end_words = ('or', 'and', 'the', 'a', 'an', 'to', 'of', 'in', 'for', 'with', 'from', 'by', 'at', 'on', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can')
+    ends_with_common_word = any(stripped.lower().endswith(f' {word}') or stripped.lower().endswith(f', {word}') or stripped.lower().endswith(f'; {word}') for word in common_end_words)
+    
+    # Check if quote is suspiciously short (less than 100 chars is often incomplete for legal clauses)
+    is_short = len(vendor_quote) < 100
+    
+    # Check if quote ends mid-word or with incomplete phrase
+    ends_mid_phrase = (
+        not ends_with_punctuation and 
+        (ends_with_common_word or is_short)
+    )
+    
+    is_truncated = ends_mid_phrase or (is_short and not ends_with_punctuation)
+    
+    if is_truncated:
+        logger.warning(f"VALIDATE_TRUNCATED: ID={clarification_id}, quote appears truncated. "
+                      f"Length={len(vendor_quote)}, ends_with_punctuation={ends_with_punctuation}, "
+                      f"ends_with_common_word={ends_with_common_word}, is_short={is_short}, "
+                      f"last_30_chars='{vendor_quote[-30:]}'")
+    
+    return is_truncated
+
+
 def normalize_escaped_quotes(text: str) -> str:
     """
     Normalize escaped quotes in vendor_quote to match document text.
@@ -1291,17 +1341,29 @@ def normalize_escaped_quotes(text: str) -> str:
     had_backslashes = '\\' in text
     
     # Replace literal \" with " (backslash followed by quote)
+    # This handles cases like: \"word\" -> "word"
     text = text.replace('\\"', '"')
     # Replace literal \' with ' (backslash followed by single quote)
     text = text.replace("\\'", "'")
-    # Handle unicode escapes
+    # Handle unicode escapes (though these should be handled by JSON parsing)
     text = text.replace('\\u0022', '"')  # Unicode double quote
     text = text.replace('\\u0027', "'")  # Unicode single quote
+    
+    # Also handle cases where backslash appears before curly quotes (shouldn't happen after JSON parsing, but handle it)
+    text = text.replace('\\"', '"')  # Escaped left curly quote
+    text = text.replace('\\"', '"')  # Escaped right curly quote
     
     # Log if normalization changed anything
     if had_backslashes and text != original_text:
         logger.info(f"NORMALIZE_ESCAPED_QUOTES: Changed text. Before (first 100): '{original_text[:100]}...', After (first 100): '{text[:100]}...'")
         logger.info(f"NORMALIZE_ESCAPED_QUOTES: Backslash count before={original_text.count('\\\\')}, after={text.count('\\\\')}")
+        # Show where backslashes were found (first few occurrences)
+        backslash_count = 0
+        for i, char in enumerate(original_text):
+            if char == '\\' and i < len(original_text) - 1 and backslash_count < 3:
+                next_char = original_text[i+1]
+                logger.debug(f"NORMALIZE_ESCAPED_QUOTES: Found backslash at pos {i}, followed by '{next_char}' (U+{ord(next_char):04X})")
+                backslash_count += 1
     
     return text
 
@@ -1658,7 +1720,19 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
             }
         
         # TIER 3: Quote + whitespace normalized match
-        para_quote_ws_normalized = normalize_whitespace(normalize_quotes(para_text))
+        para_quotes_only = normalize_quotes(para_text)
+        para_quote_ws_normalized = normalize_whitespace(para_quotes_only)
+        # Log normalization for debugging (only for relevant paragraphs to avoid spam)
+        if quote_ws_normalized[:50].lower() in para_quote_ws_normalized.lower():
+            had_curly_before = '"' in para_text or '"' in para_text
+            has_curly_after = '"' in para_quotes_only or '"' in para_quotes_only
+            if had_curly_before:
+                logger.info(f"MATCH_TIER3_NORM: para_idx={para_idx}, had_curly_before={had_curly_before}, has_curly_after={has_curly_after}")
+                # Show actual quote characters
+                for i, char in enumerate(para_text):
+                    if ord(char) in [0x201C, 0x201D, 0x22]:
+                        logger.info(f"MATCH_TIER3_NORM: para_idx={para_idx}, pos {i}: U+{ord(char):04X} = '{char}'")
+                        break
         if quote_ws_normalized in para_quote_ws_normalized:
             # Find position in normalized text, then map back
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
@@ -1696,10 +1770,18 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 'match_type': 'fully_normalized'
             }
     
-    # TIER 5: Cross-paragraph matching
+    # TIER 5: Partial/truncated quote matching
+    # If vendor quote appears to be truncated (ends mid-sentence or is suspiciously short),
+    # try to match it as a prefix of document text
+    partial_match = _find_partial_match(doc, vendor_quote, quote_ws_normalized, fully_normalized)
+    if partial_match:
+        logger.info(f"MATCH_FOUND: TIER 5 (partial/truncated) in paragraph {partial_match.get('para_idx')}")
+        return partial_match
+    
+    # TIER 6: Cross-paragraph matching
     cross_match = _find_cross_paragraph_match(doc, vendor_quote, fully_normalized)
     if cross_match:
-        logger.info(f"MATCH_FOUND: TIER 5 (cross_paragraph) across paragraphs {cross_match.get('paragraphs', [])}")
+        logger.info(f"MATCH_FOUND: TIER 6 (cross_paragraph) across paragraphs {cross_match.get('paragraphs', [])}")
         return cross_match
     
     logger.warning(f"MATCH_FAILED: Could not find vendor_quote in document. vendor_quote='{vendor_quote[:200]}...'")
@@ -1769,6 +1851,94 @@ def _map_normalized_to_original_position(original_text: str, normalized_pos: int
             return i + 1
     
     return len(original_text)
+
+
+def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_normalized: str) -> Optional[Dict[str, Any]]:
+    """
+    Find vendor_quote that appears to be truncated/incomplete.
+    
+    If vendor quote is a prefix of document text (after normalization), treat it as a match.
+    This handles cases where the LLM extracted an incomplete quote.
+    
+    Args:
+        doc: python-docx Document object
+        vendor_quote: Original vendor quote text
+        quote_ws_normalized: Quote and whitespace normalized vendor quote
+        fully_normalized: Fully normalized vendor quote
+        
+    Returns:
+        Match result dict or None if not found
+    """
+    # Check if vendor quote appears truncated (ends mid-sentence, suspiciously short, etc.)
+    is_likely_truncated = (
+        len(vendor_quote) < 100 or  # Suspiciously short
+        not vendor_quote.rstrip().endswith(('.', '!', '?', ';', ':', ')', ']', '}')) or  # Doesn't end with punctuation
+        vendor_quote.rstrip().endswith(('or', 'and', 'the', 'a', 'an', 'to', 'of', 'in', 'for', 'with'))  # Ends with common words
+    )
+    
+    if not is_likely_truncated:
+        return None
+    
+    logger.info(f"MATCH_PARTIAL_CHECK: vendor_quote appears truncated (length={len(vendor_quote)}, ends_with='{vendor_quote[-20:]}')")
+    
+    # Search through paragraphs for prefix match
+    for para_idx, paragraph in enumerate(doc.paragraphs):
+        para_text = paragraph.text
+        if not para_text.strip():
+            continue
+        
+        # Normalize paragraph text
+        para_quotes_only = normalize_quotes(para_text)
+        para_quote_ws_normalized = normalize_whitespace(para_quotes_only)
+        para_fully_normalized = normalize_for_matching(para_text).lower()
+        
+        # Check if vendor quote is a prefix of paragraph (after normalization)
+        # Try multiple normalization levels
+        if para_quote_ws_normalized.startswith(quote_ws_normalized):
+            # Found prefix match - vendor quote is start of paragraph
+            logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote is prefix of paragraph {para_idx} (quote_ws_normalized)")
+            start_pos = 0
+            # Map normalized length back to original position
+            end_pos = _map_normalized_to_original_position(para_text, len(quote_ws_normalized))
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'match_type': 'partial_truncated',
+                'is_truncated': True
+            }
+        elif para_fully_normalized.startswith(fully_normalized.lower()):
+            # Found prefix match with full normalization
+            logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote is prefix of paragraph {para_idx} (fully_normalized)")
+            start_pos = 0
+            end_pos = _map_normalized_to_original_position(para_text, len(fully_normalized))
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'match_type': 'partial_truncated',
+                'is_truncated': True
+            }
+        else:
+            # Check if vendor quote appears within paragraph (not just at start)
+            # This handles cases where vendor quote is a substring
+            if quote_ws_normalized in para_quote_ws_normalized:
+                norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
+                logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start}")
+                start_pos = _map_normalized_to_original_position(para_text, norm_start)
+                end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
+                return {
+                    'type': 'single_para',
+                    'para_idx': para_idx,
+                    'start_pos': start_pos,
+                    'end_pos': end_pos,
+                    'match_type': 'partial_truncated',
+                    'is_truncated': True
+                }
+    
+    return None
 
 
 def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str) -> Optional[Dict[str, Any]]:
