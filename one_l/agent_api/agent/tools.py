@@ -11,6 +11,7 @@ import logging
 import re
 import time
 import hashlib
+import unicodedata
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
 from docx import Document
@@ -1375,6 +1376,8 @@ def normalize_quotes(text: str) -> str:
     Handles curly quotes, smart quotes, and other quote variants
     that may differ between LLM output and document text.
     
+    This function is idempotent - calling it multiple times produces the same result.
+    
     Args:
         text: Text with various quote characters
         
@@ -1388,18 +1391,37 @@ def normalize_quotes(text: str) -> str:
     had_curly_quotes = '"' in text or '"' in text or ''' in text or ''' in text
     
     # Normalize double quotes (curly, smart, etc.) to standard "
-    text = text.replace('"', '"')  # Left double quotation mark
-    text = text.replace('"', '"')  # Right double quotation mark
-    text = text.replace('„', '"')  # Double low-9 quotation mark
-    text = text.replace('«', '"')  # Left-pointing double angle quotation
-    text = text.replace('»', '"')  # Right-pointing double angle quotation
+    # Order matters: normalize curly quotes first, then other variants
+    text = text.replace('"', '"')  # Left double quotation mark (U+201C)
+    text = text.replace('"', '"')  # Right double quotation mark (U+201D)
+    text = text.replace('„', '"')  # Double low-9 quotation mark (U+201E)
+    text = text.replace('«', '"')  # Left-pointing double angle quotation (U+00AB)
+    text = text.replace('»', '"')  # Right-pointing double angle quotation (U+00BB)
     
     # Normalize single quotes (curly, smart, etc.) to standard '
-    text = text.replace(''', "'")  # Left single quotation mark
-    text = text.replace(''', "'")  # Right single quotation mark
-    text = text.replace('‚', "'")  # Single low-9 quotation mark
-    text = text.replace('‹', "'")  # Single left-pointing angle quotation
-    text = text.replace('›', "'")  # Single right-pointing angle quotation
+    text = text.replace(''', "'")  # Left single quotation mark (U+2018)
+    text = text.replace(''', "'")  # Right single quotation mark (U+2019)
+    text = text.replace('‚', "'")  # Single low-9 quotation mark (U+201A)
+    text = text.replace('‹', "'")  # Single left-pointing angle quotation (U+2039)
+    text = text.replace('›', "'")  # Single right-pointing angle quotation (U+203A)
+    
+    # Also handle any remaining non-ASCII quote-like characters
+    # This is a catch-all for any Unicode quote variants we might have missed
+    result_chars = []
+    for char in text:
+        # Check if character is a quote-like character
+        if unicodedata.category(char) in ('Pi', 'Pf'):  # Initial/Final punctuation (quotes)
+            # Convert to standard quote
+            if char in ['"', '"', '«', '»', '„']:
+                result_chars.append('"')
+            elif char in [''', ''', '‹', '›', '‚']:
+                result_chars.append("'")
+            else:
+                result_chars.append(char)  # Keep as-is if we don't recognize it
+        else:
+            result_chars.append(char)
+    
+    text = ''.join(result_chars)
     
     # Log if normalization changed anything (only for significant changes to avoid spam)
     if had_curly_quotes and text != original_text:
@@ -1772,14 +1794,23 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     
     # TIER 5: Partial/truncated quote matching
     # If vendor quote appears to be truncated (ends mid-sentence or is suspiciously short),
-    # try to match it as a prefix of document text
-    partial_match = _find_partial_match(doc, vendor_quote, quote_ws_normalized, fully_normalized)
+    # or is very long (might span paragraphs), try to match it as a prefix/substring
+    partial_match = _find_partial_match(doc, vendor_quote, quote_ws_normalized, fully_normalized, force_substring_match=False)
     if partial_match:
         logger.info(f"MATCH_FOUND: TIER 5 (partial/truncated) in paragraph {partial_match.get('para_idx')}")
         return partial_match
     
-    # TIER 6: Cross-paragraph matching
-    cross_match = _find_cross_paragraph_match(doc, vendor_quote, fully_normalized)
+    # TIER 5b: Substring matching fallback for non-truncated quotes
+    # If exact match failed but quote is long or we suspect formatting differences,
+    # try substring matching as a last resort
+    if len(vendor_quote) > 200:  # Only for reasonably long quotes to avoid false positives
+        substring_match = _find_partial_match(doc, vendor_quote, quote_ws_normalized, fully_normalized, force_substring_match=True)
+        if substring_match:
+            logger.info(f"MATCH_FOUND: TIER 5b (substring fallback) in paragraph {substring_match.get('para_idx')}")
+            return substring_match
+    
+    # TIER 6: Cross-paragraph matching (enhanced for long quotes)
+    cross_match = _find_cross_paragraph_match(doc, vendor_quote, fully_normalized, quote_ws_normalized, fully_normalized)
     if cross_match:
         logger.info(f"MATCH_FOUND: TIER 6 (cross_paragraph) across paragraphs {cross_match.get('paragraphs', [])}")
         return cross_match
@@ -1853,18 +1884,22 @@ def _map_normalized_to_original_position(original_text: str, normalized_pos: int
     return len(original_text)
 
 
-def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_normalized: str) -> Optional[Dict[str, Any]]:
+def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_normalized: str, force_substring_match: bool = False) -> Optional[Dict[str, Any]]:
     """
-    Find vendor_quote that appears to be truncated/incomplete.
+    Find vendor_quote using partial/substring matching.
     
-    If vendor quote is a prefix of document text (after normalization), treat it as a match.
-    This handles cases where the LLM extracted an incomplete quote.
+    If vendor quote is a prefix or substring of document text (after normalization), treat it as a match.
+    This handles cases where:
+    1. The LLM extracted an incomplete quote (truncated)
+    2. Exact match failed but quote exists as substring (quote/formatting differences)
+    3. Long quotes that span multiple paragraphs
     
     Args:
         doc: python-docx Document object
         vendor_quote: Original vendor quote text
         quote_ws_normalized: Quote and whitespace normalized vendor quote
         fully_normalized: Fully normalized vendor quote
+        force_substring_match: If True, attempt substring matching even for non-truncated quotes
         
     Returns:
         Match result dict or None if not found
@@ -1876,10 +1911,18 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
         vendor_quote.rstrip().endswith(('or', 'and', 'the', 'a', 'an', 'to', 'of', 'in', 'for', 'with'))  # Ends with common words
     )
     
-    if not is_likely_truncated:
+    # For long quotes (>500 chars), also try substring matching as they might span paragraphs
+    is_long_quote = len(vendor_quote) > 500
+    
+    if not (is_likely_truncated or force_substring_match or is_long_quote):
         return None
     
-    logger.info(f"MATCH_PARTIAL_CHECK: vendor_quote appears truncated (length={len(vendor_quote)}, ends_with='{vendor_quote[-20:]}')")
+    if is_likely_truncated:
+        logger.info(f"MATCH_PARTIAL_CHECK: vendor_quote appears truncated (length={len(vendor_quote)}, ends_with='{vendor_quote[-20:]}')")
+    elif is_long_quote:
+        logger.info(f"MATCH_PARTIAL_CHECK: vendor_quote is long ({len(vendor_quote)} chars), attempting substring matching")
+    elif force_substring_match:
+        logger.info(f"MATCH_PARTIAL_CHECK: forcing substring match attempt (exact match failed)")
     
     # Search through paragraphs for prefix match
     for para_idx, paragraph in enumerate(doc.paragraphs):
@@ -1941,11 +1984,12 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
     return None
 
 
-def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str) -> Optional[Dict[str, Any]]:
+def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str, quote_ws_normalized: str = None, fully_normalized: str = None) -> Optional[Dict[str, Any]]:
     """
     Find vendor_quote that spans multiple paragraphs.
     
     Joins consecutive paragraphs and searches for the text.
+    Enhanced for long quotes with better normalization handling.
     
     Args:
         doc: python-docx Document object
@@ -1957,8 +2001,17 @@ def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str) -
     """
     paragraphs = doc.paragraphs
     
-    # Try joining consecutive paragraphs (2-3 at a time)
-    for window_size in [2, 3]:
+    # Determine window size based on quote length
+    # Long quotes (>500 chars) might span more paragraphs
+    if len(vendor_quote) > 1000:
+        window_sizes = [4, 5, 6]  # Try larger windows for very long quotes
+    elif len(vendor_quote) > 500:
+        window_sizes = [3, 4, 5]
+    else:
+        window_sizes = [2, 3]
+    
+    # Try joining consecutive paragraphs with different window sizes
+    for window_size in window_sizes:
         for start_idx in range(len(paragraphs) - window_size + 1):
             # Join paragraphs with space
             joined_paras = []
@@ -1973,16 +2026,38 @@ def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str) -
                 continue
             
             joined_text = joined_text.strip()
-            joined_normalized = normalize_for_matching(joined_text).lower()
             
-            # Check if vendor_quote exists in joined text
+            # Try multiple normalization levels for better matching
+            # First try quote+whitespace normalized if available
+            if quote_ws_normalized:
+                joined_quote_ws = normalize_whitespace(normalize_quotes(joined_text))
+                if quote_ws_normalized in joined_quote_ws:
+                    logger.info(f"CROSS_PARA_MATCH: Found (quote_ws_normalized) in paragraphs {joined_paras}")
+                    return {
+                        'type': 'cross_para',
+                        'paragraphs': joined_paras,
+                        'match_type': 'cross_paragraph_quote_ws'
+                    }
+            
+            # Try fully normalized
+            joined_normalized = normalize_for_matching(joined_text).lower()
             if normalized_quote.lower() in joined_normalized:
-                logger.info(f"CROSS_PARA_MATCH: Found in paragraphs {joined_paras}")
+                logger.info(f"CROSS_PARA_MATCH: Found (fully_normalized) in paragraphs {joined_paras}")
                 return {
                     'type': 'cross_para',
                     'paragraphs': joined_paras,
                     'match_type': 'cross_paragraph'
                 }
+            
+            # Also try with fully_normalized if available
+            if fully_normalized:
+                if fully_normalized.lower() in joined_normalized:
+                    logger.info(f"CROSS_PARA_MATCH: Found (fully_normalized) in paragraphs {joined_paras}")
+                    return {
+                        'type': 'cross_para',
+                        'paragraphs': joined_paras,
+                        'match_type': 'cross_paragraph_fully'
+                    }
     
     return None
 
