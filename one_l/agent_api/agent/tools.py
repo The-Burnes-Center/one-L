@@ -1973,10 +1973,10 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
         # Try multiple normalization levels - check this for ALL paragraphs, not just when not a prefix
         if quote_ws_normalized in para_quote_ws_normalized:
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, quote_ws_normalized found at position {norm_start}")
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized preview='{quote_ws_normalized[:100]}...'")
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized preview='{para_quote_ws_normalized[:100]}...'")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, quote_ws_normalized found at position {norm_start}")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized preview='{quote_ws_normalized[:200]}...'")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized preview='{para_quote_ws_normalized[:200]}...'")
             # Only return if it's not already a prefix match (avoid duplicate)
             if norm_start > 0:
                 logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (quote_ws_normalized)")
@@ -1991,13 +1991,13 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'is_truncated': is_likely_truncated
                 }
             else:
-                logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: Skipping match at position {norm_start} (not > 0, likely prefix match)")
+                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: Skipping match at position {norm_start} (not > 0, likely prefix match)")
         elif fully_normalized.lower() in para_fully_normalized:
             norm_start = para_fully_normalized.find(fully_normalized.lower())
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, fully_normalized found at position {norm_start}")
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: fully_normalized length={len(fully_normalized)}, para_fully_normalized length={len(para_fully_normalized)}")
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: fully_normalized preview='{fully_normalized[:100]}...'")
-            logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_fully_normalized preview='{para_fully_normalized[:100]}...'")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, fully_normalized found at position {norm_start}")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: fully_normalized length={len(fully_normalized)}, para_fully_normalized length={len(para_fully_normalized)}")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: fully_normalized preview='{fully_normalized[:200]}...'")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_fully_normalized preview='{para_fully_normalized[:200]}...'")
             # Only return if it's not already a prefix match (avoid duplicate)
             if norm_start > 0:
                 logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (fully_normalized)")
@@ -2012,13 +2012,13 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'is_truncated': is_likely_truncated
                 }
             else:
-                logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: Skipping match at position {norm_start} (not > 0, likely prefix match)")
+                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: Skipping match at position {norm_start} (not > 0, likely prefix match)")
         else:
             # Log when substring is NOT found to help debug
             if para_idx < 100:  # Only log for first 100 paragraphs to avoid spam
-                logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, substring NOT found")
-                logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:150]}...'")
-                logger.debug(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:150]}...'")
+                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, substring NOT found")
+                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
+                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
                 # Check if first 50 chars match (partial match indicator)
                 if len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized:
                     logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: First 50 chars of quote found in paragraph {para_idx}, but full quote not found")
