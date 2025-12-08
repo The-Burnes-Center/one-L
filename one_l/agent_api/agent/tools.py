@@ -1032,8 +1032,11 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                                     if validated_conflict.clause_ref and validated_conflict.clause_ref.strip() and validated_conflict.clause_ref.lower() not in ['n/a', 'na', 'none']:
                                         comment += f" ({validated_conflict.clause_ref.strip()})"
                                 
+                                # Normalize escaped quotes in vendor_quote to match document text
+                                vendor_quote_text = normalize_escaped_quotes(validated_conflict.vendor_quote.strip())
+                                
                                 redline_items.append({
-                                    'text': validated_conflict.vendor_quote.strip(),
+                                    'text': vendor_quote_text,
                                     'comment': comment,
                                     'author': 'Legal-AI',
                                     'initials': 'LAI',
@@ -1067,6 +1070,9 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             vendor_quote_clean = str(vendor_quote).strip()
                             if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
                                 vendor_quote_clean = vendor_quote_clean[1:-1]
+                            
+                            # Normalize escaped quotes to match document text (e.g., \" becomes ")
+                            vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
                             
                             # Create redline item using exact vendor quote for matching
                             if vendor_quote_clean.strip():  # Only add if we have actual text
@@ -1165,6 +1171,9 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                     vendor_quote_clean = vendor_quote.strip()
                     if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
                         vendor_quote_clean = vendor_quote_clean[1:-1]
+                    
+                    # Normalize escaped quotes to match document text (e.g., \" becomes ")
+                    vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
                     
                     # Create redline item using exact vendor quote for matching
                     if vendor_quote_clean.strip():  # Only add if we have actual text
