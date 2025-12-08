@@ -1964,12 +1964,15 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                 'match_type': 'partial_truncated',
                 'is_truncated': True
             }
-        else:
-            # Check if vendor quote appears within paragraph (not just at start)
-            # This handles cases where vendor quote is a substring
-            if quote_ws_normalized in para_quote_ws_normalized:
-                norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
-                logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start}")
+        
+        # Check if vendor quote appears within paragraph (not just at start)
+        # This handles cases where vendor quote is a substring (e.g., starts after " Conflicts. ")
+        # Try multiple normalization levels - check this for ALL paragraphs, not just when not a prefix
+        if quote_ws_normalized in para_quote_ws_normalized:
+            norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
+            # Only return if it's not already a prefix match (avoid duplicate)
+            if norm_start > 0:
+                logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (quote_ws_normalized)")
                 start_pos = _map_normalized_to_original_position(para_text, norm_start)
                 end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
                 return {
@@ -1977,8 +1980,23 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'para_idx': para_idx,
                     'start_pos': start_pos,
                     'end_pos': end_pos,
-                    'match_type': 'partial_truncated',
-                    'is_truncated': True
+                    'match_type': 'partial_substring',
+                    'is_truncated': is_likely_truncated
+                }
+        elif fully_normalized.lower() in para_fully_normalized:
+            norm_start = para_fully_normalized.find(fully_normalized.lower())
+            # Only return if it's not already a prefix match (avoid duplicate)
+            if norm_start > 0:
+                logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (fully_normalized)")
+                start_pos = _map_normalized_to_original_position(para_text, norm_start)
+                end_pos = _map_normalized_to_original_position(para_text, norm_start + len(fully_normalized))
+                return {
+                    'type': 'single_para',
+                    'para_idx': para_idx,
+                    'start_pos': start_pos,
+                    'end_pos': end_pos,
+                    'match_type': 'partial_substring',
+                    'is_truncated': is_likely_truncated
                 }
     
     return None
