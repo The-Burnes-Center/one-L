@@ -1018,10 +1018,22 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             logger.warning(f"PARSE_SKIP: Conflict {idx} is not a dict, skipping")
                             continue
                         
+                        # Log raw conflict data before processing
+                        conflict_id = conflict.get('clarification_id', f'Unknown-{idx}')
+                        raw_vendor_quote = conflict.get('vendor_quote', '')
+                        logger.info(f"PARSE_RAW_CONFLICT: ID={conflict_id}, vendor_quote type={type(raw_vendor_quote)}, length={len(str(raw_vendor_quote))}")
+                        logger.info(f"PARSE_RAW_CONFLICT: vendor_quote (first 200 chars)='{str(raw_vendor_quote)[:200]}...'")
+                        if '\\' in str(raw_vendor_quote):
+                            logger.info(f"PARSE_RAW_CONFLICT: vendor_quote contains backslashes, count={str(raw_vendor_quote).count('\\\\')}")
+                        
                         # Use Pydantic validation if available
                         if PYDANTIC_AVAILABLE and ConflictModel:
                             try:
                                 validated_conflict = ConflictModel(**conflict)
+                                
+                                # Log after Pydantic validation
+                                logger.info(f"PARSE_AFTER_PYDANTIC: ID={validated_conflict.clarification_id}, vendor_quote type={type(validated_conflict.vendor_quote)}, length={len(validated_conflict.vendor_quote)}")
+                                logger.info(f"PARSE_AFTER_PYDANTIC: vendor_quote (first 200 chars)='{validated_conflict.vendor_quote[:200]}...'")
                                 
                                 # Use comment format: CONFLICT ID (type): rationale
                                 comment = f"CONFLICT {validated_conflict.clarification_id} ({validated_conflict.conflict_type}): {validated_conflict.rationale}"
@@ -1034,8 +1046,12 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                                 
                                 # Store original vendor_quote (only normalize escaped quotes for JSON parsing)
                                 # Full normalization will happen during matching to preserve original structure
-                                vendor_quote_text = normalize_escaped_quotes(validated_conflict.vendor_quote.strip())
-                                logger.debug(f"PARSE_VENDOR_QUOTE: Original='{validated_conflict.vendor_quote[:100]}...', Stored='{vendor_quote_text[:100]}...'")
+                                vendor_quote_before_norm = validated_conflict.vendor_quote.strip()
+                                vendor_quote_text = normalize_escaped_quotes(vendor_quote_before_norm)
+                                logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, before normalize_escaped_quotes='{vendor_quote_before_norm[:150]}...'")
+                                logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, after normalize_escaped_quotes='{vendor_quote_text[:150]}...'")
+                                if vendor_quote_before_norm != vendor_quote_text:
+                                    logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, normalization changed the text")
                                 
                                 redline_items.append({
                                     'text': vendor_quote_text,
@@ -1068,13 +1084,21 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                             conflict_type = conflict.get('conflict_type', '')
                             rationale = conflict.get('rationale', '')
                             
+                            logger.info(f"PARSE_MANUAL: ID={clarification_id}, vendor_quote type={type(vendor_quote)}, length={len(str(vendor_quote))}")
+                            logger.info(f"PARSE_MANUAL: vendor_quote (first 200 chars)='{str(vendor_quote)[:200]}...'")
+                            
                             # Clean up vendor quote - remove surrounding quotes if present
                             vendor_quote_clean = str(vendor_quote).strip()
                             if vendor_quote_clean.startswith('"') and vendor_quote_clean.endswith('"'):
+                                logger.info(f"PARSE_MANUAL: ID={clarification_id}, removing surrounding quotes")
                                 vendor_quote_clean = vendor_quote_clean[1:-1]
                             
                             # Only normalize escaped quotes - full normalization happens during matching
+                            vendor_quote_before_norm = vendor_quote_clean
                             vendor_quote_clean = normalize_escaped_quotes(vendor_quote_clean)
+                            logger.info(f"PARSE_MANUAL_NORM: ID={clarification_id}, before='{vendor_quote_before_norm[:150]}...', after='{vendor_quote_clean[:150]}...'")
+                            if vendor_quote_before_norm != vendor_quote_clean:
+                                logger.info(f"PARSE_MANUAL_NORM: ID={clarification_id}, normalization changed the text")
                             
                             # Create redline item using exact vendor quote for matching
                             if vendor_quote_clean.strip():  # Only add if we have actual text
@@ -1263,6 +1287,9 @@ def normalize_escaped_quotes(text: str) -> str:
     if not text:
         return text
     
+    original_text = text
+    had_backslashes = '\\' in text
+    
     # Replace literal \" with " (backslash followed by quote)
     text = text.replace('\\"', '"')
     # Replace literal \' with ' (backslash followed by single quote)
@@ -1270,6 +1297,11 @@ def normalize_escaped_quotes(text: str) -> str:
     # Handle unicode escapes
     text = text.replace('\\u0022', '"')  # Unicode double quote
     text = text.replace('\\u0027', "'")  # Unicode single quote
+    
+    # Log if normalization changed anything
+    if had_backslashes and text != original_text:
+        logger.info(f"NORMALIZE_ESCAPED_QUOTES: Changed text. Before (first 100): '{original_text[:100]}...', After (first 100): '{text[:100]}...'")
+        logger.info(f"NORMALIZE_ESCAPED_QUOTES: Backslash count before={original_text.count('\\\\')}, after={text.count('\\\\')}")
     
     return text
 
@@ -1290,6 +1322,9 @@ def normalize_quotes(text: str) -> str:
     if not text:
         return text
     
+    original_text = text
+    had_curly_quotes = '"' in text or '"' in text or ''' in text or ''' in text
+    
     # Normalize double quotes (curly, smart, etc.) to standard "
     text = text.replace('"', '"')  # Left double quotation mark
     text = text.replace('"', '"')  # Right double quotation mark
@@ -1303,6 +1338,15 @@ def normalize_quotes(text: str) -> str:
     text = text.replace('‚', "'")  # Single low-9 quotation mark
     text = text.replace('‹', "'")  # Single left-pointing angle quotation
     text = text.replace('›', "'")  # Single right-pointing angle quotation
+    
+    # Log if normalization changed anything (only for significant changes to avoid spam)
+    if had_curly_quotes and text != original_text:
+        # Find first difference
+        for i, (orig_char, norm_char) in enumerate(zip(original_text, text)):
+            if orig_char != norm_char:
+                logger.debug(f"NORMALIZE_QUOTES: Changed at position {i}. Before: '{orig_char}' (U+{ord(orig_char):04X}), After: '{norm_char}' (U+{ord(norm_char):04X})")
+                logger.debug(f"NORMALIZE_QUOTES: Context (first 100): '{original_text[:100]}...' -> '{text[:100]}...'")
+                break
     
     return text
 
@@ -1397,6 +1441,14 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 logger.warning("SKIP: Empty vendor_quote")
                 continue
             
+            # Log vendor quote as retrieved from redline_items
+            conflict_id = redline_item.get('id', redline_item.get('clarification_id', 'Unknown'))
+            logger.info(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote type={type(vendor_quote)}, length={len(vendor_quote)}")
+            logger.info(f"SCANNING_RETRIEVED: vendor_quote (first 200 chars)='{vendor_quote[:200]}...'")
+            logger.info(f"SCANNING_RETRIEVED: vendor_quote (last 100 chars)='...{vendor_quote[-100:]}'")
+            if '\\' in vendor_quote:
+                logger.warning(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote still contains backslashes! count={vendor_quote.count('\\\\')}")
+            
             # Check for duplicates based on vendor_quote only
             normalized_quote = normalize_vendor_quote_for_dedup(vendor_quote)
             if normalized_quote in seen_vendor_quotes:
@@ -1406,12 +1458,11 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             seen_vendor_quotes.add(normalized_quote)
             
             # Get conflict metadata
-            conflict_id = redline_item.get('id', redline_item.get('clarification_id', 'Unknown'))
             serial_num = redline_item.get('serial_number', 'N/A')
             comment = redline_item.get('comment', '')
             
             logger.info(f"SCANNING: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:80]}...'")
-            logger.debug(f"SCANNING_DETAIL: Full vendor_quote length={len(vendor_quote)}, first 200 chars: '{vendor_quote[:200]}'")
+            logger.info(f"SCANNING_DETAIL: Full vendor_quote length={len(vendor_quote)}, first 200 chars: '{vendor_quote[:200]}'")
             
             # Find match in document using tiered strategy
             match_result = _find_text_match(doc, vendor_quote)
@@ -1540,20 +1591,45 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     """
     # Prepare normalized versions
     # Note: vendor_quote may already be normalized from parsing, so we normalize again (idempotent)
+    logger.info(f"MATCH_PREP_START: vendor_quote length={len(vendor_quote)}, type={type(vendor_quote)}")
+    logger.info(f"MATCH_PREP_START: vendor_quote (first 200)='{vendor_quote[:200]}...'")
+    logger.info(f"MATCH_PREP_START: vendor_quote (last 100)='...{vendor_quote[-100:]}'")
+    
+    # Check for special characters
+    if '\\' in vendor_quote:
+        logger.warning(f"MATCH_PREP_START: vendor_quote contains backslashes! count={vendor_quote.count('\\\\')}")
+    if '"' in vendor_quote or '"' in vendor_quote:
+        logger.info(f"MATCH_PREP_START: vendor_quote contains curly quotes")
+    
     quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
     quote_ws_normalized = normalize_whitespace(quote_normalized)
     fully_normalized = normalize_for_matching(vendor_quote)
     
-    logger.info(f"MATCH_PREP: vendor_quote length={len(vendor_quote)}, quote_normalized length={len(quote_normalized)}, fully_normalized length={len(fully_normalized)}")
+    logger.info(f"MATCH_PREP: vendor_quote length={len(vendor_quote)}, quote_normalized length={len(quote_normalized)}, quote_ws_normalized length={len(quote_ws_normalized)}, fully_normalized length={len(fully_normalized)}")
     logger.info(f"MATCH_PREP: vendor_quote preview='{vendor_quote[:150]}...'")
     logger.info(f"MATCH_PREP: quote_normalized preview='{quote_normalized[:150]}...'")
+    logger.info(f"MATCH_PREP: quote_ws_normalized preview='{quote_ws_normalized[:150]}...'")
     logger.info(f"MATCH_PREP: fully_normalized preview='{fully_normalized[:150]}...'")
     
+    # Log if normalization changed anything
+    if quote_normalized != vendor_quote:
+        logger.info(f"MATCH_PREP: quote_normalized differs from vendor_quote")
+    if fully_normalized != vendor_quote:
+        logger.info(f"MATCH_PREP: fully_normalized differs from vendor_quote")
+    
     # Search through all paragraphs
+    paragraphs_checked = 0
     for para_idx, paragraph in enumerate(doc.paragraphs):
         para_text = paragraph.text
         if not para_text.strip():
             continue
+        
+        paragraphs_checked += 1
+        # Log paragraph details for first few paragraphs or if it contains key text
+        if paragraphs_checked <= 3 or 'Indemnified Party' in para_text or 'indemnify' in para_text.lower():
+            logger.debug(f"MATCH_CHECK_PARA: para_idx={para_idx}, length={len(para_text)}, preview='{para_text[:150]}...'")
+            if '"' in para_text or '"' in para_text:
+                logger.debug(f"MATCH_CHECK_PARA: para_idx={para_idx} contains curly quotes")
         
         # TIER 1: Exact match
         if vendor_quote in para_text:
@@ -1587,6 +1663,7 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
             # Find position in normalized text, then map back
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
             logger.info(f"MATCH_FOUND: TIER 3 (quote_whitespace_normalized) in paragraph {para_idx} at normalized position {norm_start}")
+            logger.info(f"MATCH_TIER3_DETAIL: quote_ws_normalized='{quote_ws_normalized[:100]}...', found in para_quote_ws_normalized='{para_quote_ws_normalized[norm_start:norm_start+100]}...'")
             # Map normalized position back to original position
             start_pos = _map_normalized_to_original_position(para_text, norm_start)
             end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
@@ -1597,6 +1674,12 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 'end_pos': end_pos,
                 'match_type': 'quote_whitespace_normalized'
             }
+        else:
+            # Log why TIER 3 didn't match for debugging
+            if len(quote_ws_normalized) > 50 and quote_ws_normalized[:50].lower() in para_quote_ws_normalized.lower():
+                logger.warning(f"MATCH_TIER3_PARTIAL: First 50 chars match but full text doesn't. quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
+                logger.warning(f"MATCH_TIER3_PARTIAL: quote_ws_normalized='{quote_ws_normalized[:150]}...'")
+                logger.warning(f"MATCH_TIER3_PARTIAL: para_quote_ws_normalized='{para_quote_ws_normalized[:300]}...'")
         
         # TIER 4: Fully normalized + case-insensitive match
         para_fully_normalized = normalize_for_matching(para_text).lower()
@@ -1622,7 +1705,12 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     logger.warning(f"MATCH_FAILED: Could not find vendor_quote in document. vendor_quote='{vendor_quote[:200]}...'")
     logger.warning(f"MATCH_FAILED: Checked {len([p for p in doc.paragraphs if p.text.strip()])} non-empty paragraphs")
     logger.warning(f"MATCH_FAILED: quote_normalized='{quote_normalized[:200]}...'")
+    logger.warning(f"MATCH_FAILED: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
     logger.warning(f"MATCH_FAILED: fully_normalized='{fully_normalized[:200]}...'")
+    # Log character-by-character comparison for first 100 chars to debug quote issues
+    if len(vendor_quote) > 0:
+        logger.warning(f"MATCH_FAILED: First 100 chars of vendor_quote (hex): {vendor_quote[:100].encode('utf-8').hex()}")
+        logger.warning(f"MATCH_FAILED: First 100 chars of quote_normalized (hex): {quote_normalized[:100].encode('utf-8').hex()}")
     
     # Try to find partial matches to help diagnose
     vendor_quote_lower = vendor_quote.lower()
