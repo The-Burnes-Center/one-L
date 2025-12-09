@@ -2421,8 +2421,8 @@ const SessionWorkspace = ({ session }) => {
           maxFiles={null}
           bucketType="user_documents"
           prefix="reference-docs/"
-          acceptedFileTypes=".doc,.docx,.pdf"
-          fileTypeDescription="DOC, DOCX, PDF (Max 10MB per file)"
+          acceptedFileTypes=".doc,.docx"
+          fileTypeDescription="DOC, DOCX (Max 10MB per file)"
           onFilesUploaded={handleFilesUploaded}
           enableAutoSync={true}
           onSyncStatusChange={handleKbSyncStatusChange}
