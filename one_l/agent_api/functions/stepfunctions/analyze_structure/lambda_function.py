@@ -71,9 +71,8 @@ def lambda_handler(event, context):
         # Create Model instance
         model = Model(knowledge_base_id, region)
         
-        # Determine document format
-        is_pdf = s3_key.lower().endswith('.pdf')
-        doc_format = 'pdf' if is_pdf else 'docx'
+        # Document format - only DOCX supported
+        doc_format = 'docx'
         filename = os.path.basename(s3_key)
         sanitized_filename = model._sanitize_filename_for_converse(filename)
         

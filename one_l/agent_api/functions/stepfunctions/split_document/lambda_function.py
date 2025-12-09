@@ -52,22 +52,10 @@ def lambda_handler(event, context):
         response = s3_client.get_object(Bucket=bucket_name, Key=document_s3_key)
         document_data = response['Body'].read()
         
-        # Check if PDF or DOCX
-        is_pdf = document_s3_key.lower().endswith('.pdf')
-        
-        chunks = []
-        if is_pdf:
-            # For PDFs, use character-based chunking
-            chunks = _split_document_into_chunks(
-                doc=None,
-                is_pdf=True,
-                pdf_bytes=document_data
-            )
-        else:
-            # For DOCX, parse and chunk
-            from docx import Document
-            doc = Document(io.BytesIO(document_data))
-            chunks = _split_document_into_chunks(doc=doc, is_pdf=False)
+        # Parse and chunk DOCX document
+        from docx import Document
+        doc = Document(io.BytesIO(document_data))
+        chunks = _split_document_into_chunks(doc=doc, is_pdf=False)
         
         # Save chunks to S3
         chunk_s3_keys = []
