@@ -348,7 +348,7 @@ def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_
         chunk_overlap_characters: Number of characters to overlap between chunks
         
     Returns:
-        List of chunk dictionaries with bytes, chunk_num, start_char, end_char, is_pdf
+        List of chunk dictionaries with bytes, chunk_num, start_char, end_char
     """
     from docx import Document
     import io
@@ -495,27 +495,24 @@ class Model:
             filename = self._sanitize_filename_for_converse(os.path.basename(document_s3_key))
             
             # Check document size and decide whether to chunk
-            # Only try to parse DOCX files for chunking (PDFs are handled differently)
+            # Parse DOCX files for chunking
             instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
             
-            if not is_pdf_file(document_s3_key):
-                try:
-                    from docx import Document
-                    import io
-                    doc = Document(io.BytesIO(document_data))
-                    total_paragraphs = len(doc.paragraphs)
-                    logger.info(f"Document has {total_paragraphs} paragraphs ")
-                    
-                    # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
-                    if total_paragraphs > 100:
-                        logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
-                        return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
-                    else:
-                        instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
-                except Exception as e:
-                    logger.warning(f"Could not pre-analyze document structure: {e}")
-            else:
-                logger.info(f"PDF document detected: {document_s3_key} - skipping DOCX pre-analysis")
+            try:
+                from docx import Document
+                import io
+                doc = Document(io.BytesIO(document_data))
+                total_paragraphs = len(doc.paragraphs)
+                logger.info(f"Document has {total_paragraphs} paragraphs ")
+                
+                # If document is very large (>100 paragraphs ≈ 5+ pages), split into chunks
+                if total_paragraphs > 100:
+                    logger.warning(f"Large document detected ({total_paragraphs} paragraphs). Splitting into chunks for comprehensive analysis.")
+                    return self._review_document_chunked(doc, document_data, document_s3_key, bucket_type, filename)
+                else:
+                    instruction_text = "Please analyze this vendor submission document completely, including all pages and sections. After identifying all conflicts, return the output in the expected JSON object format with 'explanation' and 'conflicts' fields."
+            except Exception as e:
+                logger.warning(f"Could not pre-analyze document structure: {e}")
             
             messages = [
                 {
@@ -897,14 +894,14 @@ class Model:
         file_extension = document_s3_key.lower().split('.')[-1]
         
         # Converse API supported formats
-        supported_formats = ['pdf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt', 'md']
+        supported_formats = ['csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt', 'md']
         
         if file_extension in supported_formats:
             return file_extension
         else:
-            # Default to PDF if extension not recognized
-            logger.warning(f"Unknown file extension '{file_extension}', defaulting to PDF format")
-            return 'pdf'
+            # Default to DOCX if extension not recognized
+            logger.warning(f"Unknown file extension '{file_extension}', defaulting to DOCX format")
+            return 'docx'
     
     def _sanitize_filename_for_converse(self, filename: str) -> str:
         """

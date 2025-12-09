@@ -244,12 +244,12 @@ const KnowledgeUpload = () => {
           ref={fileInputRef}
           onChange={handleFileSelect}
           multiple
-          accept=".txt,.doc,.docx,.jpg,.jpeg,.png,.gif"
+          accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
           className="form-control"
           disabled={uploading}
         />
         <small className="form-text">
-          Supported formats: TXT, DOC, DOCX, JPG, PNG, GIF. Maximum size: 10MB per file.
+          Supported formats: TXT, PDF, DOC, DOCX, JPG, PNG, GIF. Maximum size: 10MB per file.
         </small>
       </div>
 
