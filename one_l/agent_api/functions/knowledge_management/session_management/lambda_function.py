@@ -513,48 +513,51 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
             }
         
         # Update the session - table has composite key (session_id + user_id)
-        # Note: Key order matters - partition key first, then sort key
-        # Try with session_id as partition key first (expected schema)
-        try:
-            response = table.update_item(
-                Key={
-                    'session_id': str(session_id),  # Ensure string type
-                    'user_id': str(user_id)  # Ensure string type
-                },
-                UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
-                ExpressionAttributeValues={
-                    ':title': str(title),
-                    ':updated_at': datetime.now(timezone.utc).isoformat(),
-                    ':last_activity': datetime.now(timezone.utc).isoformat()
-                },
-                ReturnValues='ALL_NEW'
-            )
-        except ClientError as key_error:
-            # If that fails, try with user_id as partition key (alternative schema)
-            error_code = key_error.response.get('Error', {}).get('Code', '')
-            error_msg = str(key_error)
-            if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
-                logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
-                try:
-                    response = table.update_item(
-                        Key={
-                            'user_id': str(user_id),  # Try user_id as partition key
-                            'session_id': str(session_id)  # session_id as sort key
-                        },
-                        UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
-                        ExpressionAttributeValues={
-                            ':title': str(title),
-                            ':updated_at': datetime.now(timezone.utc).isoformat(),
-                            ':last_activity': datetime.now(timezone.utc).isoformat()
-                        },
-                        ReturnValues='ALL_NEW'
-                    )
-                    logger.info("Successfully updated with alternative key order (user_id, session_id)")
-                except Exception as alt_error:
-                    # If both fail, re-raise the original error
-                    raise key_error
-            else:
+        # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
+        # Try both key orders to handle schema variations
+        response = None
+        last_error = None
+        
+        # Try with session_id as partition key first (expected schema per deployment script)
+        key_orders = [
+            {'session_id': str(session_id), 'user_id': str(user_id)},
+            {'user_id': str(user_id), 'session_id': str(session_id)}
+        ]
+        
+        for key_order in key_orders:
+            try:
+                response = table.update_item(
+                    Key=key_order,
+                    UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                    ExpressionAttributeValues={
+                        ':title': str(title),
+                        ':updated_at': datetime.now(timezone.utc).isoformat(),
+                        ':last_activity': datetime.now(timezone.utc).isoformat()
+                    },
+                    ReturnValues='ALL_NEW'
+                )
+                logger.info(f"Successfully updated session title with key order: {list(key_order.keys())}")
+                break  # Success, exit loop
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                error_msg = str(e)
+                last_error = e
+                if error_code == 'ValidationException':
+                    logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
+                    continue  # Try next key order
+                else:
+                    # Non-validation error, re-raise immediately
+                    raise
+            except Exception as e:
+                last_error = e
+                logger.error(f"Unexpected error updating session: {e}")
                 raise
+        
+        if response is None:
+            # Both key orders failed
+            error_msg = str(last_error) if last_error else 'Unknown error'
+            logger.error(f"Failed to update session with both key orders: {error_msg}")
+            raise Exception(f"Failed to update session title: {error_msg}")
         
         logger.info(f"Updated session title: {session_id} -> {title}")
         
@@ -569,8 +572,17 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
         logger.error(f"Error updating session title ({error_type}): {error_msg}")
         logger.error(f"Full error details: {repr(e)}")
         
+        # Check for ValidationException in ClientError exceptions
+        is_validation_error = False
+        if isinstance(e, ClientError):
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'ValidationException':
+                is_validation_error = True
+        elif 'ValidationException' in error_type or 'ValidationException' in error_msg:
+            is_validation_error = True
+        
         # Provide more specific error messages
-        if 'ValidationException' in error_type:
+        if is_validation_error:
             logger.error(f"ValidationException - Key schema mismatch. session_id={session_id}, user_id={user_id}")
             return {
                 'success': False,
@@ -629,44 +641,69 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
         table = dynamodb.Table(SESSIONS_TABLE)
         
         # Update session to mark it has results
-        # Table has composite key (session_id + user_id), so both must be in Key
-        # Use ADD for document_count (works even if attribute doesn't exist) and SET for other fields
-        try:
-            response = table.update_item(
-                Key={'session_id': session_id, 'user_id': user_id},
-                UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity ADD document_count :inc',
-                ExpressionAttributeValues={
-                    ':has_results': True,
-                    ':updated_at': datetime.now(timezone.utc).isoformat(),
-                    ':last_activity': datetime.now(timezone.utc).isoformat(),
-                    ':inc': 1
-                },
-                ReturnValues='ALL_NEW'
-            )
-        except Exception as update_error:
-            error_type = type(update_error).__name__
-            # If document_count causes issues, try without the increment
-            if 'document_count' in str(update_error) or 'ResourceNotFoundException' in error_type:
-                logger.warning(f"Update failed for session {session_id}, trying without document_count increment: {update_error}")
+        # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
+        # Try both key orders to handle schema variations
+        response = None
+        last_error = None
+        
+        key_orders = [
+            {'session_id': str(session_id), 'user_id': str(user_id)},
+            {'user_id': str(user_id), 'session_id': str(session_id)}
+        ]
+        
+        # Try with document_count increment first, then without if that fails
+        update_expressions = [
+            'SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity ADD document_count :inc',
+            'SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity'
+        ]
+        
+        for update_expr in update_expressions:
+            for key_order in key_orders:
                 try:
+                    expr_values = {
+                        ':has_results': True,
+                        ':updated_at': datetime.now(timezone.utc).isoformat(),
+                        ':last_activity': datetime.now(timezone.utc).isoformat()
+                    }
+                    if ':inc' in update_expr:
+                        expr_values[':inc'] = 1
+                    
                     response = table.update_item(
-                        Key={'session_id': session_id, 'user_id': user_id},
-                        UpdateExpression='SET has_results = :has_results, updated_at = :updated_at, last_activity = :last_activity',
-                        ExpressionAttributeValues={
-                            ':has_results': True,
-                            ':updated_at': datetime.now(timezone.utc).isoformat(),
-                            ':last_activity': datetime.now(timezone.utc).isoformat()
-                        },
+                        Key=key_order,
+                        UpdateExpression=update_expr,
+                        ExpressionAttributeValues=expr_values,
                         ReturnValues='ALL_NEW'
                     )
-                except Exception as retry_error:
-                    logger.error(f"Error marking session with results (retry): {retry_error}")
-                    return {
-                        'success': False,
-                        'error': str(retry_error)
-                    }
-            else:
-                raise
+                    logger.info(f"Successfully marked session with results using key order: {list(key_order.keys())}")
+                    break  # Success, exit both loops
+                except ClientError as e:
+                    error_code = e.response.get('Error', {}).get('Code', '')
+                    error_msg = str(e)
+                    last_error = e
+                    if error_code == 'ValidationException':
+                        logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
+                        continue  # Try next key order
+                    elif 'document_count' in error_msg or 'ADD' in error_msg:
+                        # Try next update expression (without document_count)
+                        break  # Exit key_order loop, try next update_expr
+                    else:
+                        # Non-validation error, re-raise immediately
+                        raise
+                except Exception as e:
+                    last_error = e
+                    if 'document_count' in str(e) or 'ADD' in str(e):
+                        # Try next update expression
+                        break  # Exit key_order loop, try next update_expr
+                    logger.error(f"Unexpected error updating session: {e}")
+                    raise
+            
+            if response is not None:
+                break  # Success, exit update_expr loop
+        
+        if response is None:
+            error_msg = str(last_error) if last_error else 'Unknown error'
+            logger.error(f"Failed to mark session with results: {error_msg}")
+            raise Exception(f"Failed to mark session with results: {error_msg}")
         
         logger.info(f"Marked session {session_id} as having results")
         
@@ -735,30 +772,48 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                     'error': f'Invalid user_id: {user_id}'
                 }
             
-            # Table has composite key (session_id + user_id), so both must be in Key
-            # Try with session_id as partition key first (expected schema)
-            try:
-                response = table.get_item(Key={
-                    'session_id': str(session_id),  # Ensure string type
-                    'user_id': str(user_id)  # Ensure string type
-                })
-            except ClientError as key_error:
-                # If that fails, try with user_id as partition key (alternative schema)
-                error_code = key_error.response.get('Error', {}).get('Code', '')
-                error_msg = str(key_error)
-                if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
-                    logger.warning(f"Key schema mismatch for get_item, trying alternative key order: {error_msg}")
-                    try:
-                        response = table.get_item(Key={
-                            'user_id': str(user_id),  # Try user_id as partition key
-                            'session_id': str(session_id)  # session_id as sort key
-                        })
-                        logger.info("Successfully retrieved with alternative key order (user_id, session_id)")
-                    except Exception as alt_error:
-                        # If both fail, re-raise the original error
-                        raise key_error
-                else:
+            # Table has composite key (session_id + user_id)
+            # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
+            # Try both key orders to handle schema variations
+            response = None
+            last_error = None
+            
+            key_orders = [
+                {'session_id': str(session_id), 'user_id': str(user_id)},
+                {'user_id': str(user_id), 'session_id': str(session_id)}
+            ]
+            
+            for key_order in key_orders:
+                try:
+                    response = table.get_item(Key=key_order)
+                    logger.info(f"Successfully retrieved session with key order: {list(key_order.keys())}")
+                    break  # Success, exit loop
+                except ClientError as e:
+                    error_code = e.response.get('Error', {}).get('Code', '')
+                    error_msg = str(e)
+                    last_error = e
+                    if error_code == 'ValidationException':
+                        logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
+                        continue  # Try next key order
+                    else:
+                        # Non-validation error, re-raise immediately
+                        raise
+                except Exception as e:
+                    last_error = e
+                    logger.error(f"Unexpected error getting session: {e}")
                     raise
+            
+            if response is None:
+                # Both key orders failed
+                error_msg = str(last_error) if last_error else 'Unknown error'
+                logger.error(f"Failed to get session with both key orders: {error_msg}")
+                # Preserve the original exception if it was a ValidationException
+                if last_error and isinstance(last_error, ClientError):
+                    error_code = last_error.response.get('Error', {}).get('Code', '')
+                    if error_code == 'ValidationException':
+                        # Re-raise as ValidationException so outer handler can catch it properly
+                        raise last_error
+                raise Exception(f"Failed to get session: {error_msg}")
             
             session = response.get('Item')
             
@@ -822,33 +877,48 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                     logger.warning(f"Error deleting jobs for session {session_id}: {jobs_error}")
             
             # Delete from DynamoDB - table has composite key (session_id + user_id)
-            # Try with session_id as partition key first (expected schema)
-            try:
-                table.delete_item(
-                    Key={
-                        'session_id': str(session_id),  # Ensure string type
-                        'user_id': str(user_id)  # Ensure string type
-                    }
-                )
-            except ClientError as key_error:
-                # If that fails, try with user_id as partition key (alternative schema)
-                error_code = key_error.response.get('Error', {}).get('Code', '')
-                error_msg = str(key_error)
-                if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
-                    logger.warning(f"Key schema mismatch for delete_item, trying alternative key order: {error_msg}")
-                    try:
-                        table.delete_item(
-                            Key={
-                                'user_id': str(user_id),  # Try user_id as partition key
-                                'session_id': str(session_id)  # session_id as sort key
-                            }
-                        )
-                        logger.info("Successfully deleted with alternative key order (user_id, session_id)")
-                    except Exception as alt_error:
-                        # If both fail, re-raise the original error
-                        raise key_error
-                else:
+            # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
+            # Try both key orders to handle schema variations
+            deleted = False
+            last_error = None
+            
+            key_orders = [
+                {'session_id': str(session_id), 'user_id': str(user_id)},
+                {'user_id': str(user_id), 'session_id': str(session_id)}
+            ]
+            
+            for key_order in key_orders:
+                try:
+                    table.delete_item(Key=key_order)
+                    logger.info(f"Successfully deleted session with key order: {list(key_order.keys())}")
+                    deleted = True
+                    break  # Success, exit loop
+                except ClientError as e:
+                    error_code = e.response.get('Error', {}).get('Code', '')
+                    error_msg = str(e)
+                    last_error = e
+                    if error_code == 'ValidationException':
+                        logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
+                        continue  # Try next key order
+                    else:
+                        # Non-validation error, re-raise immediately
+                        raise
+                except Exception as e:
+                    last_error = e
+                    logger.error(f"Unexpected error deleting session: {e}")
                     raise
+            
+            if not deleted:
+                # Both key orders failed
+                error_msg = str(last_error) if last_error else 'Unknown error'
+                logger.error(f"Failed to delete session with both key orders: {error_msg}")
+                # Preserve the original exception if it was a ValidationException
+                if last_error and isinstance(last_error, ClientError):
+                    error_code = last_error.response.get('Error', {}).get('Code', '')
+                    if error_code == 'ValidationException':
+                        # Re-raise as ValidationException so outer handler can catch it properly
+                        raise last_error
+                raise Exception(f"Failed to delete session: {error_msg}")
             
             logger.info(f"Deleted session: {session_id}")
             
@@ -863,8 +933,17 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
             logger.error(f"Error deleting session ({error_type}): {error_msg}")
             logger.error(f"Full error details: {repr(e)}")
             
+            # Check for ValidationException in ClientError exceptions
+            is_validation_error = False
+            if isinstance(e, ClientError):
+                error_code = e.response.get('Error', {}).get('Code', '')
+                if error_code == 'ValidationException':
+                    is_validation_error = True
+            elif 'ValidationException' in error_type or 'ValidationException' in error_msg:
+                is_validation_error = True
+            
             # Provide more specific error messages
-            if 'ValidationException' in error_type:
+            if is_validation_error:
                 logger.error(f"ValidationException - Key schema mismatch. session_id={session_id}, user_id={user_id}")
                 return {
                     'success': False,

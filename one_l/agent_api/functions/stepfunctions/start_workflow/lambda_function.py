@@ -198,44 +198,40 @@ def lambda_handler(event, context):
                         sessions_table_name = os.environ.get('SESSIONS_TABLE')
                         if sessions_table_name:
                             sessions_table = dynamodb.Table(sessions_table_name)
-                            try:
-                                sessions_table.update_item(
-                                    Key={
-                                        'session_id': session_id,
-                                        'user_id': user_id
-                                    },
-                                    UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
-                                    ExpressionAttributeValues={
-                                        ':title': filename,
-                                        ':updated_at': timestamp_iso,
-                                        ':last_activity': timestamp_iso
-                                    }
-                                )
-                                logger.info(f"Updated session {session_id} title to: {filename}")
-                            except ClientError as key_error:
-                                # Try alternative key order if schema mismatch
-                                error_code = key_error.response.get('Error', {}).get('Code', '')
-                                error_msg = str(key_error)
-                                if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
-                                    logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
-                                    try:
-                                        sessions_table.update_item(
-                                            Key={
-                                                'user_id': user_id,
-                                                'session_id': session_id
-                                            },
-                                            UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
-                                            ExpressionAttributeValues={
-                                                ':title': filename,
-                                                ':updated_at': timestamp_iso,
-                                                ':last_activity': timestamp_iso
-                                            }
-                                        )
-                                        logger.info(f"Updated session {session_id} title to: {filename} (alternative key order)")
-                                    except Exception as alt_error:
-                                        raise key_error
-                                else:
+                            # Try both key orders to handle schema variations
+                            key_orders = [
+                                {'session_id': str(session_id), 'user_id': str(user_id)},
+                                {'user_id': str(user_id), 'session_id': str(session_id)}
+                            ]
+                            
+                            updated = False
+                            for key_order in key_orders:
+                                try:
+                                    sessions_table.update_item(
+                                        Key=key_order,
+                                        UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                                        ExpressionAttributeValues={
+                                            ':title': filename,
+                                            ':updated_at': timestamp_iso,
+                                            ':last_activity': timestamp_iso
+                                        }
+                                    )
+                                    logger.info(f"Updated session {session_id} title to: {filename} with key order: {list(key_order.keys())}")
+                                    updated = True
+                                    break  # Success, exit loop
+                                except ClientError as e:
+                                    error_code = e.response.get('Error', {}).get('Code', '')
+                                    if error_code == 'ValidationException':
+                                        logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next")
+                                        continue  # Try next key order
+                                    else:
+                                        raise  # Non-validation error, re-raise
+                                except Exception as e:
+                                    logger.warning(f"Error updating session title: {e}")
                                     raise
+                            
+                            if not updated:
+                                logger.warning(f"Failed to update session {session_id} title with both key orders")
                         else:
                             logger.warning("SESSIONS_TABLE environment variable not set, skipping session title update")
                     except Exception as title_update_error:

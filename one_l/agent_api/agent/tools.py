@@ -2351,7 +2351,7 @@ def save_analysis_to_dynamodb(
                 item['progress'] = 100
         else:
             # New record (no timestamp provided) - set default fields
-            item['created_at'] = timestamp
+            item['created_at'] = datetime.utcnow().isoformat()
             item['updated_at'] = datetime.utcnow().isoformat()
         
         # Save to DynamoDB (put_item will create or replace entire item)

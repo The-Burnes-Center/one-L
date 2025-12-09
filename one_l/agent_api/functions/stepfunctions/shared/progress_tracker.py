@@ -261,46 +261,41 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None,
                 sessions_table_name = os.environ.get('SESSIONS_TABLE')
                 if sessions_table_name:
                     sessions_table = dynamodb.Table(sessions_table_name)
-                    try:
-                        sessions_table.update_item(
-                            Key={
-                                'session_id': session_id,
-                                'user_id': user_id
-                            },
-                            UpdateExpression='ADD document_count :inc '
-                                            'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
-                            ExpressionAttributeValues={
-                                ':inc': 1,
-                                ':updated': datetime.utcnow().isoformat(),
-                                ':has_results': True
-                            }
-                        )
-                        logger.info(f"Auto-updated session {session_id}: incremented document_count, set has_results=True")
-                    except ClientError as key_error:
-                        # Try alternative key order if schema mismatch
-                        error_code = key_error.response.get('Error', {}).get('Code', '')
-                        error_msg = str(key_error)
-                        if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
-                            logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
-                            try:
-                                sessions_table.update_item(
-                                    Key={
-                                        'user_id': user_id,
-                                        'session_id': session_id
-                                    },
-                                    UpdateExpression='ADD document_count :inc '
-                                                    'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
-                                    ExpressionAttributeValues={
-                                        ':inc': 1,
-                                        ':updated': datetime.utcnow().isoformat(),
-                                        ':has_results': True
-                                    }
-                                )
-                                logger.info(f"Auto-updated session {session_id} (alternative key order)")
-                            except Exception as alt_error:
-                                raise key_error
-                        else:
+                    # Try both key orders to handle schema variations
+                    key_orders = [
+                        {'session_id': str(session_id), 'user_id': str(user_id)},
+                        {'user_id': str(user_id), 'session_id': str(session_id)}
+                    ]
+                    
+                    updated = False
+                    for key_order in key_orders:
+                        try:
+                            sessions_table.update_item(
+                                Key=key_order,
+                                UpdateExpression='ADD document_count :inc '
+                                                'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
+                                ExpressionAttributeValues={
+                                    ':inc': 1,
+                                    ':updated': datetime.utcnow().isoformat(),
+                                    ':has_results': True
+                                }
+                            )
+                            logger.info(f"Auto-updated session {session_id} with key order: {list(key_order.keys())}")
+                            updated = True
+                            break  # Success, exit loop
+                        except ClientError as e:
+                            error_code = e.response.get('Error', {}).get('Code', '')
+                            if error_code == 'ValidationException':
+                                logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next")
+                                continue  # Try next key order
+                            else:
+                                raise  # Non-validation error, re-raise
+                        except Exception as e:
+                            logger.warning(f"Error updating session: {e}")
                             raise
+                    
+                    if not updated:
+                        logger.warning(f"Failed to auto-update session {session_id} with both key orders")
             except Exception as session_update_error:
                 logger.warning(f"Failed to auto-update session {session_id}: {session_update_error}")
         
