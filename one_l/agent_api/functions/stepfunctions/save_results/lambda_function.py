@@ -91,8 +91,13 @@ def lambda_handler(event, context):
         # Use job_id as analysis_id (they're the same in Step Functions workflow)
         analysis_id = job_id or session_id
         
+        # CRITICAL: Get timestamp from event to update existing job record (not create duplicate)
+        timestamp = event.get('timestamp')
+        if not timestamp:
+            logger.warning(f"No timestamp provided in event for job {job_id}, will create new record")
+        
         # Call save_analysis_to_dynamodb with correct parameters
-        logger.info(f"Saving analysis results for session {session_id}, analysis_id: {analysis_id}")
+        logger.info(f"Saving analysis results for session {session_id}, analysis_id: {analysis_id}, timestamp: {timestamp}")
         result = save_analysis_to_dynamodb(
             analysis_id=analysis_id,
             document_s3_key=document_s3_key,
@@ -103,7 +108,8 @@ def lambda_handler(event, context):
             citations=None,
             session_id=session_id,
             user_id=user_id,
-            redlined_result=redlined_result
+            redlined_result=redlined_result,
+            timestamp=timestamp  # Pass timestamp to update existing job record
         )
         
         # Extract analysis_id from result (should be same as what we passed)

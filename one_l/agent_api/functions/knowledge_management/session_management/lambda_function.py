@@ -197,14 +197,34 @@ def cleanup_empty_sessions(user_id: str, max_age_days: int = 7) -> Dict[str, Any
                 # If no actual documents AND no active jobs, delete the session
                 if len(actual_results) == 0 and len(active_jobs) == 0:
                     try:
-                        sessions_table.delete_item(
-                            Key={
-                                'session_id': session_id,
-                                'user_id': user_id
-                            }
-                        )
-                        deleted_count += 1
-                        logger.info(f"Deleted empty session {session_id} (created: {created_at})")
+                        try:
+                            sessions_table.delete_item(
+                                Key={
+                                    'session_id': session_id,
+                                    'user_id': user_id
+                                }
+                            )
+                            deleted_count += 1
+                            logger.info(f"Deleted empty session {session_id} (created: {created_at})")
+                        except ClientError as key_error:
+                            # Try alternative key order if schema mismatch
+                            error_code = key_error.response.get('Error', {}).get('Code', '')
+                            error_msg = str(key_error)
+                            if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
+                                logger.warning(f"Key schema mismatch in cleanup, trying alternative key order: {error_msg}")
+                                try:
+                                    sessions_table.delete_item(
+                                        Key={
+                                            'user_id': user_id,
+                                            'session_id': session_id
+                                        }
+                                    )
+                                    deleted_count += 1
+                                    logger.info(f"Deleted empty session {session_id} (alternative key order)")
+                                except Exception as alt_error:
+                                    raise key_error
+                            else:
+                                raise
                     except Exception as delete_error:
                         logger.warning(f"Failed to delete session {session_id}: {delete_error}")
             except Exception as check_error:
@@ -509,10 +529,11 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
                 },
                 ReturnValues='ALL_NEW'
             )
-        except Exception as key_error:
+        except ClientError as key_error:
             # If that fails, try with user_id as partition key (alternative schema)
+            error_code = key_error.response.get('Error', {}).get('Code', '')
             error_msg = str(key_error)
-            if 'ValidationException' in error_msg and 'key element does not match the schema' in error_msg:
+            if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
                 logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
                 try:
                     response = table.update_item(
@@ -721,10 +742,11 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                     'session_id': str(session_id),  # Ensure string type
                     'user_id': str(user_id)  # Ensure string type
                 })
-            except Exception as key_error:
+            except ClientError as key_error:
                 # If that fails, try with user_id as partition key (alternative schema)
+                error_code = key_error.response.get('Error', {}).get('Code', '')
                 error_msg = str(key_error)
-                if 'ValidationException' in error_msg and 'key element does not match the schema' in error_msg:
+                if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
                     logger.warning(f"Key schema mismatch for get_item, trying alternative key order: {error_msg}")
                     try:
                         response = table.get_item(Key={
@@ -808,10 +830,11 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                         'user_id': str(user_id)  # Ensure string type
                     }
                 )
-            except Exception as key_error:
+            except ClientError as key_error:
                 # If that fails, try with user_id as partition key (alternative schema)
+                error_code = key_error.response.get('Error', {}).get('Code', '')
                 error_msg = str(key_error)
-                if 'ValidationException' in error_msg and 'key element does not match the schema' in error_msg:
+                if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
                     logger.warning(f"Key schema mismatch for delete_item, trying alternative key order: {error_msg}")
                     try:
                         table.delete_item(
