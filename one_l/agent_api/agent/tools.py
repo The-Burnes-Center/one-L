@@ -1047,12 +1047,7 @@ def parse_conflicts_for_redlining(analysis_data: str) -> List[Dict[str, str]]:
                                 
                                 # Store original vendor_quote (only normalize escaped quotes for JSON parsing)
                                 # Full normalization will happen during matching to preserve original structure
-                                vendor_quote_before_norm = validated_conflict.vendor_quote.strip()
-                                vendor_quote_text = normalize_escaped_quotes(vendor_quote_before_norm)
-                                logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, before normalize_escaped_quotes='{vendor_quote_before_norm[:150]}...'")
-                                logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, after normalize_escaped_quotes='{vendor_quote_text[:150]}...'")
-                                if vendor_quote_before_norm != vendor_quote_text:
-                                    logger.info(f"PARSE_NORMALIZE: ID={validated_conflict.clarification_id}, normalization changed the text")
+                                vendor_quote_text = normalize_escaped_quotes(validated_conflict.vendor_quote.strip())
                                 
                                 # Validate for truncated quotes
                                 is_truncated = _validate_vendor_quote_completeness(vendor_quote_text, validated_conflict.clarification_id)
@@ -1338,9 +1333,6 @@ def normalize_escaped_quotes(text: str) -> str:
     if not text:
         return text
     
-    original_text = text
-    had_backslashes = '\\' in text
-    
     # Replace literal \" with " (backslash followed by quote)
     # This handles cases like: \"word\" -> "word"
     text = text.replace('\\"', '"')
@@ -1349,22 +1341,6 @@ def normalize_escaped_quotes(text: str) -> str:
     # Handle unicode escapes (though these should be handled by JSON parsing)
     text = text.replace('\\u0022', '"')  # Unicode double quote
     text = text.replace('\\u0027', "'")  # Unicode single quote
-    
-    # Also handle cases where backslash appears before curly quotes (shouldn't happen after JSON parsing, but handle it)
-    text = text.replace('\\"', '"')  # Escaped left curly quote
-    text = text.replace('\\"', '"')  # Escaped right curly quote
-    
-    # Log if normalization changed anything
-    if had_backslashes and text != original_text:
-        logger.info(f"NORMALIZE_ESCAPED_QUOTES: Changed text. Before (first 100): '{original_text[:100]}...', After (first 100): '{text[:100]}...'")
-        logger.info(f"NORMALIZE_ESCAPED_QUOTES: Backslash count before={original_text.count('\\\\')}, after={text.count('\\\\')}")
-        # Show where backslashes were found (first few occurrences)
-        backslash_count = 0
-        for i, char in enumerate(original_text):
-            if char == '\\' and i < len(original_text) - 1 and backslash_count < 3:
-                next_char = original_text[i+1]
-                logger.debug(f"NORMALIZE_ESCAPED_QUOTES: Found backslash at pos {i}, followed by '{next_char}' (U+{ord(next_char):04X})")
-                backslash_count += 1
     
     return text
 
@@ -1387,9 +1363,6 @@ def normalize_quotes(text: str) -> str:
     if not text:
         return text
     
-    original_text = text
-    had_curly_quotes = '"' in text or '"' in text or ''' in text or ''' in text
-    
     # Normalize double quotes (curly, smart, etc.) to standard "
     # Order matters: normalize curly quotes first, then other variants
     text = text.replace('\u201C', '"')  # Left double quotation mark (U+201C) "
@@ -1404,33 +1377,6 @@ def normalize_quotes(text: str) -> str:
     text = text.replace('\u201A', "'")  # Single low-9 quotation mark (U+201A) ‚
     text = text.replace('\u2039', "'")  # Single left-pointing angle quotation (U+2039) ‹
     text = text.replace('\u203A', "'")  # Single right-pointing angle quotation (U+203A) ›
-    
-    # Also handle any remaining non-ASCII quote-like characters
-    # This is a catch-all for any Unicode quote variants we might have missed
-    result_chars = []
-    for char in text:
-        # Check if character is a quote-like character
-        if unicodedata.category(char) in ('Pi', 'Pf'):  # Initial/Final punctuation (quotes)
-            # Convert to standard quote
-            if char in ['\u201C', '\u201D', '\u00AB', '\u00BB', '\u201E']:  # ", ", «, », „
-                result_chars.append('"')
-            elif char in ['\u2018', '\u2019', '\u2039', '\u203A', '\u201A']:  # ', ', ‹, ›, ‚
-                result_chars.append("'")
-            else:
-                result_chars.append(char)  # Keep as-is if we don't recognize it
-        else:
-            result_chars.append(char)
-    
-    text = ''.join(result_chars)
-    
-    # Log if normalization changed anything (only for significant changes to avoid spam)
-    if had_curly_quotes and text != original_text:
-        # Find first difference
-        for i, (orig_char, norm_char) in enumerate(zip(original_text, text)):
-            if orig_char != norm_char:
-                logger.debug(f"NORMALIZE_QUOTES: Changed at position {i}. Before: '{orig_char}' (U+{ord(orig_char):04X}), After: '{norm_char}' (U+{ord(norm_char):04X})")
-                logger.debug(f"NORMALIZE_QUOTES: Context (first 100): '{original_text[:100]}...' -> '{text[:100]}...'")
-                break
     
     return text
 
@@ -1529,12 +1475,6 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                 empty_skipped += 1
                 continue
             
-            # Log vendor quote as retrieved from redline_items
-            conflict_id = redline_item.get('id', redline_item.get('clarification_id', 'Unknown'))
-            logger.info(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote length={len(vendor_quote)}")
-            if '\\' in vendor_quote:
-                logger.warning(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote still contains backslashes! count={vendor_quote.count('\\\\')}")
-            
             # Check for duplicates based on vendor_quote only
             normalized_quote = normalize_vendor_quote_for_dedup(vendor_quote)
             if normalized_quote in seen_vendor_quotes:
@@ -1545,11 +1485,11 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             seen_vendor_quotes.add(normalized_quote)
             
             # Get conflict metadata
+            conflict_id = redline_item.get('id', redline_item.get('clarification_id', 'Unknown'))
             serial_num = redline_item.get('serial_number', 'N/A')
             comment = redline_item.get('comment', '')
             
             logger.info(f"SCANNING: Serial={serial_num}, ID={conflict_id}, vendor_quote='{vendor_quote[:80]}...'")
-            logger.info(f"SCANNING_DETAIL: Full vendor_quote length={len(vendor_quote)}, first 200 chars: '{vendor_quote[:200]}'")
             
             # Find match in document using tiered strategy
             match_result = _find_text_match(doc, vendor_quote)
@@ -1737,13 +1677,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 'end_pos': end_pos,
                 'match_type': 'quote_whitespace_normalized'
             }
-        else:
-            # Log why TIER 3 didn't match for debugging
-            if len(quote_ws_normalized) > 50 and quote_ws_normalized[:50].lower() in para_quote_ws_normalized.lower():
-                logger.warning(f"MATCH_TIER3_PARTIAL: First 50 chars match but full text doesn't. quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
-                logger.warning(f"MATCH_TIER3_PARTIAL: quote_ws_normalized='{quote_ws_normalized[:150]}...'")
-                logger.warning(f"MATCH_TIER3_PARTIAL: para_quote_ws_normalized='{para_quote_ws_normalized[:300]}...'")
-        
         # TIER 4: Fully normalized + case-insensitive match
         para_fully_normalized = normalize_for_matching(para_text).lower()
         if fully_normalized.lower() in para_fully_normalized:
@@ -1771,13 +1704,10 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     # If exact match failed but quote is long or we suspect formatting differences,
     # try substring matching as a last resort
     if len(vendor_quote) > 200:  # Only for reasonably long quotes to avoid false positives
-        logger.info(f"MATCH_TIER5B_START: Attempting substring fallback for quote length={len(vendor_quote)}")
         substring_match = _find_partial_match(doc, vendor_quote, quote_ws_normalized, fully_normalized, force_substring_match=True)
         if substring_match:
             logger.info(f"MATCH_FOUND: TIER 5b (substring fallback) in paragraph {substring_match.get('para_idx')}")
             return substring_match
-        else:
-            logger.warning(f"MATCH_TIER5B_FAILED: Substring fallback did not find match for quote length={len(vendor_quote)}")
     
     # TIER 6: Cross-paragraph matching (enhanced for long quotes)
     cross_match = _find_cross_paragraph_match(doc, vendor_quote, fully_normalized, quote_ws_normalized, fully_normalized)
@@ -1787,35 +1717,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     
     logger.warning(f"MATCH_FAILED: Could not find vendor_quote in document. vendor_quote='{vendor_quote[:200]}...'")
     logger.warning(f"MATCH_FAILED: Checked {len([p for p in doc.paragraphs if p.text.strip()])} non-empty paragraphs")
-    logger.warning(f"MATCH_FAILED: quote_normalized='{quote_normalized[:200]}...'")
-    logger.warning(f"MATCH_FAILED: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
-    logger.warning(f"MATCH_FAILED: fully_normalized='{fully_normalized[:200]}...'")
-    # Log character-by-character comparison for first 100 chars to debug quote issues
-    if len(vendor_quote) > 0:
-        logger.warning(f"MATCH_FAILED: First 100 chars of vendor_quote (hex): {vendor_quote[:100].encode('utf-8').hex()}")
-        logger.warning(f"MATCH_FAILED: First 100 chars of quote_normalized (hex): {quote_normalized[:100].encode('utf-8').hex()}")
-    
-    # Try to find partial matches to help diagnose
-    vendor_quote_lower = vendor_quote.lower()
-    for para_idx, paragraph in enumerate(doc.paragraphs):
-        para_text = paragraph.text
-        if not para_text.strip():
-            continue
-        # Check if any significant portion matches
-        para_lower = para_text.lower()
-        # Look for a 50-character substring match
-        for i in range(len(vendor_quote_lower) - 50):
-            substring = vendor_quote_lower[i:i+50]
-            if substring in para_lower:
-                logger.warning(f"MATCH_PARTIAL: Found 50-char substring match in paragraph {para_idx}: '{substring}'")
-                logger.warning(f"MATCH_PARTIAL: Paragraph {para_idx} text: '{para_text[:300]}...'")
-                break
-    
-    # Log a sample paragraph for debugging
-    sample_paras = [p.text for p in doc.paragraphs if p.text.strip()][:3]
-    for i, para in enumerate(sample_paras):
-        logger.warning(f"MATCH_FAILED: Sample paragraph {i} (first 200 chars): '{para[:200]}...'")
-        logger.warning(f"MATCH_FAILED: Sample paragraph {i} normalized: '{normalize_for_matching(para)[:200]}...'")
     return None
 
 
@@ -1938,16 +1839,6 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
         # Check if vendor quote appears within paragraph (not just at start)
         # This handles cases where vendor quote is a substring (e.g., starts after " Conflicts. ")
         # Try multiple normalization levels - check this for ALL paragraphs, not just when not a prefix
-        
-        # Log the substring check attempt for debugging (only for first few paragraphs or when first 50 chars match)
-        should_log_check = (para_idx < 5) or (len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized)
-        if should_log_check:
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: Checking paragraph {para_idx} for substring match")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: substring check result: {quote_ws_normalized in para_quote_ws_normalized}")
-        
         if quote_ws_normalized in para_quote_ws_normalized:
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
             logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, quote_ws_normalized found at position {norm_start}")
@@ -1979,33 +1870,18 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'match_type': 'partial_substring',
                     'is_truncated': is_likely_truncated
                 }
-        else:
-            # Only log when there's a partial match (first 50 chars found) - this is the interesting case
-            # Don't log for every paragraph to avoid log spam
-            if len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized:
-                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: First 50 chars of quote found in paragraph {para_idx}, but full quote not found")
-                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
-                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
-                
-                # Find where the text diverges
-                pos50 = para_quote_ws_normalized.find(quote_ws_normalized[:50])
-                if pos50 >= 0:
-                    # Compare character by character to find first difference
-                    for i in range(50, min(len(quote_ws_normalized), len(para_quote_ws_normalized) - pos50)):
-                        if quote_ws_normalized[i] != para_quote_ws_normalized[pos50 + i]:
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Text diverges at position {i} (char {i} of quote)")
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote char at pos {i}: '{quote_ws_normalized[i]}' (U+{ord(quote_ws_normalized[i]):04X})")
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Doc char at pos {pos50 + i}: '{para_quote_ws_normalized[pos50 + i]}' (U+{ord(para_quote_ws_normalized[pos50 + i]):04X})")
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Context (20 chars before/after): quote='{quote_ws_normalized[max(0,i-10):i+10]}', doc='{para_quote_ws_normalized[max(0,pos50+i-10):pos50+i+10]}'")
-                            break
-                    else:
-                        # No difference found up to min length - check if quote is longer than available text
-                        if len(quote_ws_normalized) > len(para_quote_ws_normalized) - pos50:
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote is longer than available text in paragraph. Quote length={len(quote_ws_normalized)}, Available={len(para_quote_ws_normalized) - pos50}")
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote ends with: '{quote_ws_normalized[-50:]}'")
-                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Doc ends with: '{para_quote_ws_normalized[-50:]}'")
-                
-                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: This suggests normalization or text differences")
+        # Log divergence details only when first 50 chars match but full quote doesn't (for debugging)
+        elif len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized:
+            pos50 = para_quote_ws_normalized.find(quote_ws_normalized[:50])
+            if pos50 >= 0:
+                # Find where text diverges
+                for i in range(50, min(len(quote_ws_normalized), len(para_quote_ws_normalized) - pos50)):
+                    if quote_ws_normalized[i] != para_quote_ws_normalized[pos50 + i]:
+                        logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: First 50 chars match in paragraph {para_idx}, but diverges at position {i}. Quote char: '{quote_ws_normalized[i]}' (U+{ord(quote_ws_normalized[i]):04X}), Doc char: '{para_quote_ws_normalized[pos50 + i]}' (U+{ord(para_quote_ws_normalized[pos50 + i]):04X})")
+                        break
+                else:
+                    if len(quote_ws_normalized) > len(para_quote_ws_normalized) - pos50:
+                        logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote is longer than available text in paragraph {para_idx}. Quote length={len(quote_ws_normalized)}, Available={len(para_quote_ws_normalized) - pos50}")
     
     return None
 
