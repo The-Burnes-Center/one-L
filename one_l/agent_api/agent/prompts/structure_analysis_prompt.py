@@ -25,13 +25,13 @@ Your response MUST be ONLY a valid JSON object matching the StructureAnalysisOut
   "queries": [
     {{
       "query": "query string with 50-100+ unique terms",
-      "clause_ref": "optional section identifier",
+      "section": "optional section identifier",
       "max_results": 50,
       "query_id": 1
     }}
   ],
   "chunk_structure": {{
-    "clause_refs": ["list of clause_ref"],
+    "sections": ["list of section identifiers"],
     "vendor_exceptions": [],
     "document_references": ["Massachusetts documents referenced"],
     "character_range": "characters 0-100000"
@@ -75,7 +75,7 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
 Each query MUST:
-- Use the `clause_ref` field to indicate the vendor section/exhibit/zone it targets
+- Use the `section` field to indicate the vendor section/exhibit/zone it targets
 - Be distinct from other queries (different sections, topics, contexts)
 - Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
