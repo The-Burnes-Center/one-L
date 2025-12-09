@@ -1401,11 +1401,41 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
+def normalize_subsection_markers(text: str) -> str:
+    """
+    Remove subsection markers that may appear in formatted documents.
+    
+    Handles markers like (a), (b), (i), (ii), (1), (2), etc. that may
+    appear in formatted documents but not in vendor quotes extracted by LLM.
+    
+    Args:
+        text: Text that may contain subsection markers
+        
+    Returns:
+        Text with subsection markers removed
+    """
+    if not text:
+        return text
+    
+    # Remove subsection markers at start of text or after whitespace
+    # Patterns: (a), (b), (i), (ii), (iii), (iv), (v), (1), (2), etc.
+    # Also handles with periods: (a.), (i.), etc.
+    # Match: optional whitespace + opening paren + letter/number + optional period + closing paren + optional whitespace
+    text = re.sub(r'\s*\([a-z]\)\.?\s*', ' ', text, flags=re.IGNORECASE)  # (a), (b), etc.
+    text = re.sub(r'\s*\([ivxlcdm]+\)\.?\s*', ' ', text, flags=re.IGNORECASE)  # (i), (ii), (iii), (iv), (v), etc. (Roman numerals)
+    text = re.sub(r'\s*\(\d+\)\.?\s*', ' ', text)  # (1), (2), (3), etc.
+    
+    # Clean up any double spaces created
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
+
 def normalize_for_matching(text: str) -> str:
     """
     Apply all normalizations to prepare text for matching.
     
-    Combines: escaped quotes, quote types, and whitespace normalization.
+    Combines: escaped quotes, quote types, whitespace normalization, and subsection marker removal.
     
     Args:
         text: Text to normalize
@@ -1418,6 +1448,7 @@ def normalize_for_matching(text: str) -> str:
     
     text = normalize_escaped_quotes(text)
     text = normalize_quotes(text)
+    text = normalize_subsection_markers(text)  # Remove (a), (i), etc. markers
     text = normalize_whitespace(text)
     return text
 
@@ -1622,7 +1653,7 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     # Prepare normalized versions
     # Note: vendor_quote may already be normalized from parsing, so we normalize again (idempotent)
     quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
-    quote_ws_normalized = normalize_whitespace(quote_normalized)
+    quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(quote_normalized))
     fully_normalized = normalize_for_matching(vendor_quote)
     
     # Search through all paragraphs
@@ -1662,7 +1693,7 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         
         # TIER 3: Quote + whitespace normalized match
         para_quotes_only = normalize_quotes(para_text)
-        para_quote_ws_normalized = normalize_whitespace(para_quotes_only)
+        para_quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(para_quotes_only))
         if quote_ws_normalized in para_quote_ws_normalized:
             # Find position in normalized text, then map back
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
@@ -1803,7 +1834,7 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
         
         # Normalize paragraph text
         para_quotes_only = normalize_quotes(para_text)
-        para_quote_ws_normalized = normalize_whitespace(para_quotes_only)
+        para_quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(para_quotes_only))
         para_fully_normalized = normalize_for_matching(para_text).lower()
         
         # Check if vendor quote is a prefix of paragraph (after normalization)
@@ -1932,7 +1963,7 @@ def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str, q
             # Try multiple normalization levels for better matching
             # First try quote+whitespace normalized if available
             if quote_ws_normalized:
-                joined_quote_ws = normalize_whitespace(normalize_quotes(joined_text))
+                joined_quote_ws = normalize_whitespace(normalize_subsection_markers(normalize_quotes(joined_text)))
                 if quote_ws_normalized in joined_quote_ws:
                     logger.info(f"CROSS_PARA_MATCH: Found (quote_ws_normalized) in paragraphs {joined_paras}")
                     return {
