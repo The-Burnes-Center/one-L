@@ -1337,8 +1337,8 @@ const SessionWorkspace = ({ session }) => {
     };
     
     try {
-      // Use centralized polling service
-      const finalResponse = await jobPollingService.pollUntilComplete(jobId, handleUpdate, 120);
+      // Use centralized polling service (uses default 20 min max duration)
+      const finalResponse = await jobPollingService.pollUntilComplete(jobId, handleUpdate);
       
       // Handle completion or failure based on status
       if (finalResponse.status === 'completed') {
