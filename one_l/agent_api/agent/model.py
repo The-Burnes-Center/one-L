@@ -383,8 +383,7 @@ def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_
             'bytes': buffer.getvalue(),
             'chunk_num': 0,
             'start_char': 0,
-            'end_char': 0,
-            'is_pdf': False
+            'end_char': 0
         })
         return chunks
     
@@ -414,8 +413,7 @@ def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_
             'bytes': chunk_bytes,
             'chunk_num': chunk_num,
             'start_char': start_char,
-            'end_char': end_char,
-            'is_pdf': False
+            'end_char': end_char
         })
         
         chunk_num += 1
