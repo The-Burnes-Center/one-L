@@ -403,7 +403,6 @@ const agentAPI = {
       // Helper function to get file extension from content type
       const getExtensionFromContentType = (contentType) => {
         const mimeToExt = {
-          'application/pdf': '.pdf',
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
           'application/msword': '.doc',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
@@ -585,7 +584,6 @@ const fileUtils = {
     const maxSize = 10 * 1024 * 1024; // 10MB
     const allowedTypes = [
       'text/plain',
-      'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'image/jpeg',

@@ -8,7 +8,7 @@ const extractDocumentName = (s3Key) => {
   if (!s3Key) return 'Unknown Document';
   const parts = s3Key.split('/');
   const filename = parts[parts.length - 1];
-  // Remove UUID prefix if present (format: uuid_filename.pdf)
+  // Remove UUID prefix if present (format: uuid_filename.docx)
   const match = filename.match(/^[a-f0-9-]+_(.+)$/i);
   return match ? match[1] : filename;
 };
