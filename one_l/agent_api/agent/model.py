@@ -419,7 +419,8 @@ def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_
         chunk_num += 1
         # Move start position with overlap
         start_char = end_char - overlap
-        if start_char >= total_chars - overlap:
+        # Break when we've processed all content (end_char reached total_chars)
+        if end_char >= total_chars:
             break
     
     return chunks
