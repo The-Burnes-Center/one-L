@@ -1938,12 +1938,19 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
         # Check if vendor quote appears within paragraph (not just at start)
         # This handles cases where vendor quote is a substring (e.g., starts after " Conflicts. ")
         # Try multiple normalization levels - check this for ALL paragraphs, not just when not a prefix
+        
+        # Log the substring check attempt for debugging (only for first few paragraphs or when first 50 chars match)
+        should_log_check = (para_idx < 5) or (len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized)
+        if should_log_check:
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: Checking paragraph {para_idx} for substring match")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
+            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: substring check result: {quote_ws_normalized in para_quote_ws_normalized}")
+        
         if quote_ws_normalized in para_quote_ws_normalized:
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
             logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, quote_ws_normalized found at position {norm_start}")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized length={len(quote_ws_normalized)}, para_quote_ws_normalized length={len(para_quote_ws_normalized)}")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized preview='{quote_ws_normalized[:200]}...'")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized preview='{para_quote_ws_normalized[:200]}...'")
             # Only return if it's not already a prefix match (avoid duplicate)
             if norm_start > 0:
                 logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (quote_ws_normalized)")
@@ -1979,6 +1986,25 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                 logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: First 50 chars of quote found in paragraph {para_idx}, but full quote not found")
                 logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
                 logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
+                
+                # Find where the text diverges
+                pos50 = para_quote_ws_normalized.find(quote_ws_normalized[:50])
+                if pos50 >= 0:
+                    # Compare character by character to find first difference
+                    for i in range(50, min(len(quote_ws_normalized), len(para_quote_ws_normalized) - pos50)):
+                        if quote_ws_normalized[i] != para_quote_ws_normalized[pos50 + i]:
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Text diverges at position {i} (char {i} of quote)")
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote char at pos {i}: '{quote_ws_normalized[i]}' (U+{ord(quote_ws_normalized[i]):04X})")
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Doc char at pos {pos50 + i}: '{para_quote_ws_normalized[pos50 + i]}' (U+{ord(para_quote_ws_normalized[pos50 + i]):04X})")
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Context (20 chars before/after): quote='{quote_ws_normalized[max(0,i-10):i+10]}', doc='{para_quote_ws_normalized[max(0,pos50+i-10):pos50+i+10]}'")
+                            break
+                    else:
+                        # No difference found up to min length - check if quote is longer than available text
+                        if len(quote_ws_normalized) > len(para_quote_ws_normalized) - pos50:
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote is longer than available text in paragraph. Quote length={len(quote_ws_normalized)}, Available={len(para_quote_ws_normalized) - pos50}")
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Quote ends with: '{quote_ws_normalized[-50:]}'")
+                            logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: Doc ends with: '{para_quote_ws_normalized[-50:]}'")
+                
                 logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: This suggests normalization or text differences")
     
     return None
