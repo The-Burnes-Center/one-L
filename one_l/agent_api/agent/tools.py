@@ -1708,6 +1708,21 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 'end_pos': end_pos,
                 'match_type': 'quote_whitespace_normalized'
             }
+        
+        # TIER 3b: Quote + whitespace normalized + case-insensitive match (for case differences)
+        if quote_ws_normalized.lower() in para_quote_ws_normalized.lower():
+            norm_start = para_quote_ws_normalized.lower().find(quote_ws_normalized.lower())
+            logger.info(f"MATCH_FOUND: TIER 3b (quote_whitespace_normalized_case_insensitive) in paragraph {para_idx} at normalized position {norm_start}")
+            start_pos = _map_normalized_to_original_position(para_text, norm_start)
+            end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'match_type': 'quote_whitespace_normalized_case_insensitive'
+            }
+        
         # TIER 4: Fully normalized + case-insensitive match
         para_fully_normalized = normalize_for_matching(para_text).lower()
         if fully_normalized.lower() in para_fully_normalized:
@@ -1853,6 +1868,19 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                 'match_type': 'partial_truncated',
                 'is_truncated': True
             }
+        elif para_quote_ws_normalized.lower().startswith(quote_ws_normalized.lower()):
+            # Found prefix match with case-insensitive check
+            logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote is prefix of paragraph {para_idx} (quote_ws_normalized_case_insensitive)")
+            start_pos = 0
+            end_pos = _map_normalized_to_original_position(para_text, len(quote_ws_normalized))
+            return {
+                'type': 'single_para',
+                'para_idx': para_idx,
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'match_type': 'partial_truncated_case_insensitive',
+                'is_truncated': True
+            }
         elif para_fully_normalized.startswith(fully_normalized.lower()):
             # Found prefix match with full normalization
             logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote is prefix of paragraph {para_idx} (fully_normalized)")
@@ -1884,6 +1912,21 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'start_pos': start_pos,
                     'end_pos': end_pos,
                     'match_type': 'partial_substring',
+                    'is_truncated': is_likely_truncated
+                }
+        elif quote_ws_normalized.lower() in para_quote_ws_normalized.lower():
+            # Case-insensitive substring check
+            norm_start = para_quote_ws_normalized.lower().find(quote_ws_normalized.lower())
+            if norm_start > 0:
+                logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (quote_ws_normalized_case_insensitive)")
+                start_pos = _map_normalized_to_original_position(para_text, norm_start)
+                end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
+                return {
+                    'type': 'single_para',
+                    'para_idx': para_idx,
+                    'start_pos': start_pos,
+                    'end_pos': end_pos,
+                    'match_type': 'partial_substring_case_insensitive',
                     'is_truncated': is_likely_truncated
                 }
         elif fully_normalized.lower() in para_fully_normalized:
@@ -1936,12 +1979,15 @@ def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str, q
     
     # Determine window size based on quote length
     # Long quotes (>500 chars) might span more paragraphs
+    # Increased window sizes to handle quotes that span many paragraphs
     if len(vendor_quote) > 1000:
-        window_sizes = [4, 5, 6]  # Try larger windows for very long quotes
+        window_sizes = [5, 6, 7, 8, 10]  # Try larger windows for very long quotes
     elif len(vendor_quote) > 500:
-        window_sizes = [3, 4, 5]
+        window_sizes = [4, 5, 6, 7, 8]  # Increased from [3, 4, 5]
+    elif len(vendor_quote) > 300:
+        window_sizes = [3, 4, 5, 6]  # Added intermediate tier
     else:
-        window_sizes = [2, 3]
+        window_sizes = [2, 3, 4]  # Added 4 for medium quotes
     
     # Try joining consecutive paragraphs with different window sizes
     for window_size in window_sizes:
@@ -1970,6 +2016,14 @@ def _find_cross_paragraph_match(doc, vendor_quote: str, normalized_quote: str, q
                         'type': 'cross_para',
                         'paragraphs': joined_paras,
                         'match_type': 'cross_paragraph_quote_ws'
+                    }
+                # Also try case-insensitive version
+                if quote_ws_normalized.lower() in joined_quote_ws.lower():
+                    logger.info(f"CROSS_PARA_MATCH: Found (quote_ws_normalized_case_insensitive) in paragraphs {joined_paras}")
+                    return {
+                        'type': 'cross_para',
+                        'paragraphs': joined_paras,
+                        'match_type': 'cross_paragraph_quote_ws_case_insensitive'
                     }
             
             # Try fully normalized
