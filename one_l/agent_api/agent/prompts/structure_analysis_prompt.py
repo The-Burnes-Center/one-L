@@ -25,13 +25,13 @@ Your response MUST be ONLY a valid JSON object matching the StructureAnalysisOut
   "queries": [
     {{
       "query": "query string with 50-100+ unique terms",
-      "section": "optional section identifier",
+      "clause_ref": "optional section identifier",
       "max_results": 50,
       "query_id": 1
     }}
   ],
   "chunk_structure": {{
-    "sections": ["list of sections"],
+    "clause_refs": ["list of clause_ref"],
     "vendor_exceptions": [],
     "document_references": ["Massachusetts documents referenced"],
     "character_range": "characters 0-100000"
@@ -41,7 +41,7 @@ Your response MUST be ONLY a valid JSON object matching the StructureAnalysisOut
 ```
 CRITICAL: vendor_exceptions MUST be a list of objects (dictionaries), NOT strings. Each object must have:
 - "text": The exact vendor language verbatim (required)
-- "section": The section identifier where this exception was found (optional, can be null)
+- "clause_ref": The section identifier where this exception was found (optional, can be null)
 - "clarification_id": Vendor's ID for this exception if available (optional, can be null)
 </critical>
 
@@ -70,58 +70,27 @@ Divide the vendor content into 8-15 distinct logical zones based on:
 IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a pattern.
 </instructions>
 
-### STEP 3: ROUTE SECTIONS TO MASSACHUSETTS DOCUMENT FAMILIES
-<instructions>
-Determine which Commonwealth documents each vendor section relates to or may be in conflict with:
-
-<document_families>
-1. **IT Terms & Conditions (PRIORITY REFERENCE DOCUMENT) + Standard Contract Form Term (SECONDARY TO IT TERMS & CONDITIONS)**: Core legal/commercial requirements (liability, indemnification, warranties, limitation of liability, payment terms, termination, notice, assignment, confidentiality, order of precedence, audit rights, governing law)
-
-2. **Massachusetts RFR + Commonwealth Exhibits**: Engagement-specific requirements (service levels, deliverables, technical specifications, pricing, vendor responsibilities, security/operational expectations)
-
-3. **Information Security Policies (ISP.001–ISP.010)**: Security governance (acceptable use, access management, incident response, physical security, change management, application controls)
-
-4. **Information Security Standards (IS.011–IS.027)**: Technical security (cryptography, vulnerability management, DR/BCP, logging, network security, secure SDLC, third-party security controls)
-
-5. **Other**: Any other referenced documents, state-specific requirements, Massachusetts procurement regulations
-</document_families>
-
-For vendor language not tied to a specific document family (e.g., auto-renewal, exclusive remedy, sole discretion, “best efforts” or other effort standards, unusually long notice periods, online terms, hyperlinks to external terms, incorporation by reference):
-- Preserve exact language in vendor_exceptions as objects with "text", "section", and "clarification_id" fields
-- Each exception must be an object: {{"text": "exact language", "section": "section name or null", "clarification_id": "vendor ID or null"}}
-- Include in queries for Step 4
-
-IMPORTANT: 
-- Only assign a family when subject matter clearly aligns
-- Capture ALL routable content, even in less prominent sections
-- This step identifies routing targets only, not conflicts
-</instructions>
-
-### STEP 4: INTELLIGENT STRUCTURE-BASED QUERYING
+### STEP 3: INTELLIGENT STRUCTURE-BASED QUERYING
 <instructions>
 Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
 Each query MUST:
-- Use the `section` field to indicate the vendor section/exhibit/zone it targets
+- Use the `clause_ref` field to indicate the vendor section/exhibit/zone it targets
 - Be distinct from other queries (different sections, topics, contexts)
 - Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
 - Not repeat the same vendor content across multiple queries
 
 Build queries based on:
-- Major document sections the vendor addresses
+- Major document sections the vendor addresses 
+- Vendor language that may be in conflict with Massachusetts requirements
 - Massachusetts requirements they're modifying
 - State-specific sections if applicable
 - Technical vs. legal/governance terms
 - Financial/payment vs. operational requirements
 - Security/compliance vs. business terms
 
-IMPORTANT: Let the vendor document structure guide your queries.
-</instructions>
-
-### STEP 5: VALIDATE QUERY COMPLETENESS
-<instructions>
-Ensure your queries collectively check against:
+Your queries should collectively check against:
 - IT Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
 - All referenced Exhibits
 - Request for Response (RFR)
@@ -129,6 +98,11 @@ Ensure your queries collectively check against:
 - Any other mentioned documents
 - State-specific requirements if applicable
 
+IMPORTANT: Let the vendor document structure guide your queries.
+</instructions>
+
+### STEP 4: VALIDATE QUERY COMPLETENESS
+<instructions>
 Distribute your 6-12 queries based on vendor document structure:
 - For fewer sections → more queries per section
 - For many sections → group related sections intelligently
@@ -138,14 +112,13 @@ Distribute your 6-12 queries based on vendor document structure:
 Verification checklist:
 - ✓ 6-12 distinct queries minimum
 - ✓ Major legal concepts included when they appear in multiple sections
-- ✓ Queries distinct by section/context/document family
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
 - ✓ Comprehensive coverage of Massachusetts documents
 - ✓ Adapted to actual vendor document structure
 </instructions>
 
-### STEP 6: OUTPUT VALIDATION
+### STEP 5: OUTPUT VALIDATION
 <instructions>
 Ensure your output:
 - Is ONLY the JSON object matching StructureAnalysisOutput schema
