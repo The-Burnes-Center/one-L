@@ -576,9 +576,9 @@ def update_session_title_from_document(session_id: str, user_id: str, document_s
     try:
         # Extract filename from document_s3_key
         # document_s3_key can be in formats like:
-        # - "vendor-submissions/filename.pdf"
-        # - "sessions/user_id/session_id/vendor-submissions/filename.pdf"
-        # - "filename.pdf"
+        # - "vendor-submissions/filename.docx"
+        # - "sessions/user_id/session_id/vendor-submissions/filename.docx"
+        # - "filename.docx"
         filename = document_s3_key.split('/')[-1] if document_s3_key else None
         
         if not filename:

@@ -38,13 +38,6 @@ except ImportError:
         CHUNK_OVERLAP_CHARACTERS = 2000
     constants = Constants()
 
-# Import PDF utilities if available
-try:
-    from .pdf_processor import is_pdf_file
-    PDF_SUPPORT_ENABLED = True
-except ImportError:
-    PDF_SUPPORT_ENABLED = False
-    def is_pdf_file(filename): return False
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
