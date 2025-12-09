@@ -1,15 +1,42 @@
 /**
  * Centralized job polling service
  * Provides a single source of truth for polling job status across the application
+ * 
+ * Polling phases (20 min total, ~104 API calls):
+ *   Phase 1: 0-3 min   → 15 sec interval (~12 calls)
+ *   Phase 2: 3-15 min  → 10 sec interval (~72 calls)
+ *   Phase 3: 15-20 min → 15 sec interval (~20 calls)
  */
 
 import { agentAPI } from './api.js';
 
 class JobPollingService {
   constructor() {
-    this.activePolls = new Map(); // jobId -> { intervalId, callbacks, lastStatus }
-    this.pollInterval = 5000; // 5 seconds
-    this.maxAttempts = 120; // 10 minutes max
+    this.activePolls = new Map(); // jobId -> { timeoutId, callbacks, lastStatus, startTime }
+    
+    // Polling phase configuration (times in milliseconds)
+    this.phases = [
+      { endTime: 3 * 60 * 1000, interval: 15000 },   // 0-3 min: 15 sec
+      { endTime: 15 * 60 * 1000, interval: 10000 },  // 3-15 min: 10 sec
+      { endTime: 20 * 60 * 1000, interval: 15000 }   // 15-20 min: 15 sec
+    ];
+    
+    this.maxDuration = 20 * 60 * 1000; // 20 minutes max
+  }
+
+  /**
+   * Get the appropriate poll interval based on elapsed time
+   * @param {number} elapsedTime - Time elapsed since polling started (ms)
+   * @returns {number} Poll interval in milliseconds
+   */
+  getIntervalForElapsedTime(elapsedTime) {
+    for (const phase of this.phases) {
+      if (elapsedTime < phase.endTime) {
+        return phase.interval;
+      }
+    }
+    // Default to last phase interval if somehow past all phases
+    return this.phases[this.phases.length - 1].interval;
   }
 
   /**
@@ -35,20 +62,33 @@ class JobPollingService {
       return () => this.stopPolling(jobId, { onUpdate, onComplete, onError });
     }
 
-    let attempts = 0;
+    const startTime = Date.now();
     const callbacks = {
       onUpdate: onUpdate ? [onUpdate] : [],
       onComplete: onComplete ? [onComplete] : [],
       onError: onError ? [onError] : []
     };
 
+    const scheduleNextPoll = () => {
+      const pollData = this.activePolls.get(jobId);
+      if (!pollData) return; // Polling was stopped
+      
+      const elapsedTime = Date.now() - pollData.startTime;
+      const interval = this.getIntervalForElapsedTime(elapsedTime);
+      
+      pollData.timeoutId = setTimeout(poll, interval);
+    };
+
     const poll = async () => {
       try {
-        attempts++;
+        const pollData = this.activePolls.get(jobId);
+        if (!pollData) return; // Polling was stopped
         
-        // Stop if max attempts reached
-        if (attempts > this.maxAttempts) {
-          console.warn(`JobPollingService: Max attempts reached for job ${jobId}`);
+        const elapsedTime = Date.now() - pollData.startTime;
+        
+        // Stop if max duration reached
+        if (elapsedTime > this.maxDuration) {
+          console.warn(`JobPollingService: Max duration (20 min) reached for job ${jobId}`);
           this.stopPolling(jobId);
           return;
         }
@@ -57,6 +97,7 @@ class JobPollingService {
 
         if (!statusResponse.success) {
           console.warn(`JobPollingService: Failed to get status for job ${jobId}`);
+          scheduleNextPoll();
           return;
         }
 
@@ -92,6 +133,9 @@ class JobPollingService {
             }
           });
           this.stopPolling(jobId);
+        } else {
+          // Schedule next poll for non-terminal states
+          scheduleNextPoll();
         }
 
         // Update last status
@@ -101,20 +145,20 @@ class JobPollingService {
 
       } catch (error) {
         console.error(`JobPollingService: Error polling job ${jobId}:`, error);
-        // Don't stop polling on transient errors, but log them
+        // Don't stop polling on transient errors, schedule next poll
+        scheduleNextPoll();
       }
     };
 
-    // Start polling immediately, then at intervals
-    poll();
-    const intervalId = setInterval(poll, this.pollInterval);
-
     this.activePolls.set(jobId, {
-      intervalId,
+      timeoutId: null,
       callbacks,
       lastStatus: null,
-      startTime: Date.now()
+      startTime
     });
+
+    // Start polling immediately, then schedule subsequent polls dynamically
+    poll();
 
     // Return stop function
     return () => this.stopPolling(jobId, { onUpdate, onComplete, onError });
@@ -153,14 +197,14 @@ class JobPollingService {
       if (poll.callbacks.onUpdate.length === 0 && 
           poll.callbacks.onComplete.length === 0 && 
           poll.callbacks.onError.length === 0) {
-        clearInterval(poll.intervalId);
+        if (poll.timeoutId) clearTimeout(poll.timeoutId);
         this.activePolls.delete(jobId);
       }
       return;
     }
 
     // Otherwise, stop completely
-    clearInterval(poll.intervalId);
+    if (poll.timeoutId) clearTimeout(poll.timeoutId);
     this.activePolls.delete(jobId);
   }
 
@@ -183,27 +227,34 @@ class JobPollingService {
    * Useful for awaitable polling patterns
    * @param {string} jobId - The job ID
    * @param {Function} onUpdate - Optional callback for progress updates
-   * @param {number} maxAttempts - Maximum polling attempts (default: 120)
+   * @param {number} maxDurationMs - Maximum polling duration in ms (default: 20 min)
    * @returns {Promise<Object>} Final status response
    */
-  async pollUntilComplete(jobId, onUpdate = null, maxAttempts = 120) {
-    return new Promise(async (resolve, reject) => {
-      let attempts = 0;
-      let pollInterval = null;
+  async pollUntilComplete(jobId, onUpdate = null, maxDurationMs = 20 * 60 * 1000) {
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      let timeoutId = null;
+      
+      const scheduleNextPoll = () => {
+        const elapsedTime = Date.now() - startTime;
+        const interval = this.getIntervalForElapsedTime(elapsedTime);
+        timeoutId = setTimeout(poll, interval);
+      };
       
       const poll = async () => {
         try {
-          attempts++;
-          if (attempts > maxAttempts) {
-            if (pollInterval) clearInterval(pollInterval);
-            reject(new Error(`Max polling attempts (${maxAttempts}) reached for job ${jobId}`));
+          const elapsedTime = Date.now() - startTime;
+          
+          if (elapsedTime > maxDurationMs) {
+            reject(new Error(`Max polling duration (${maxDurationMs / 60000} min) reached for job ${jobId}`));
             return;
           }
 
           const statusResponse = await this.getStatus(jobId);
           
           if (!statusResponse.success) {
-            return; // Continue polling on transient errors
+            scheduleNextPoll(); // Continue polling on transient errors
+            return;
           }
 
           const status = statusResponse.status || 'processing';
@@ -219,18 +270,18 @@ class JobPollingService {
 
           // Check for terminal states
           if (status === 'completed' || status === 'failed') {
-            if (pollInterval) clearInterval(pollInterval);
             resolve(statusResponse);
+          } else {
+            scheduleNextPoll();
           }
         } catch (error) {
-          if (pollInterval) clearInterval(pollInterval);
+          if (timeoutId) clearTimeout(timeoutId);
           reject(error);
         }
       };
       
-      // Start immediately, then poll at intervals
+      // Start immediately
       poll();
-      pollInterval = setInterval(poll, this.pollInterval);
     });
   }
 
@@ -247,7 +298,7 @@ class JobPollingService {
    */
   stopAll() {
     this.activePolls.forEach((poll, jobId) => {
-      clearInterval(poll.intervalId);
+      if (poll.timeoutId) clearTimeout(poll.timeoutId);
     });
     this.activePolls.clear();
   }
