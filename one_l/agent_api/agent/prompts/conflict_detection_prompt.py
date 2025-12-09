@@ -48,17 +48,13 @@ Your response must be ONLY a valid JSON object with this structure:
 ## CRITICAL: vendor_quote Field Requirements
 The vendor_quote field MUST contain the EXACT text from the vendor document:
 - Copy text CHARACTER-BY-CHARACTER exactly as it appears in the document
-- **CRITICAL: Extract the COMPLETE quote - do NOT truncate or cut off the text mid-sentence**
-- Include the ENTIRE clause, sentence, provision OR WHOLE TITLE SECTION if it is a conflict - copy from the beginning to the end of the relevant text
-- If a clause spans multiple sentences, include ALL sentences until the clause is complete
-- Do NOT stop at arbitrary word limits - include the full text until the clause naturally ends
-- Do NOT correct spelling errors (if document says "loss es", write "loss es" not "losses")
-- Do NOT change quote characters (preserve exact quote style: "quote" vs 'quote' vs "quote")
-- Do NOT fix grammar, punctuation, or formatting
-- Do NOT paraphrase or summarize - copy the EXACT text word-for-word
+- **CRITICAL: Extract COMPLETE sentences/clauses - NEVER truncate mid-sentence**
+- **Boundary Rules**: ALWAYS start at sentence/clause beginning (capital letter) and end at sentence/clause ending punctuation (. ! ?). If you encounter a fragment (e.g., "these Terms, along with..." or "personal, non-transferable..."), extend backwards/forwards to include the complete sentence/clause
+- Include the ENTIRE clause, sentence, or provision - copy from beginning to end. If a clause spans multiple sentences, include ALL sentences until complete
+- Do NOT stop at arbitrary word limits, correct spelling errors, change quote characters, fix grammar/punctuation, or paraphrase - copy EXACT text word-for-word
 - Include any unusual spacing, capitalization, or punctuation exactly as written
 - For omissions (missing required provisions), use: "N/A - Missing provision"
-- **Example of CORRECT extraction**: If the document says "You will indemnify, defend and hold [company name] harmless from and against any Claims or Losses asserted, claimed, assessed or adjudged against any Indemnified Party by any third party", extract the ENTIRE sentence, not just "You will indemnify, defend and hold [company name] harmless from and against any Claims or Losses"
+- **Example**: If document says "You will indemnify, defend and hold [company name] harmless from and against any Claims or Losses asserted, claimed, assessed or adjudged against any Indemnified Party by any third party.", extract the ENTIRE sentence including the period. If you see "these Terms, along with the terms attached to or incorporated herein", extend to find the sentence start: "[Sentence start] these Terms, along with the terms attached to or incorporated herein."
 
 If no conflicts are found: `{{"explanation": "Explanation why no conflicts were found", "conflicts": []}}`
 
@@ -153,8 +149,14 @@ If no conflicts are found: `{{"explanation": "Explanation why no conflicts were 
 3. Prioritize major IT Term and Conditions sections (e.g., Termination, Notice, Indemnification, Liability, etc.)
 4. Do NOT infer vendor positions not explicitly in the chunk
 5. For each conflict found, complete ALL fields in the JSON structure
-6. If citing a Massachusetts source document, use ONLY actual document names
-7. For general risk patterns not tied to specific document from the knowledge base, use "N/A – Not tied to a specific Massachusetts clause" as source_doc
+6. **CRITICAL: Source Document Citation Rules**:
+   - **MUST use ONLY source documents provided in the "Knowledge Base Results" section above**
+   - **Cite the EXACT document name as it appears in the KB results** (e.g., "ISP.003 Access Management Policy.pdf", "IS.016 Business Continuity and Disaster Recovery Standard.pdf")
+   - **DO NOT cite documents that are NOT in the Knowledge Base Results** - if a document is not listed in the KB results, you cannot cite it
+   - **DO NOT use general knowledge or documents not provided** - only cite documents explicitly shown in the KB results
+   - **IMPORTANT: General Risk Language Patterns** - For conflicts based on general risk language patterns NOT tied to a specific Massachusetts document (e.g., "best efforts", "sole discretion", "exclusive remedy", "subject to availability", "as appropriate", auto-renewal clauses, incorporation by reference without providing terms, hyperlinks to external terms), use "N/A – Not tied to a specific Massachusetts clause" as source_doc. These are still valid conflicts even without a specific source document - they represent problematic vendor language that violates Massachusetts procurement principles.
+   - If a conflict relates to a concept in the KB results but the specific document isn't clear, use "N/A – Not tied to a specific Massachusetts clause"
+7. **Before finalizing vendor_quote**: Verify it's a complete sentence/clause (starts with capital, ends with punctuation) - extend fragments to include full sentence/clause
 
 ## Critical Reminders
 - Output ONLY the raw JSON object starting with {{and ending with}}

@@ -142,6 +142,7 @@ def lambda_handler(event, context):
         job_id = event.get('job_id', 'unknown')
         session_id = event.get('session_id', 'unknown')
         bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
+        chunk_num = event.get('chunk_num', 0)  # Get chunk number to avoid overwrites
         
         if not queries:
             raise ValueError("queries array is required")
@@ -152,7 +153,7 @@ def lambda_handler(event, context):
         if not bucket_name:
             raise ValueError("bucket_name is required for S3 storage")
         
-        logger.info(f"Retrieving {len(queries)} KB queries for job {job_id}")
+        logger.info(f"Retrieving {len(queries)} KB queries for job {job_id}, chunk {chunk_num}")
         
         # Retrieve all queries in parallel using ThreadPoolExecutor
         # Use max_workers=20 to match previous parallel map concurrency
@@ -197,8 +198,8 @@ def lambda_handler(event, context):
         # Calculate total results count
         total_results_count = sum(r.get('results_count', 0) for r in all_results)
         
-        # Store all results in S3
-        s3_key = f"{session_id}/kb_results/{job_id}_all_queries.json"
+        # Store all results in S3 - include chunk_num to avoid overwrites when chunks run in parallel
+        s3_key = f"{session_id}/kb_results/{job_id}_chunk_{chunk_num}_all_queries.json"
         results_json = json.dumps(all_results)
         results_size = len(results_json.encode('utf-8'))
         

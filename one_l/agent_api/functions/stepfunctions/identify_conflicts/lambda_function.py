@@ -71,8 +71,17 @@ def lambda_handler(event, context):
         try:
             kb_response = s3_client.get_object(Bucket=bucket_name, Key=kb_results_s3_key)
             kb_results_json = kb_response['Body'].read().decode('utf-8')
-            kb_results = json.loads(kb_results_json)
-            logger.info(f"Loaded KB results from S3: {kb_results_s3_key}")
+            kb_results_raw = json.loads(kb_results_json)
+            # KB results are stored as a list by retrieve_all_kb_queries
+            # Handle both list format (new) and dict format (legacy/fallback)
+            if isinstance(kb_results_raw, list):
+                kb_results = kb_results_raw
+            elif isinstance(kb_results_raw, dict) and 'all_results' in kb_results_raw:
+                kb_results = kb_results_raw['all_results']
+            else:
+                # Fallback: wrap in list if it's a single dict
+                kb_results = [kb_results_raw] if isinstance(kb_results_raw, dict) else []
+            logger.info(f"Loaded KB results from S3: {kb_results_s3_key}, found {len(kb_results)} query results")
         except Exception as e:
             logger.error(f"CRITICAL: Failed to load KB results from S3 {kb_results_s3_key}: {e}")
             raise  # Fail fast - KB results must be in S3

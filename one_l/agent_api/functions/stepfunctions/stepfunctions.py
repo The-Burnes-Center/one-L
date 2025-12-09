@@ -368,7 +368,8 @@ class StepFunctionsConstruct(Construct):
                 "region": sfn.JsonPath.string_at("$.region"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
                 "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "bucket_name": sfn.JsonPath.string_at("$.bucket_name")
+                "bucket_name": sfn.JsonPath.string_at("$.bucket_name"),
+                "chunk_num": sfn.JsonPath.number_at("$.chunk_num")  # Pass chunk_num to avoid S3 overwrites
             })
         )
         retrieve_all_kb_queries.add_retry(
