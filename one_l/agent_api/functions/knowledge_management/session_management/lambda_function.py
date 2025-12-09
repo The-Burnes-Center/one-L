@@ -512,19 +512,44 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
                 'error': f'Invalid user_id: {user_id}'
             }
         
-        # Update the session - table has composite key (session_id + user_id)
-        # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
-        # Try both key orders to handle schema variations
+        # Dynamically detect table schema to determine correct key order
+        logger.info(f"UPDATE_TITLE_START: session_id={session_id}, user_id={user_id}, title='{title[:50]}...'")
+        
+        try:
+            table_desc = table.meta.client.describe_table(TableName=SESSIONS_TABLE)
+            key_schema = table_desc['Table']['KeySchema']
+            partition_key = next((ks['AttributeName'] for ks in key_schema if ks['KeyType'] == 'HASH'), None)
+            sort_key = next((ks['AttributeName'] for ks in key_schema if ks['KeyType'] == 'RANGE'), None)
+            logger.info(f"UPDATE_TITLE_SCHEMA: Detected table schema - PartitionKey={partition_key}, SortKey={sort_key}")
+            
+            # Build key in correct order based on actual schema
+            if partition_key and sort_key:
+                key_order = {
+                    partition_key: str(session_id if partition_key == 'session_id' else user_id),
+                    sort_key: str(user_id if sort_key == 'user_id' else session_id)
+                }
+                key_orders = [key_order]
+                logger.info(f"UPDATE_TITLE_KEY_ORDER: Using detected schema - Key={list(key_order.keys())}")
+            else:
+                # Fallback to trying both orders if schema detection fails
+                logger.warning(f"UPDATE_TITLE_SCHEMA_FAIL: Could not detect schema (partition_key={partition_key}, sort_key={sort_key}), trying both key orders")
+                key_orders = [
+                    {'session_id': str(session_id), 'user_id': str(user_id)},
+                    {'user_id': str(user_id), 'session_id': str(session_id)}
+                ]
+        except Exception as schema_error:
+            logger.warning(f"UPDATE_TITLE_SCHEMA_ERROR: Could not detect table schema: {schema_error}, trying both key orders")
+            key_orders = [
+                {'session_id': str(session_id), 'user_id': str(user_id)},
+                {'user_id': str(user_id), 'session_id': str(session_id)}
+            ]
+        
+        # Update the session - try with detected or both key orders
         response = None
         last_error = None
         
-        # Try with session_id as partition key first (expected schema per deployment script)
-        key_orders = [
-            {'session_id': str(session_id), 'user_id': str(user_id)},
-            {'user_id': str(user_id), 'session_id': str(session_id)}
-        ]
-        
-        for key_order in key_orders:
+        for idx, key_order in enumerate(key_orders):
+            logger.info(f"UPDATE_TITLE_ATTEMPT_{idx+1}: Trying key order: {list(key_order.keys())}")
             try:
                 response = table.update_item(
                     Key=key_order,
@@ -536,27 +561,38 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
                     },
                     ReturnValues='ALL_NEW'
                 )
-                logger.info(f"Successfully updated session title with key order: {list(key_order.keys())}")
+                logger.info(f"UPDATE_TITLE_SUCCESS: Successfully updated session title with key order: {list(key_order.keys())}")
                 break  # Success, exit loop
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code', '')
                 error_msg = str(e)
                 last_error = e
                 if error_code == 'ValidationException':
-                    logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
-                    continue  # Try next key order
+                    logger.warning(f"UPDATE_TITLE_VALIDATION_ERROR_{idx+1}: Key schema mismatch with order {list(key_order.keys())}: {error_msg}")
+                    if idx < len(key_orders) - 1:
+                        logger.info(f"UPDATE_TITLE_RETRY: Will try next key order")
+                        continue  # Try next key order
+                    else:
+                        logger.error(f"UPDATE_TITLE_ALL_FAILED: All key orders failed with ValidationException")
                 else:
-                    # Non-validation error, re-raise immediately
+                    logger.error(f"UPDATE_TITLE_NON_VALIDATION_ERROR: Non-validation error: {error_code} - {error_msg}")
                     raise
             except Exception as e:
                 last_error = e
-                logger.error(f"Unexpected error updating session: {e}")
+                logger.error(f"UPDATE_TITLE_UNEXPECTED_ERROR: Unexpected error: {type(e).__name__} - {str(e)}")
                 raise
         
         if response is None:
-            # Both key orders failed
             error_msg = str(last_error) if last_error else 'Unknown error'
-            logger.error(f"Failed to update session with both key orders: {error_msg}")
+            logger.error(f"UPDATE_TITLE_FAILED: Failed to update session with all key orders. Last error: {error_msg}")
+            
+            # Provide detailed error information
+            if last_error and isinstance(last_error, ClientError):
+                error_code = last_error.response.get('Error', {}).get('Code', '')
+                if error_code == 'ValidationException':
+                    logger.error(f"UPDATE_TITLE_VALIDATION_FINAL: Both key orders failed with ValidationException")
+                    raise last_error
+            
             raise Exception(f"Failed to update session title: {error_msg}")
         
         logger.info(f"Updated session title: {session_id} -> {title}")
@@ -772,56 +808,99 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                     'error': f'Invalid user_id: {user_id}'
                 }
             
-            # Table has composite key (session_id + user_id)
-            # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
-            # Try both key orders to handle schema variations
+            # Dynamically detect table schema to determine correct key order
+            logger.info(f"DELETE_SESSION_START: session_id={session_id}, user_id={user_id}")
+            
             response = None
             last_error = None
             
-            key_orders = [
-                {'session_id': str(session_id), 'user_id': str(user_id)},
-                {'user_id': str(user_id), 'session_id': str(session_id)}
-            ]
+            try:
+                table_desc = table.meta.client.describe_table(TableName=SESSIONS_TABLE)
+                key_schema = table_desc['Table']['KeySchema']
+                partition_key = next((ks['AttributeName'] for ks in key_schema if ks['KeyType'] == 'HASH'), None)
+                sort_key = next((ks['AttributeName'] for ks in key_schema if ks['KeyType'] == 'RANGE'), None)
+                logger.info(f"DELETE_SESSION_SCHEMA: Detected table schema - PartitionKey={partition_key}, SortKey={sort_key}")
+                
+                # Build key in correct order based on actual schema
+                if partition_key and sort_key:
+                    key_order = {
+                        partition_key: str(session_id if partition_key == 'session_id' else user_id),
+                        sort_key: str(user_id if sort_key == 'user_id' else session_id)
+                    }
+                    key_orders = [key_order]
+                    logger.info(f"DELETE_SESSION_KEY_ORDER: Using detected schema - Key={list(key_order.keys())}")
+                else:
+                    logger.warning(f"DELETE_SESSION_SCHEMA_FAIL: Could not detect schema (partition_key={partition_key}, sort_key={sort_key}), trying both key orders")
+                    key_orders = [
+                        {'session_id': str(session_id), 'user_id': str(user_id)},
+                        {'user_id': str(user_id), 'session_id': str(session_id)}
+                    ]
+            except Exception as schema_error:
+                logger.warning(f"DELETE_SESSION_SCHEMA_ERROR: Could not detect table schema: {schema_error}, trying both key orders")
+                key_orders = [
+                    {'session_id': str(session_id), 'user_id': str(user_id)},
+                    {'user_id': str(user_id), 'session_id': str(session_id)}
+                ]
             
-            for key_order in key_orders:
+            for idx, key_order in enumerate(key_orders):
+                logger.info(f"DELETE_SESSION_GET_ATTEMPT_{idx+1}: Trying get_item with key order: {list(key_order.keys())}")
                 try:
                     response = table.get_item(Key=key_order)
-                    logger.info(f"Successfully retrieved session with key order: {list(key_order.keys())}")
-                    break  # Success, exit loop
+                    # Check if item was actually found
+                    if 'Item' in response:
+                        logger.info(f"DELETE_SESSION_GET_SUCCESS: Successfully retrieved session with key order: {list(key_order.keys())}")
+                        break  # Success, exit loop
+                    else:
+                        logger.warning(f"DELETE_SESSION_GET_NO_ITEM: get_item succeeded but no Item found with key order: {list(key_order.keys())}")
+                        if idx < len(key_orders) - 1:
+                            logger.info(f"DELETE_SESSION_GET_RETRY: Will try next key order")
+                            continue  # Try next key order
                 except ClientError as e:
                     error_code = e.response.get('Error', {}).get('Code', '')
                     error_msg = str(e)
                     last_error = e
                     if error_code == 'ValidationException':
-                        logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
-                        continue  # Try next key order
+                        logger.warning(f"DELETE_SESSION_GET_VALIDATION_ERROR_{idx+1}: Key schema mismatch with order {list(key_order.keys())}: {error_msg}")
+                        if idx < len(key_orders) - 1:
+                            logger.info(f"DELETE_SESSION_GET_RETRY: Will try next key order")
+                            continue  # Try next key order
+                        else:
+                            logger.error(f"DELETE_SESSION_GET_ALL_FAILED: All key orders failed with ValidationException")
                     else:
-                        # Non-validation error, re-raise immediately
+                        logger.error(f"DELETE_SESSION_GET_NON_VALIDATION_ERROR: Non-validation error: {error_code} - {error_msg}")
                         raise
                 except Exception as e:
                     last_error = e
-                    logger.error(f"Unexpected error getting session: {e}")
+                    logger.error(f"DELETE_SESSION_GET_UNEXPECTED_ERROR: Unexpected error: {type(e).__name__} - {str(e)}")
                     raise
             
-            if response is None:
-                # Both key orders failed
-                error_msg = str(last_error) if last_error else 'Unknown error'
-                logger.error(f"Failed to get session with both key orders: {error_msg}")
-                # Preserve the original exception if it was a ValidationException
+            if response is None or 'Item' not in response:
+                error_msg = str(last_error) if last_error else 'Session not found'
+                logger.error(f"DELETE_SESSION_GET_FAILED: Failed to get session. Error: {error_msg}")
+                
+                # If it's a ValidationException, provide more helpful error
                 if last_error and isinstance(last_error, ClientError):
                     error_code = last_error.response.get('Error', {}).get('Code', '')
                     if error_code == 'ValidationException':
-                        # Re-raise as ValidationException so outer handler can catch it properly
+                        logger.error(f"DELETE_SESSION_VALIDATION_FINAL: Both key orders failed with ValidationException")
                         raise last_error
-                raise Exception(f"Failed to get session: {error_msg}")
-            
-            session = response.get('Item')
-            
-            if not session:
+                
+                # Session not found
                 return {
                     'success': False,
                     'error': 'Session not found or access denied'
                 }
+            
+            session = response.get('Item')
+            
+            if not session:
+                logger.warning(f"DELETE_SESSION_NO_ITEM: Response has no Item")
+                return {
+                    'success': False,
+                    'error': 'Session not found or access denied'
+                }
+            
+            logger.info(f"DELETE_SESSION_FOUND: Session found, proceeding with deletion")
                 
             s3_prefix = session.get('s3_prefix', f"sessions/{user_id}/{session_id}/")
             
@@ -876,21 +955,19 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                 except Exception as jobs_error:
                     logger.warning(f"Error deleting jobs for session {session_id}: {jobs_error}")
             
-            # Delete from DynamoDB - table has composite key (session_id + user_id)
-            # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
-            # Try both key orders to handle schema variations
+            # Delete from DynamoDB - use same schema detection as get_item
+            # Reuse the same key_orders from get_item since we already detected the schema
+            logger.info(f"DELETE_SESSION_DELETE_START: Proceeding with delete_item using same key order that worked for get_item")
+            
             deleted = False
             last_error = None
             
-            key_orders = [
-                {'session_id': str(session_id), 'user_id': str(user_id)},
-                {'user_id': str(user_id), 'session_id': str(session_id)}
-            ]
-            
-            for key_order in key_orders:
+            # Use the same key_orders that worked for get_item (or try both if get_item used fallback)
+            for idx, key_order in enumerate(key_orders):
+                logger.info(f"DELETE_SESSION_DELETE_ATTEMPT_{idx+1}: Trying delete_item with key order: {list(key_order.keys())}")
                 try:
                     table.delete_item(Key=key_order)
-                    logger.info(f"Successfully deleted session with key order: {list(key_order.keys())}")
+                    logger.info(f"DELETE_SESSION_DELETE_SUCCESS: Successfully deleted session with key order: {list(key_order.keys())}")
                     deleted = True
                     break  # Success, exit loop
                 except ClientError as e:
@@ -898,26 +975,31 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                     error_msg = str(e)
                     last_error = e
                     if error_code == 'ValidationException':
-                        logger.warning(f"Key schema mismatch with order {list(key_order.keys())}, trying next: {error_msg}")
-                        continue  # Try next key order
+                        logger.warning(f"DELETE_SESSION_DELETE_VALIDATION_ERROR_{idx+1}: Key schema mismatch with order {list(key_order.keys())}: {error_msg}")
+                        if idx < len(key_orders) - 1:
+                            logger.info(f"DELETE_SESSION_DELETE_RETRY: Will try next key order")
+                            continue  # Try next key order
+                        else:
+                            logger.error(f"DELETE_SESSION_DELETE_ALL_FAILED: All key orders failed with ValidationException")
                     else:
-                        # Non-validation error, re-raise immediately
+                        logger.error(f"DELETE_SESSION_DELETE_NON_VALIDATION_ERROR: Non-validation error: {error_code} - {error_msg}")
                         raise
                 except Exception as e:
                     last_error = e
-                    logger.error(f"Unexpected error deleting session: {e}")
+                    logger.error(f"DELETE_SESSION_DELETE_UNEXPECTED_ERROR: Unexpected error: {type(e).__name__} - {str(e)}")
                     raise
             
             if not deleted:
-                # Both key orders failed
                 error_msg = str(last_error) if last_error else 'Unknown error'
-                logger.error(f"Failed to delete session with both key orders: {error_msg}")
+                logger.error(f"DELETE_SESSION_DELETE_FAILED: Failed to delete session with all key orders. Last error: {error_msg}")
+                
                 # Preserve the original exception if it was a ValidationException
                 if last_error and isinstance(last_error, ClientError):
                     error_code = last_error.response.get('Error', {}).get('Code', '')
                     if error_code == 'ValidationException':
-                        # Re-raise as ValidationException so outer handler can catch it properly
+                        logger.error(f"DELETE_SESSION_DELETE_VALIDATION_FINAL: Both key orders failed with ValidationException")
                         raise last_error
+                
                 raise Exception(f"Failed to delete session: {error_msg}")
             
             logger.info(f"Deleted session: {session_id}")
