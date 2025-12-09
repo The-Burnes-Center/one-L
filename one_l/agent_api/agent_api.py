@@ -121,14 +121,8 @@ class AgentApiConstruct(Construct):
             self.knowledge_base.get_knowledge_base_id()
         )
         
-        # Update the knowledge base ID in agent functions after creation
+        # Update the knowledge base ID in Step Functions Lambda functions
         if hasattr(self.functions, 'agent') and self.functions.agent:
-            self.functions.agent.document_review_function.add_environment(
-                "KNOWLEDGE_BASE_ID", 
-                self.knowledge_base.get_knowledge_base_id()
-            )
-            
-            # Also update Step Functions Lambda functions if enabled
             if hasattr(self.functions.agent, 'stepfunctions_construct') and self.functions.agent.stepfunctions_construct:
                 self.functions.agent.stepfunctions_construct.update_knowledge_base_id(
                     self.knowledge_base.get_knowledge_base_id()

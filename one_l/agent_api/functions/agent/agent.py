@@ -67,109 +67,48 @@ class AgentConstruct(Construct):
         self._stack_name = Stack.of(self).stack_name
         
         # Instance variables for Lambda functions
-        self.document_review_function = None
         self.stepfunctions_construct = None
         
-        # Check if Step Functions should be enabled
-        self._use_stepfunctions = os.environ.get('USE_STEP_FUNCTIONS', 'false').lower() == 'true'
-        
-        # Create agent functions
-        self.create_functions()
-        
-        # Optionally create Step Functions construct
-        if self._use_stepfunctions:
-            self._create_stepfunctions_construct()
-    
-    def create_functions(self):
-        """Create agent Lambda functions."""
-        self.create_document_review_function()
-    
-    def create_document_review_function(self):
-        """Create Lambda function for AI-powered document review."""
-        
-        # Create role with comprehensive permissions
-        role = self.iam_roles.create_agent_role(
-            "DocumentReview", 
-            self.buckets, 
-            self.analysis_table,
-            self.opensearch_collection
-        )
-        
-        # Create Lambda function using pre-compiled wheels for lxml to avoid compilation issues
-        self.document_review_function = _lambda.Function(
-            self, "DocumentReviewFunction",
-            function_name=f"{self._stack_name}-document-review",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset("build/lambda-deployment.zip"),
-            role=role,
-            timeout=Duration.minutes(15),  # Long timeout for AI processing
-            memory_size=2048,
-            log_retention=logs.RetentionDays.ONE_WEEK,
-            environment={
-                "KNOWLEDGE_BUCKET": self.knowledge_bucket.bucket_name,
-                "USER_DOCUMENTS_BUCKET": self.user_documents_bucket.bucket_name,
-                "AGENT_PROCESSING_BUCKET": self.agent_processing_bucket.bucket_name,
-                "ANALYSIS_TABLE": self.analysis_table.table_name,
-                "ANALYSIS_RESULTS_TABLE": self.analysis_table.table_name,  # Add this for job status tracking
-                "KNOWLEDGE_BASE_ID": self.knowledge_base_id,
-                "OPENSEARCH_COLLECTION_ENDPOINT": f"{self.opensearch_collection.attr_id}.{Stack.of(self).region}.aoss.amazonaws.com",
-                "REGION": Stack.of(self).region,
-                "LOG_LEVEL": "INFO",
-                # Enable OCR fallback for PDFs in dev to handle scanned/flattened documents
-                "ENABLE_TEXTRACT_OCR": "1",
-                # Google Document AI configuration removed - PDF conversion no longer needed for vendor submissions
-            }
-        )
+        # Always create Step Functions construct (old pipeline removed)
+        self._create_stepfunctions_construct()
     
     def _create_stepfunctions_construct(self):
-        """Create Step Functions construct if enabled."""
-        try:
-            from ..stepfunctions.stepfunctions import StepFunctionsConstruct
-            
-            self.stepfunctions_construct = StepFunctionsConstruct(
-                self, "StepFunctions",
-                knowledge_bucket=self.knowledge_bucket,
-                user_documents_bucket=self.user_documents_bucket,
-                agent_processing_bucket=self.agent_processing_bucket,
-                analysis_table=self.analysis_table,
-                opensearch_collection=self.opensearch_collection,
-                knowledge_base_id=self.knowledge_base_id,
-                iam_roles=self.iam_roles
-            )
-        except ImportError as e:
-            print(f"Warning: Could not import StepFunctionsConstruct: {e}")
+        """Create Step Functions construct (required - old pipeline removed)."""
+        from ..stepfunctions.stepfunctions import StepFunctionsConstruct
+        
+        self.stepfunctions_construct = StepFunctionsConstruct(
+            self, "StepFunctions",
+            knowledge_bucket=self.knowledge_bucket,
+            user_documents_bucket=self.user_documents_bucket,
+            agent_processing_bucket=self.agent_processing_bucket,
+            analysis_table=self.analysis_table,
+            opensearch_collection=self.opensearch_collection,
+            knowledge_base_id=self.knowledge_base_id,
+            iam_roles=self.iam_roles
+        )
     
     def get_function_routes(self) -> dict:
         """
         Get function routing metadata for API Gateway.
         
         Returns a dictionary defining available functions and their routing configurations.
+        Uses Step Functions workflow for document review.
         """
         
-        # If Step Functions is enabled, use the wrapper Lambda that returns job_id immediately
-        if self.stepfunctions_construct:
-            return {
-                "review": {
-                    "function": self.stepfunctions_construct.start_workflow_fn,
-                    "path": "review",
-                    "methods": ["POST"],
-                    "description": "AI-powered document review with Step Functions workflow"
-                },
-                "job-status": {
-                    "function": self.stepfunctions_construct.job_status_fn,
-                    "path": "job-status",
-                    "methods": ["GET", "POST"],
-                    "description": "Get real-time status of a document review job"
-                }
-            }
+        if not self.stepfunctions_construct:
+            raise ValueError("Step Functions construct must be initialized")
         
-        # Default: Lambda function route
         return {
             "review": {
-                "function": self.document_review_function,
+                "function": self.stepfunctions_construct.start_workflow_fn,
                 "path": "review",
                 "methods": ["POST"],
-                "description": "AI-powered document review with conflict detection"
+                "description": "AI-powered document review with Step Functions workflow"
+            },
+            "job-status": {
+                "function": self.stepfunctions_construct.job_status_fn,
+                "path": "job-status",
+                "methods": ["GET", "POST"],
+                "description": "Get real-time status of a document review job"
             }
         } 

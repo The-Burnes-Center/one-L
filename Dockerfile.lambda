@@ -35,9 +35,6 @@ RUN pip install --upgrade pip setuptools wheel && \
     python3 fix_docx_warning.py || true
 
 # Copy all Lambda function code
-# Original document-review function
-COPY one_l/agent_api/functions/agent/document_review/lambda_function.py ./python/
-
 # Step Functions Lambda functions
 # Each function is in its own directory with lambda_function.py
 # Structure: ./python/initialize_job/lambda_function.py (handler: "initialize_job/lambda_function.lambda_handler")
