@@ -14,6 +14,7 @@ import logging
 import os
 from datetime import datetime
 import uuid
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -90,17 +91,36 @@ def lambda_handler(event, context):
                 # Each session should only have 1 active job at a time
                 logger.info(f"Cleaning up old processing jobs for session {session_id} before starting new job {job_id}")
                 
-                # Scan for all active jobs for this session
-                response = table.scan(
-                    FilterExpression='session_id = :session_id AND user_id = :user_id',
-                    ExpressionAttributeValues={
-                        ':session_id': session_id,
-                        ':user_id': user_id
-                    }
-                )
-                
+                # Use GSI to query jobs for this session (EFFICIENT - much faster than scan)
+                # Fallback to scan if GSI doesn't exist
                 old_jobs = []
-                for item in response.get('Items', []):
+                try:
+                    # Try GSI query first (preferred method)
+                    jobs_table_name = os.environ.get('ANALYSES_TABLE_NAME')
+                    if jobs_table_name:
+                        jobs_table = dynamodb.Table(jobs_table_name)
+                        jobs_response = jobs_table.query(
+                            IndexName='session-jobs-index',
+                            KeyConditionExpression='session_id = :session_id',
+                            ExpressionAttributeValues={':session_id': session_id}
+                        )
+                        items = jobs_response.get('Items', [])
+                    else:
+                        items = []
+                except Exception as gsi_error:
+                    # Fallback to scan if GSI query fails
+                    logger.warning(f"GSI query failed, falling back to scan: {gsi_error}")
+                    response = table.scan(
+                        FilterExpression='session_id = :session_id AND user_id = :user_id',
+                        ExpressionAttributeValues={
+                            ':session_id': session_id,
+                            ':user_id': user_id
+                        }
+                    )
+                    items = response.get('Items', [])
+                
+                # Process items to find active jobs
+                for item in items:
                     status = item.get('status', '').lower()
                     stage = item.get('stage', '').lower()
                     has_redlines = bool(item.get('redlined_document_s3_key'))
@@ -178,19 +198,44 @@ def lambda_handler(event, context):
                         sessions_table_name = os.environ.get('SESSIONS_TABLE')
                         if sessions_table_name:
                             sessions_table = dynamodb.Table(sessions_table_name)
-                            sessions_table.update_item(
-                                Key={
-                                    'session_id': session_id,
-                                    'user_id': user_id
-                                },
-                                UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
-                                ExpressionAttributeValues={
-                                    ':title': filename,
-                                    ':updated_at': timestamp_iso,
-                                    ':last_activity': timestamp_iso
-                                }
-                            )
-                            logger.info(f"Updated session {session_id} title to: {filename}")
+                            try:
+                                sessions_table.update_item(
+                                    Key={
+                                        'session_id': session_id,
+                                        'user_id': user_id
+                                    },
+                                    UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                                    ExpressionAttributeValues={
+                                        ':title': filename,
+                                        ':updated_at': timestamp_iso,
+                                        ':last_activity': timestamp_iso
+                                    }
+                                )
+                                logger.info(f"Updated session {session_id} title to: {filename}")
+                            except ClientError as key_error:
+                                # Try alternative key order if schema mismatch
+                                error_code = key_error.response.get('Error', {}).get('Code', '')
+                                error_msg = str(key_error)
+                                if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
+                                    logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
+                                    try:
+                                        sessions_table.update_item(
+                                            Key={
+                                                'user_id': user_id,
+                                                'session_id': session_id
+                                            },
+                                            UpdateExpression='SET title = :title, updated_at = :updated_at, last_activity = :last_activity',
+                                            ExpressionAttributeValues={
+                                                ':title': filename,
+                                                ':updated_at': timestamp_iso,
+                                                ':last_activity': timestamp_iso
+                                            }
+                                        )
+                                        logger.info(f"Updated session {session_id} title to: {filename} (alternative key order)")
+                                    except Exception as alt_error:
+                                        raise key_error
+                                else:
+                                    raise
                         else:
                             logger.warning("SESSIONS_TABLE environment variable not set, skipping session title update")
                     except Exception as title_update_error:

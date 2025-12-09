@@ -2182,7 +2182,8 @@ def save_analysis_to_dynamodb(
     citations: List[Dict[str, Any]] = None,
     session_id: str = None,
     user_id: str = None,
-    redlined_result: Dict[str, Any] = None
+    redlined_result: Dict[str, Any] = None,
+    timestamp: str = None
 ) -> Dict[str, Any]:
     """
     Save analysis results to DynamoDB table including parsed conflicts.
@@ -2195,6 +2196,10 @@ def save_analysis_to_dynamodb(
         usage_data: Model usage statistics
         thinking: AI thinking process
         citations: Knowledge base citations
+        session_id: Optional session ID for linking
+        user_id: Optional user ID for linking
+        redlined_result: Optional redlined document result
+        timestamp: Optional timestamp (if provided, updates existing job record; if None, creates new record)
         
     Returns:
         Dictionary indicating success/failure of save operation
@@ -2212,7 +2217,9 @@ def save_analysis_to_dynamodb(
         from datetime import datetime
         dynamodb_resource = boto3.resource('dynamodb')
         table = dynamodb_resource.Table(table_name)
-        timestamp = datetime.utcnow().isoformat()
+        # Use provided timestamp if available (for updating existing job), otherwise create new one
+        if timestamp is None:
+            timestamp = datetime.utcnow().isoformat()
         
         # Parse conflicts from analysis data for structured storage
         redline_items = parse_conflicts_for_redlining(analysis_data)
@@ -2302,7 +2309,52 @@ def save_analysis_to_dynamodb(
             if redlined_key:
                 item['redlined_document_s3_key'] = redlined_key
         
-        # Save to DynamoDB
+        # CRITICAL: If timestamp is provided, we're updating an existing job record
+        # Preserve existing fields by reading the existing record first and merging
+        if timestamp:
+            try:
+                existing_item = table.get_item(
+                    Key={
+                        'analysis_id': analysis_id,
+                        'timestamp': timestamp
+                    }
+                ).get('Item')
+                
+                if existing_item:
+                    # Merge: preserve all existing fields, then update with new data
+                    # This ensures we don't lose fields like execution_arn, created_at, etc.
+                    merged_item = existing_item.copy()
+                    merged_item.update(item)  # New data overrides existing
+                    # Always update updated_at timestamp
+                    merged_item['updated_at'] = datetime.utcnow().isoformat()
+                    # Ensure status/stage reflect completion
+                    merged_item['status'] = 'completed'
+                    merged_item['stage'] = 'completed'
+                    merged_item['progress'] = 100
+                    item = merged_item
+                    logger.info(f"Updating existing job record {analysis_id} with timestamp {timestamp}")
+                else:
+                    logger.warning(f"Job record {analysis_id} with timestamp {timestamp} not found, creating new record")
+                    # Set default fields for new record
+                    item['created_at'] = timestamp
+                    item['updated_at'] = datetime.utcnow().isoformat()
+                    item['status'] = 'completed'
+                    item['stage'] = 'completed'
+                    item['progress'] = 100
+            except Exception as read_error:
+                logger.warning(f"Could not read existing job record, proceeding with new record: {read_error}")
+                # Set default fields for new record
+                item['created_at'] = timestamp or datetime.utcnow().isoformat()
+                item['updated_at'] = datetime.utcnow().isoformat()
+                item['status'] = 'completed'
+                item['stage'] = 'completed'
+                item['progress'] = 100
+        else:
+            # New record (no timestamp provided) - set default fields
+            item['created_at'] = timestamp
+            item['updated_at'] = datetime.utcnow().isoformat()
+        
+        # Save to DynamoDB (put_item will create or replace entire item)
         table.put_item(Item=item)
         
 

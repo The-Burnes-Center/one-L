@@ -12,6 +12,7 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 dynamodb = boto3.resource('dynamodb')
@@ -260,20 +261,46 @@ def mark_completed(job_id: str, timestamp: str, result_data: dict = None,
                 sessions_table_name = os.environ.get('SESSIONS_TABLE')
                 if sessions_table_name:
                     sessions_table = dynamodb.Table(sessions_table_name)
-                    sessions_table.update_item(
-                        Key={
-                            'session_id': session_id,
-                            'user_id': user_id
-                        },
-                        UpdateExpression='ADD document_count :inc '
-                                        'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
-                        ExpressionAttributeValues={
-                            ':inc': 1,
-                            ':updated': datetime.utcnow().isoformat(),
-                            ':has_results': True
-                        }
-                    )
-                    logger.info(f"Auto-updated session {session_id}: incremented document_count, set has_results=True")
+                    try:
+                        sessions_table.update_item(
+                            Key={
+                                'session_id': session_id,
+                                'user_id': user_id
+                            },
+                            UpdateExpression='ADD document_count :inc '
+                                            'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
+                            ExpressionAttributeValues={
+                                ':inc': 1,
+                                ':updated': datetime.utcnow().isoformat(),
+                                ':has_results': True
+                            }
+                        )
+                        logger.info(f"Auto-updated session {session_id}: incremented document_count, set has_results=True")
+                    except ClientError as key_error:
+                        # Try alternative key order if schema mismatch
+                        error_code = key_error.response.get('Error', {}).get('Code', '')
+                        error_msg = str(key_error)
+                        if error_code == 'ValidationException' and 'key element does not match the schema' in error_msg:
+                            logger.warning(f"Key schema mismatch, trying alternative key order: {error_msg}")
+                            try:
+                                sessions_table.update_item(
+                                    Key={
+                                        'user_id': user_id,
+                                        'session_id': session_id
+                                    },
+                                    UpdateExpression='ADD document_count :inc '
+                                                    'SET updated_at = :updated, last_activity = :updated, has_results = :has_results',
+                                    ExpressionAttributeValues={
+                                        ':inc': 1,
+                                        ':updated': datetime.utcnow().isoformat(),
+                                        ':has_results': True
+                                    }
+                                )
+                                logger.info(f"Auto-updated session {session_id} (alternative key order)")
+                            except Exception as alt_error:
+                                raise key_error
+                        else:
+                            raise
             except Exception as session_update_error:
                 logger.warning(f"Failed to auto-update session {session_id}: {session_update_error}")
         
