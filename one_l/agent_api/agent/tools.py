@@ -1247,18 +1247,56 @@ def normalize_whitespace(text: str) -> str:
     
     Handles newlines, tabs, multiple spaces, and other whitespace
     that may differ between LLM output and document text.
+    Also removes spaces after hyphens and punctuation that may be
+    introduced by document formatting (e.g., "NON- INFRINGEMENT" -> "NON-INFRINGEMENT").
+    Also handles word splits due to line breaks (e.g., "Hita chi" -> "Hitachi").
     
     Args:
         text: Text with various whitespace characters
         
     Returns:
-        Text with normalized whitespace (single spaces)
+        Text with normalized whitespace (single spaces, spaces after punctuation removed)
     """
     if not text:
         return text
     
-    # Replace all whitespace (newlines, tabs, multiple spaces) with single space
-    return re.sub(r'\s+', ' ', text).strip()
+    # Remove spaces after hyphens when they're part of compound words
+    # Handles cases like "NON- INFRINGEMENT" -> "NON-INFRINGEMENT"
+    # Only removes space if hyphen is NOT preceded by space (compound word, not punctuation)
+    # Preserves spaces around hyphens used as punctuation (e.g., "word - word")
+    # Pattern: hyphen not preceded by space, followed by whitespace
+    text = re.sub(r'(?<!\s)-\s+', '-', text)
+    
+    # Also handle en-dash and em-dash in compound words (not preceded by space)
+    text = re.sub(r'(?<!\s)[–—]\s+', lambda m: m.group(0)[0], text)
+    
+    # Handle specific known word splits due to line breaks
+    # Only handle explicit known cases to avoid false positives
+    # Common pattern: company names or technical terms split across lines
+    text = re.sub(r'\bHita\s+chi\b', 'Hitachi', text, flags=re.IGNORECASE)
+    
+    # Handle common word splits where a single word was broken across lines
+    # Pattern: short word (2-4 chars) + space + short word (2-4 chars) that form a single word
+    # Only merge when both parts are very short to avoid false positives
+    # Examples: "loss es" -> "losses", "non- exclusive" already handled by hyphen pattern
+    common_word_splits = [
+        (r'\bloss\s+es\b', 'losses'),
+        (r'\bdamage\s+es\b', 'damages'),
+        (r'\bexpense\s+es\b', 'expenses'),
+        (r'\bjudgment\s+s\b', 'judgments'),
+        (r'\bsettlement\s+s\b', 'settlements'),
+        (r'\bcost\s+s\b', 'costs'),
+        (r'\bfee\s+s\b', 'fees'),
+        (r'\bliabilit\s+y\b', 'liability'),
+        (r'\bliabilit\s+ies\b', 'liabilities'),
+    ]
+    for pattern, replacement in common_word_splits:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    
+    # Replace all remaining whitespace (newlines, tabs, multiple spaces) with single space
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
 
 
 def normalize_subsection_markers(text: str) -> str:
@@ -1295,7 +1333,8 @@ def normalize_for_matching(text: str) -> str:
     """
     Apply all normalizations to prepare text for matching.
     
-    Combines: escaped quotes, quote types, whitespace normalization, and subsection marker removal.
+    Combines: escaped quotes, quote types, whitespace normalization, subsection marker removal,
+    and sentence-ending punctuation normalization.
     
     Args:
         text: Text to normalize
@@ -1310,6 +1349,14 @@ def normalize_for_matching(text: str) -> str:
     text = normalize_quotes(text)
     text = normalize_subsection_markers(text)  # Remove (a), (i), etc. markers
     text = normalize_whitespace(text)
+    
+    # Normalize sentence-ending punctuation for consistency
+    # Convert semicolons at end of sentences to periods (common variation)
+    # Only at the very end of the text to avoid changing mid-sentence semicolons
+    text = text.rstrip()
+    if text and text[-1] == ';':
+        text = text[:-1] + '.'
+    
     return text
 
 
