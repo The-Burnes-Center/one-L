@@ -17,8 +17,7 @@ from aws_cdk import (
     RemovalPolicy
 )
 
-# Google Document AI configuration removed - reverted to PyMuPDF-based conversion
-# Google Document AI code saved in tools_pymupdf_conversion_backup.py for future reference
+# Google Document AI configuration removed - PDF conversion no longer needed for vendor submissions
 # try:
 #     import sys
 #     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../'))
@@ -119,8 +118,7 @@ class AgentConstruct(Construct):
                 "LOG_LEVEL": "INFO",
                 # Enable OCR fallback for PDFs in dev to handle scanned/flattened documents
                 "ENABLE_TEXTRACT_OCR": "1",
-                # Google Document AI configuration removed - reverted to PyMuPDF-based conversion
-                # Google Document AI code saved in tools_pymupdf_conversion_backup.py for future reference
+                # Google Document AI configuration removed - PDF conversion no longer needed for vendor submissions
             }
         )
     
