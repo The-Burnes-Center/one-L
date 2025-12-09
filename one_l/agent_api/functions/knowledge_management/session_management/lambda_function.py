@@ -524,22 +524,30 @@ def update_session_title(session_id: str, user_id: str, title: str) -> Dict[str,
             
             # Build key in correct order based on actual schema
             if partition_key and sort_key:
+                # Table has both partition and sort keys
                 key_order = {
                     partition_key: str(session_id if partition_key == 'session_id' else user_id),
                     sort_key: str(user_id if sort_key == 'user_id' else session_id)
                 }
                 key_orders = [key_order]
                 logger.info(f"UPDATE_TITLE_KEY_ORDER: Using detected schema - Key={list(key_order.keys())}")
+            elif partition_key:
+                # Table has only partition key (no sort key)
+                key_order = {partition_key: str(session_id if partition_key == 'session_id' else user_id)}
+                key_orders = [key_order]
+                logger.info(f"UPDATE_TITLE_KEY_ORDER: Using detected schema (partition key only) - Key={list(key_order.keys())}")
             else:
                 # Fallback to trying both orders if schema detection fails
-                logger.warning(f"UPDATE_TITLE_SCHEMA_FAIL: Could not detect schema (partition_key={partition_key}, sort_key={sort_key}), trying both key orders")
+                logger.warning(f"UPDATE_TITLE_SCHEMA_FAIL: Could not detect schema (partition_key={partition_key}, sort_key={sort_key}), trying session_id only, then both key orders")
                 key_orders = [
+                    {'session_id': str(session_id)},  # Try session_id only first
                     {'session_id': str(session_id), 'user_id': str(user_id)},
                     {'user_id': str(user_id), 'session_id': str(session_id)}
                 ]
         except Exception as schema_error:
-            logger.warning(f"UPDATE_TITLE_SCHEMA_ERROR: Could not detect table schema: {schema_error}, trying both key orders")
+            logger.warning(f"UPDATE_TITLE_SCHEMA_ERROR: Could not detect table schema: {schema_error}, trying session_id only, then both key orders")
             key_orders = [
+                {'session_id': str(session_id)},  # Try session_id only first
                 {'session_id': str(session_id), 'user_id': str(user_id)},
                 {'user_id': str(user_id), 'session_id': str(session_id)}
             ]
@@ -677,12 +685,13 @@ def mark_session_with_results(session_id: str, user_id: str) -> Dict[str, Any]:
         table = dynamodb.Table(SESSIONS_TABLE)
         
         # Update session to mark it has results
-        # Schema: session_id (partition/HASH) + user_id (sort/RANGE)
-        # Try both key orders to handle schema variations
+        # Schema: session_id (partition/HASH) or session_id + user_id (partition + sort)
+        # Try session_id only first, then both key orders to handle schema variations
         response = None
         last_error = None
         
         key_orders = [
+            {'session_id': str(session_id)},  # Try session_id only first (actual table schema)
             {'session_id': str(session_id), 'user_id': str(user_id)},
             {'user_id': str(user_id), 'session_id': str(session_id)}
         ]
@@ -823,21 +832,29 @@ def delete_session(session_id: str, user_id: str) -> Dict[str, Any]:
                 
                 # Build key in correct order based on actual schema
                 if partition_key and sort_key:
+                    # Table has both partition and sort keys
                     key_order = {
                         partition_key: str(session_id if partition_key == 'session_id' else user_id),
                         sort_key: str(user_id if sort_key == 'user_id' else session_id)
                     }
                     key_orders = [key_order]
                     logger.info(f"DELETE_SESSION_KEY_ORDER: Using detected schema - Key={list(key_order.keys())}")
+                elif partition_key:
+                    # Table has only partition key (no sort key)
+                    key_order = {partition_key: str(session_id if partition_key == 'session_id' else user_id)}
+                    key_orders = [key_order]
+                    logger.info(f"DELETE_SESSION_KEY_ORDER: Using detected schema (partition key only) - Key={list(key_order.keys())}")
                 else:
-                    logger.warning(f"DELETE_SESSION_SCHEMA_FAIL: Could not detect schema (partition_key={partition_key}, sort_key={sort_key}), trying both key orders")
+                    logger.warning(f"DELETE_SESSION_SCHEMA_FAIL: Could not detect schema (partition_key={partition_key}, sort_key={sort_key}), trying session_id only, then both key orders")
                     key_orders = [
+                        {'session_id': str(session_id)},  # Try session_id only first
                         {'session_id': str(session_id), 'user_id': str(user_id)},
                         {'user_id': str(user_id), 'session_id': str(session_id)}
                     ]
             except Exception as schema_error:
-                logger.warning(f"DELETE_SESSION_SCHEMA_ERROR: Could not detect table schema: {schema_error}, trying both key orders")
+                logger.warning(f"DELETE_SESSION_SCHEMA_ERROR: Could not detect table schema: {schema_error}, trying session_id only, then both key orders")
                 key_orders = [
+                    {'session_id': str(session_id)},  # Try session_id only first
                     {'session_id': str(session_id), 'user_id': str(user_id)},
                     {'user_id': str(user_id), 'session_id': str(session_id)}
                 ]
