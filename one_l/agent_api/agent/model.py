@@ -345,16 +345,14 @@ def _extract_json_only(content: str) -> str:
     logger.warning(f"Could not extract valid JSON from response. Response preview: {content[:200]}...")
     return '{"explanation": "", "conflicts": []}'
 
-def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_characters=2000, is_pdf=False, pdf_bytes=None):
+def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_characters=2000):
     """
     Split a document into chunks using character-based chunking.
     
     Args:
-        doc: python-docx Document object (for DOCX) or None (for PDF)
+        doc: python-docx Document object
         chunk_size_characters: Number of characters per chunk
         chunk_overlap_characters: Number of characters to overlap between chunks
-        is_pdf: Whether this is a PDF document
-        pdf_bytes: PDF file content as bytes (required if is_pdf=True)
         
     Returns:
         List of chunk dictionaries with bytes, chunk_num, start_char, end_char, is_pdf
@@ -374,118 +372,64 @@ def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_
     
     chunks = []
     
-    if is_pdf and pdf_bytes:
-        # For PDFs: Extract text and chunk by characters
-        try:
-            from .pdf_processor import PDFProcessor
-            pdf_processor = PDFProcessor()
-            full_text = pdf_processor.extract_text(pdf_bytes)
-        except Exception as e:
-            logger.error(f"Error extracting text from PDF: {e}")
-            # Fallback: return entire PDF as single chunk
-            chunks.append({
-                'bytes': pdf_bytes,
-                'chunk_num': 0,
-                'start_char': 0,
-                'end_char': len(pdf_bytes),  # Approximate for PDF
-                'is_pdf': True
-            })
-            return chunks
+    # For DOCX: Extract full text and chunk by characters
+    # Extract all text from document
+    full_text_parts = []
+    for para in doc.paragraphs:
+        if para.text.strip():
+            full_text_parts.append(para.text)
+    
+    full_text = '\n\n'.join(full_text_parts)
+    total_chars = len(full_text)
+    
+    if total_chars == 0:
+        # Empty document - return single empty chunk
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        chunks.append({
+            'bytes': buffer.getvalue(),
+            'chunk_num': 0,
+            'start_char': 0,
+            'end_char': 0,
+            'is_pdf': False
+        })
+        return chunks
+    
+    start_char = 0
+    chunk_num = 0
+    
+    while start_char < total_chars:
+        end_char = min(start_char + chunk_size, total_chars)
         
-        total_chars = len(full_text)
-        start_char = 0
-        chunk_num = 0
+        # Extract chunk text
+        chunk_text = full_text[start_char:end_char]
         
-        while start_char < total_chars:
-            end_char = min(start_char + chunk_size, total_chars)
-            
-            # Extract chunk text
-            chunk_text = full_text[start_char:end_char]
-            
-            # For PDFs, we'll create a DOCX chunk from the text
-            chunk_doc = Document()
-            # Split text into paragraphs (by newlines)
-            for para_text in chunk_text.split('\n'):
-                if para_text.strip():
-                    chunk_doc.add_paragraph(para_text.strip())
-            
-            # Save to bytes
-            buffer = io.BytesIO()
-            chunk_doc.save(buffer)
-            chunk_bytes = buffer.getvalue()
-            
-            chunks.append({
-                'bytes': chunk_bytes,
-                'chunk_num': chunk_num,
-                'start_char': start_char,
-                'end_char': end_char,
-                'is_pdf': False  # Chunk is DOCX even if source was PDF
-            })
-            
-            chunk_num += 1
-            # Move start position with overlap
-            start_char = end_char - overlap
-            if start_char >= total_chars - overlap:
-                break
-    else:
-        # For DOCX: Extract full text and chunk by characters
-        # Extract all text from document
-        full_text_parts = []
-        for para in doc.paragraphs:
-            if para.text.strip():
-                full_text_parts.append(para.text)
+        # Create a new document for this chunk
+        chunk_doc = Document()
         
-        full_text = '\n\n'.join(full_text_parts)
-        total_chars = len(full_text)
+        # Split chunk text into paragraphs and add to document
+        for para_text in chunk_text.split('\n\n'):
+            if para_text.strip():
+                chunk_doc.add_paragraph(para_text.strip())
         
-        if total_chars == 0:
-            # Empty document - return single empty chunk
-            buffer = io.BytesIO()
-            doc.save(buffer)
-            chunks.append({
-                'bytes': buffer.getvalue(),
-                'chunk_num': 0,
-                'start_char': 0,
-                'end_char': 0,
-                'is_pdf': False
-            })
-            return chunks
+        # Save to bytes
+        buffer = io.BytesIO()
+        chunk_doc.save(buffer)
+        chunk_bytes = buffer.getvalue()
         
-        start_char = 0
-        chunk_num = 0
+        chunks.append({
+            'bytes': chunk_bytes,
+            'chunk_num': chunk_num,
+            'start_char': start_char,
+            'end_char': end_char,
+            'is_pdf': False
+        })
         
-        while start_char < total_chars:
-            end_char = min(start_char + chunk_size, total_chars)
-            
-            # Extract chunk text
-            chunk_text = full_text[start_char:end_char]
-            
-            # Create a new document for this chunk
-            chunk_doc = Document()
-            
-            # Split chunk text into paragraphs and add to document
-            for para_text in chunk_text.split('\n\n'):
-                if para_text.strip():
-                    chunk_doc.add_paragraph(para_text.strip())
-            
-            # Save to bytes
-            buffer = io.BytesIO()
-            chunk_doc.save(buffer)
-            chunk_bytes = buffer.getvalue()
-            
-            chunks.append({
-                'bytes': chunk_bytes,
-                'chunk_num': chunk_num,
-                'start_char': start_char,
-                'end_char': end_char,
-                'is_pdf': False
-            })
-            
-            chunk_num += 1
-            # Move start position with overlap
-            start_char = end_char - overlap
-            if start_char >= total_chars - overlap:
-                break
+        chunk_num += 1
+        # Move start position with overlap
+        start_char = end_char - overlap
+        if start_char >= total_chars - overlap:
+            break
     
     return chunks
 
@@ -686,7 +630,7 @@ class Model:
             logger.info(f"Starting chunked document review")
             
             # Split document into chunks using character-based chunking
-            chunks = _split_document_into_chunks(doc, is_pdf=False)
+            chunks = _split_document_into_chunks(doc)
             logger.info(f"Split document into {len(chunks)} chunks for analysis")
             
             all_content = []

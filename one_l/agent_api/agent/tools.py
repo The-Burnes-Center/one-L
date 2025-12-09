@@ -694,9 +694,7 @@ def redline_document(
     try:
         logger.info(f"REDLINE_START: Document={document_s3_key}, Analysis={len(analysis_data)} chars")
         
-        # Detect file type - route to appropriate processor
-        is_pdf = is_pdf_file(document_s3_key) if PDF_SUPPORT_ENABLED else False
-        logger.info(f"FILE_TYPE_DETECTED: {'PDF' if is_pdf else 'DOCX'}")
+        logger.info("FILE_TYPE_DETECTED: DOCX")
         
         # Get bucket configurations
         source_bucket = _get_bucket_name(bucket_type)
@@ -792,31 +790,7 @@ def redline_document(
                 "cleanup_result": cleanup_result
             }
         
-        # Route to appropriate processor based on file type
-        if is_pdf and PDF_SUPPORT_ENABLED:
-            logger.info("PROCESSING_PDF: Converting PDF to DOCX first, then processing as DOCX")
-            # Convert PDF to DOCX before processing
-            try:
-                converted_docx_key = _convert_pdf_to_docx_in_processing_bucket(
-                    agent_processing_bucket,
-                    agent_document_key
-                )
-                logger.info(f"PDF_TO_DOCX_COMPLETE: Converted PDF to DOCX: {converted_docx_key}")
-                # Update agent_document_key to use the converted DOCX
-                agent_document_key = converted_docx_key
-            except Exception as convert_error:
-                logger.error(f"PDF_TO_DOCX_FAILED: {str(convert_error)}, falling back to PDF annotation")
-                # Fallback to PDF annotation if conversion fails
-                return _redline_pdf_document(
-                    agent_processing_bucket,
-                    agent_document_key,
-                    redline_items,
-                    document_s3_key,
-                    session_id,
-                    user_id
-                )
-        
-        # DOCX Processing (either original DOCX or converted from PDF)
+        # DOCX Processing
         logger.info("PROCESSING_DOCX: Using DOCX text modification redlining")
         
         # DOCX Processing - Original code path

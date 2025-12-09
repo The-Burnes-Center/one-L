@@ -55,7 +55,7 @@ def lambda_handler(event, context):
         # Parse and chunk DOCX document
         from docx import Document
         doc = Document(io.BytesIO(document_data))
-        chunks = _split_document_into_chunks(doc=doc, is_pdf=False)
+        chunks = _split_document_into_chunks(doc=doc)
         
         # Save chunks to S3
         chunk_s3_keys = []
