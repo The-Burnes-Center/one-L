@@ -1392,18 +1392,18 @@ def normalize_quotes(text: str) -> str:
     
     # Normalize double quotes (curly, smart, etc.) to standard "
     # Order matters: normalize curly quotes first, then other variants
-    text = text.replace('"', '"')  # Left double quotation mark (U+201C)
-    text = text.replace('"', '"')  # Right double quotation mark (U+201D)
-    text = text.replace('„', '"')  # Double low-9 quotation mark (U+201E)
-    text = text.replace('«', '"')  # Left-pointing double angle quotation (U+00AB)
-    text = text.replace('»', '"')  # Right-pointing double angle quotation (U+00BB)
+    text = text.replace('\u201C', '"')  # Left double quotation mark (U+201C) "
+    text = text.replace('\u201D', '"')  # Right double quotation mark (U+201D) "
+    text = text.replace('\u201E', '"')  # Double low-9 quotation mark (U+201E) „
+    text = text.replace('\u00AB', '"')  # Left-pointing double angle quotation (U+00AB) «
+    text = text.replace('\u00BB', '"')  # Right-pointing double angle quotation (U+00BB) »
     
     # Normalize single quotes (curly, smart, etc.) to standard '
-    text = text.replace(''', "'")  # Left single quotation mark (U+2018)
-    text = text.replace(''', "'")  # Right single quotation mark (U+2019)
-    text = text.replace('‚', "'")  # Single low-9 quotation mark (U+201A)
-    text = text.replace('‹', "'")  # Single left-pointing angle quotation (U+2039)
-    text = text.replace('›', "'")  # Single right-pointing angle quotation (U+203A)
+    text = text.replace('\u2018', "'")  # Left single quotation mark (U+2018) '
+    text = text.replace('\u2019', "'")  # Right single quotation mark (U+2019) '
+    text = text.replace('\u201A', "'")  # Single low-9 quotation mark (U+201A) ‚
+    text = text.replace('\u2039', "'")  # Single left-pointing angle quotation (U+2039) ‹
+    text = text.replace('\u203A', "'")  # Single right-pointing angle quotation (U+203A) ›
     
     # Also handle any remaining non-ASCII quote-like characters
     # This is a catch-all for any Unicode quote variants we might have missed
@@ -1412,9 +1412,9 @@ def normalize_quotes(text: str) -> str:
         # Check if character is a quote-like character
         if unicodedata.category(char) in ('Pi', 'Pf'):  # Initial/Final punctuation (quotes)
             # Convert to standard quote
-            if char in ['"', '"', '«', '»', '„']:
+            if char in ['\u201C', '\u201D', '\u00AB', '\u00BB', '\u201E']:  # ", ", «, », „
                 result_chars.append('"')
-            elif char in [''', ''', '‹', '›', '‚']:
+            elif char in ['\u2018', '\u2019', '\u2039', '\u203A', '\u201A']:  # ', ', ‹, ›, ‚
                 result_chars.append("'")
             else:
                 result_chars.append(char)  # Keep as-is if we don't recognize it
