@@ -1495,11 +1495,14 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
     Returns:
         Dictionary with redlining results
     """
-    logger.info(f"APPLY_START: Processing {len(redline_items)} conflicts across {len(doc.paragraphs)} paragraphs")
+    total_conflicts_input = len(redline_items)
+    logger.info(f"APPLY_START: Processing {total_conflicts_input} conflicts across {len(doc.paragraphs)} paragraphs")
     
     try:
         total_paragraphs = len(doc.paragraphs)
         failed_matches = []
+        duplicates_skipped = 0
+        empty_skipped = 0
         
         # Document structure logging
         logger.info(f"DOCUMENT_STRUCTURE: Total paragraphs: {total_paragraphs}")
@@ -1523,13 +1526,12 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             
             if not vendor_quote:
                 logger.warning("SKIP: Empty vendor_quote")
+                empty_skipped += 1
                 continue
             
             # Log vendor quote as retrieved from redline_items
             conflict_id = redline_item.get('id', redline_item.get('clarification_id', 'Unknown'))
-            logger.info(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote type={type(vendor_quote)}, length={len(vendor_quote)}")
-            logger.info(f"SCANNING_RETRIEVED: vendor_quote (first 200 chars)='{vendor_quote[:200]}...'")
-            logger.info(f"SCANNING_RETRIEVED: vendor_quote (last 100 chars)='...{vendor_quote[-100:]}'")
+            logger.info(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote length={len(vendor_quote)}")
             if '\\' in vendor_quote:
                 logger.warning(f"SCANNING_RETRIEVED: ID={conflict_id}, vendor_quote still contains backslashes! count={vendor_quote.count('\\\\')}")
             
@@ -1537,6 +1539,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             normalized_quote = normalize_vendor_quote_for_dedup(vendor_quote)
             if normalized_quote in seen_vendor_quotes:
                 logger.info(f"DUPLICATE_SKIP: vendor_quote already processed: '{vendor_quote[:50]}...'")
+                duplicates_skipped += 1
                 continue
             
             seen_vendor_quotes.add(normalized_quote)
@@ -1623,8 +1626,11 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             pages_affected = set(para_idx // 20 for para_idx in paragraphs_with_redlines)
             logger.info(f"PAGE_DISTRIBUTION: {len(pages_affected)} pages affected: {sorted(pages_affected)}")
         
-        total_conflicts = len(redline_items) - len([r for r in redline_items if not r.get('text', '').strip()])
-        success_rate = (matches_found / total_conflicts * 100) if total_conflicts else 0
+        total_conflicts_processed = total_conflicts_input - empty_skipped - duplicates_skipped
+        success_rate = (matches_found / total_conflicts_processed * 100) if total_conflicts_processed else 0
+        
+        # Log comprehensive summary
+        logger.info(f"REDLINE_SUMMARY: Input={total_conflicts_input}, Processed={total_conflicts_processed}, Empty skipped={empty_skipped}, Duplicates skipped={duplicates_skipped}")
         
         if failed_matches:
             logger.warning(f"REDLINING_INCOMPLETE: {len(failed_matches)} conflicts could not be matched")
@@ -1633,7 +1639,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         else:
             logger.info("REDLINING_SUCCESS: All conflicts successfully matched and redlined")
         
-        logger.info(f"REDLINE_RESULTS: Matches={matches_found}, Failed={len(failed_matches)}, Success rate={success_rate:.1f}%")
+        logger.info(f"REDLINE_RESULTS: Total processed={total_conflicts_processed}, Matches={matches_found}, Failed={len(failed_matches)}, Success rate={success_rate:.1f}%")
         
         return {
             "total_paragraphs": total_paragraphs,
@@ -1675,31 +1681,9 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     """
     # Prepare normalized versions
     # Note: vendor_quote may already be normalized from parsing, so we normalize again (idempotent)
-    logger.info(f"MATCH_PREP_START: vendor_quote length={len(vendor_quote)}, type={type(vendor_quote)}")
-    logger.info(f"MATCH_PREP_START: vendor_quote (first 200)='{vendor_quote[:200]}...'")
-    logger.info(f"MATCH_PREP_START: vendor_quote (last 100)='...{vendor_quote[-100:]}'")
-    
-    # Check for special characters
-    if '\\' in vendor_quote:
-        logger.warning(f"MATCH_PREP_START: vendor_quote contains backslashes! count={vendor_quote.count('\\\\')}")
-    if '"' in vendor_quote or '"' in vendor_quote:
-        logger.info(f"MATCH_PREP_START: vendor_quote contains curly quotes")
-    
     quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
     quote_ws_normalized = normalize_whitespace(quote_normalized)
     fully_normalized = normalize_for_matching(vendor_quote)
-    
-    logger.info(f"MATCH_PREP: vendor_quote length={len(vendor_quote)}, quote_normalized length={len(quote_normalized)}, quote_ws_normalized length={len(quote_ws_normalized)}, fully_normalized length={len(fully_normalized)}")
-    logger.info(f"MATCH_PREP: vendor_quote preview='{vendor_quote[:150]}...'")
-    logger.info(f"MATCH_PREP: quote_normalized preview='{quote_normalized[:150]}...'")
-    logger.info(f"MATCH_PREP: quote_ws_normalized preview='{quote_ws_normalized[:150]}...'")
-    logger.info(f"MATCH_PREP: fully_normalized preview='{fully_normalized[:150]}...'")
-    
-    # Log if normalization changed anything
-    if quote_normalized != vendor_quote:
-        logger.info(f"MATCH_PREP: quote_normalized differs from vendor_quote")
-    if fully_normalized != vendor_quote:
-        logger.info(f"MATCH_PREP: fully_normalized differs from vendor_quote")
     
     # Search through all paragraphs
     paragraphs_checked = 0
@@ -1709,11 +1693,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
             continue
         
         paragraphs_checked += 1
-        # Log paragraph details for first few paragraphs or if it contains key text
-        if paragraphs_checked <= 3 or 'Indemnified Party' in para_text or 'indemnify' in para_text.lower():
-            logger.debug(f"MATCH_CHECK_PARA: para_idx={para_idx}, length={len(para_text)}, preview='{para_text[:150]}...'")
-            if '"' in para_text or '"' in para_text:
-                logger.debug(f"MATCH_CHECK_PARA: para_idx={para_idx} contains curly quotes")
         
         # TIER 1: Exact match
         if vendor_quote in para_text:
@@ -1744,22 +1723,10 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
         # TIER 3: Quote + whitespace normalized match
         para_quotes_only = normalize_quotes(para_text)
         para_quote_ws_normalized = normalize_whitespace(para_quotes_only)
-        # Log normalization for debugging (only for relevant paragraphs to avoid spam)
-        if quote_ws_normalized[:50].lower() in para_quote_ws_normalized.lower():
-            had_curly_before = '"' in para_text or '"' in para_text
-            has_curly_after = '"' in para_quotes_only or '"' in para_quotes_only
-            if had_curly_before:
-                logger.info(f"MATCH_TIER3_NORM: para_idx={para_idx}, had_curly_before={had_curly_before}, has_curly_after={has_curly_after}")
-                # Show actual quote characters
-                for i, char in enumerate(para_text):
-                    if ord(char) in [0x201C, 0x201D, 0x22]:
-                        logger.info(f"MATCH_TIER3_NORM: para_idx={para_idx}, pos {i}: U+{ord(char):04X} = '{char}'")
-                        break
         if quote_ws_normalized in para_quote_ws_normalized:
             # Find position in normalized text, then map back
             norm_start = para_quote_ws_normalized.find(quote_ws_normalized)
             logger.info(f"MATCH_FOUND: TIER 3 (quote_whitespace_normalized) in paragraph {para_idx} at normalized position {norm_start}")
-            logger.info(f"MATCH_TIER3_DETAIL: quote_ws_normalized='{quote_ws_normalized[:100]}...', found in para_quote_ws_normalized='{para_quote_ws_normalized[norm_start:norm_start+100]}...'")
             # Map normalized position back to original position
             start_pos = _map_normalized_to_original_position(para_text, norm_start)
             end_pos = _map_normalized_to_original_position(para_text, norm_start + len(quote_ws_normalized))
@@ -1990,14 +1957,8 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'match_type': 'partial_substring',
                     'is_truncated': is_likely_truncated
                 }
-            else:
-                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: Skipping match at position {norm_start} (not > 0, likely prefix match)")
         elif fully_normalized.lower() in para_fully_normalized:
             norm_start = para_fully_normalized.find(fully_normalized.lower())
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, fully_normalized found at position {norm_start}")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: fully_normalized length={len(fully_normalized)}, para_fully_normalized length={len(para_fully_normalized)}")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: fully_normalized preview='{fully_normalized[:200]}...'")
-            logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_fully_normalized preview='{para_fully_normalized[:200]}...'")
             # Only return if it's not already a prefix match (avoid duplicate)
             if norm_start > 0:
                 logger.info(f"MATCH_PARTIAL_FOUND: vendor_quote found within paragraph {para_idx} at normalized position {norm_start} (fully_normalized)")
@@ -2011,18 +1972,14 @@ def _find_partial_match(doc, vendor_quote: str, quote_ws_normalized: str, fully_
                     'match_type': 'partial_substring',
                     'is_truncated': is_likely_truncated
                 }
-            else:
-                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: Skipping match at position {norm_start} (not > 0, likely prefix match)")
         else:
-            # Log when substring is NOT found to help debug
-            if para_idx < 100:  # Only log for first 100 paragraphs to avoid spam
-                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: paragraph {para_idx}, substring NOT found")
-                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
-                logger.info(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
-                # Check if first 50 chars match (partial match indicator)
-                if len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized:
-                    logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: First 50 chars of quote found in paragraph {para_idx}, but full quote not found")
-                    logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: This suggests normalization or text differences")
+            # Only log when there's a partial match (first 50 chars found) - this is the interesting case
+            # Don't log for every paragraph to avoid log spam
+            if len(quote_ws_normalized) > 50 and quote_ws_normalized[:50] in para_quote_ws_normalized:
+                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: First 50 chars of quote found in paragraph {para_idx}, but full quote not found")
+                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: quote_ws_normalized='{quote_ws_normalized[:200]}...'")
+                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: para_quote_ws_normalized='{para_quote_ws_normalized[:200]}...'")
+                logger.warning(f"MATCH_PARTIAL_SUBSTRING_CHECK: This suggests normalization or text differences")
     
     return None
 
