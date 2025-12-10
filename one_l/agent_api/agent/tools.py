@@ -224,6 +224,17 @@ Use 6-12+ targeted queries to ensure no conflicts are missed.
         }
     ]
 
+def _remove_uuid_prefix(filename: str) -> str:
+    """
+    Remove UUID prefix from filename if present.
+    Format: uuid_filename.docx -> filename.docx
+    """
+    import re
+    # Match UUID pattern (hex digits with optional hyphens) followed by underscore
+    # Pattern: [a-f0-9-]+_filename.ext
+    match = re.match(r'^[a-f0-9-]+_(.+)$', filename, re.IGNORECASE)
+    return match.group(1) if match else filename
+
 def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, Any]) -> str:
     """
     Extract source document name from retrieval result metadata and location.
@@ -237,6 +248,8 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
     5. metadata.uri - URI in metadata
     6. Extract filename from S3 key if available
     
+    Also removes UUID prefixes from filenames (format: uuid_filename.docx -> filename.docx)
+    
     Args:
         metadata: Metadata dictionary from retrieval result
         location: Location dictionary from retrieval result
@@ -248,7 +261,7 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
     
     # Try metadata.source first (primary field)
     if metadata.get('source'):
-        return metadata['source']
+        return _remove_uuid_prefix(metadata['source'])
     
     # Try location.s3Location.uri (full S3 URI)
     s3_location = location.get('s3Location', {})
@@ -258,7 +271,7 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
         if '/' in uri:
             filename = uri.split('/')[-1]
             if filename:
-                return filename
+                return _remove_uuid_prefix(filename)
     
     # Try location.s3Location.key (S3 key)
     if s3_location.get('key'):
@@ -267,8 +280,8 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
         if '/' in s3_key:
             filename = s3_key.split('/')[-1]
             if filename:
-                return filename
-        return s3_key
+                return _remove_uuid_prefix(filename)
+        return _remove_uuid_prefix(s3_key)
     
     # Try metadata.s3_location (alternative metadata field)
     if metadata.get('s3_location'):
@@ -276,8 +289,8 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
         if '/' in s3_loc:
             filename = s3_loc.split('/')[-1]
             if filename:
-                return filename
-        return s3_loc
+                return _remove_uuid_prefix(filename)
+        return _remove_uuid_prefix(s3_loc)
     
     # Try metadata.uri
     if metadata.get('uri'):
@@ -285,8 +298,8 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
         if '/' in uri:
             filename = uri.split('/')[-1]
             if filename:
-                return filename
-        return uri
+                return _remove_uuid_prefix(filename)
+        return _remove_uuid_prefix(uri)
     
     # Try extracting from any metadata field that looks like a path or filename
     for key, value in metadata.items():
@@ -295,7 +308,7 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
             if any(ext in value.lower() for ext in ['.pdf', '.docx', '.doc', '.txt', '.html']):
                 filename = value.split('/')[-1] if '/' in value else value
                 if filename and len(filename) > 3:  # Reasonable filename length
-                    return filename
+                    return _remove_uuid_prefix(filename)
     
     # If we have location info but no specific source, return a descriptive message
     if s3_location:
@@ -305,8 +318,8 @@ def _extract_source_from_result(metadata: Dict[str, Any], location: Dict[str, An
         if '/' in key:
             filename = key.split('/')[-1]
             if filename:
-                return filename
-        return key if key != 'unknown-key' else f"{bucket}/{key}"
+                return _remove_uuid_prefix(filename)
+        return _remove_uuid_prefix(key) if key != 'unknown-key' else f"{bucket}/{key}"
     
     # Last resort: log warning and return descriptive fallback
     logger.warning(f"Could not extract source from metadata: {metadata}, location: {location}")
