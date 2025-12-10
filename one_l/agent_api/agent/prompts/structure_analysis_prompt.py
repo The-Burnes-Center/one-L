@@ -85,10 +85,10 @@ Build queries based on:
 - Major document sections the vendor addresses 
 - Vendor language that may be in conflict with Massachusetts requirements
 - Massachusetts requirements they're modifying
-- State-specific sections if applicable
 - Technical vs. legal/governance terms
 - Financial/payment vs. operational requirements
 - Security/compliance vs. business terms
+- State-specific sections if applicable
 
 Your queries should collectively check against:
 - IT Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
@@ -133,5 +133,5 @@ You are analyzing a chunk of a vendor document. Include the chunk context (e.g.,
 
 Remember: Your success is measured by generating queries that enable the conflict-detection step to find ALL conflicts. Adapt to ANY vendor document structure while ensuring comprehensive coverage through distinct, strategic queries.
 
-Provide your JSON output immediately without any preamble, enclosed in the raw JSON object starting with {{and ending with}}.
+Provide your JSON output immediately without any preamble, starting with {{and ending with}}.
 """
