@@ -87,9 +87,9 @@ def lambda_handler(event, context):
             try:
                 table = dynamodb.Table(table_name)
                 
-                # BACKEND CLEANUP: Cancel/cleanup old processing jobs for this session
+                # Cancel any existing processing jobs for this session
                 # Each session should only have 1 active job at a time
-                logger.info(f"Cleaning up old processing jobs for session {session_id} before starting new job {job_id}")
+                logger.info(f"Cleaning up existing processing jobs for session {session_id} before starting new job {job_id}")
                 
                 # Use GSI to query jobs for this session (EFFICIENT - much faster than scan)
                 # Fallback to scan if GSI doesn't exist
@@ -139,14 +139,14 @@ def lambda_handler(event, context):
                             'execution_arn': item.get('execution_arn')
                         })
                 
-                # Cancel old processing jobs
+                # Cancel existing processing jobs
                 for old_job in old_jobs:
                     old_job_id = old_job['analysis_id']
                     old_timestamp = old_job['timestamp']
                     execution_arn = old_job.get('execution_arn')
                     
                     try:
-                        # Update DynamoDB to mark old job as cancelled/replaced
+                        # Update DynamoDB to mark job as cancelled
                         table.update_item(
                             Key={
                                 'analysis_id': old_job_id,
@@ -161,7 +161,7 @@ def lambda_handler(event, context):
                                 ':error': 'Job cancelled: A new job was started for this session'
                             }
                         )
-                        logger.info(f"Marked old job {old_job_id} as cancelled in DynamoDB")
+                        logger.info(f"Marked job {old_job_id} as cancelled in DynamoDB")
                         
                         # Try to stop Step Functions execution if it's still running
                         if execution_arn:
@@ -171,16 +171,16 @@ def lambda_handler(event, context):
                                     error='JobCancelled',
                                     cause='A new job was started for this session. Only one job per session is allowed.'
                                 )
-                                logger.info(f"Stopped Step Functions execution {execution_arn} for old job {old_job_id}")
+                                logger.info(f"Stopped Step Functions execution {execution_arn} for job {old_job_id}")
                             except sfn_client.exceptions.ExecutionDoesNotExist:
                                 logger.info(f"Step Functions execution {execution_arn} already completed or doesn't exist")
                             except Exception as sfn_error:
                                 logger.warning(f"Could not stop Step Functions execution {execution_arn}: {sfn_error}")
                     except Exception as cleanup_error:
-                        logger.warning(f"Could not cleanup old job {old_job_id}: {cleanup_error}")
+                        logger.warning(f"Could not cleanup job {old_job_id}: {cleanup_error}")
                 
                 if old_jobs:
-                    logger.info(f"Cleaned up {len(old_jobs)} old processing job(s) for session {session_id}")
+                    logger.info(f"Cleaned up {len(old_jobs)} existing processing job(s) for session {session_id}")
                 
                 # Update session title to use the document filename
                 # Extract filename from document_s3_key (e.g., "vendor-submissions/uuid_filename.docx" -> "filename.docx")

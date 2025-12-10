@@ -1,6 +1,6 @@
 """
 Retrieve all KB queries Lambda function.
-Replaces parallel Map state - retrieves all queries in a single lambda using concurrent.futures.
+Retrieves all queries in a single lambda using concurrent.futures.
 Stores all results in a single S3 file.
 """
 

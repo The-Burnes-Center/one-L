@@ -1,7 +1,6 @@
 """
 Unified analyze with KB Lambda function.
 Handles both chunk and document analysis with KB results.
-Replaces analyze_chunk_with_kb and analyze_document_with_kb.
 """
 
 import json
@@ -73,7 +72,7 @@ def lambda_handler(event, context):
             kb_results_json = kb_response['Body'].read().decode('utf-8')
             kb_results_raw = json.loads(kb_results_json)
             # KB results are stored as a list by retrieve_all_kb_queries
-            # Handle both list format (new) and dict format (legacy/fallback)
+            # Handle both list format and dict format
             if isinstance(kb_results_raw, list):
                 kb_results = kb_results_raw
             elif isinstance(kb_results_raw, dict) and 'all_results' in kb_results_raw:

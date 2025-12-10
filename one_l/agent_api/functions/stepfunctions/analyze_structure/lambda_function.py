@@ -1,7 +1,6 @@
 """
 Unified analyze structure Lambda function.
 Handles both chunk and document structure analysis.
-Replaces analyze_chunk_structure and analyze_document_structure.
 """
 
 import json

@@ -69,11 +69,11 @@ class AgentConstruct(Construct):
         # Instance variables for Lambda functions
         self.stepfunctions_construct = None
         
-        # Always create Step Functions construct (old pipeline removed)
+        # Create Step Functions construct
         self._create_stepfunctions_construct()
     
     def _create_stepfunctions_construct(self):
-        """Create Step Functions construct (required - old pipeline removed)."""
+        """Create Step Functions construct."""
         from ..stepfunctions.stepfunctions import StepFunctionsConstruct
         
         self.stepfunctions_construct = StepFunctionsConstruct(

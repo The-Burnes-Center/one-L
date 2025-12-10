@@ -39,7 +39,7 @@ def lambda_handler(event, context):
         user_id = event.get('user_id')
         
         # CRITICAL: Load conflicts from S3 (merge_chunk_results stores in S3)
-        # conflicts_result may contain conflicts_s3_key (S3 reference) or inline data (legacy)
+        # conflicts_result may contain conflicts_s3_key (S3 reference) or inline data
         conflicts_result = event.get('conflicts_result', {})
         conflicts_s3_key = event.get('conflicts_s3_key') or (conflicts_result.get('conflicts_s3_key') if isinstance(conflicts_result, dict) else None)
         bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
@@ -60,7 +60,7 @@ def lambda_handler(event, context):
                 logger.error(f"CRITICAL: Failed to load conflicts from S3 {conflicts_s3_key}: {e}")
                 raise  # Fail fast - conflicts must be in S3
         else:
-            # Fallback: try to parse from conflicts_result (legacy support)
+            # Fallback: try to parse from conflicts_result
             conflicts_json = event.get('conflicts_json') or conflicts_result
             if not conflicts_json:
                 raise ValueError(f"conflicts_s3_key or conflicts_json is required")

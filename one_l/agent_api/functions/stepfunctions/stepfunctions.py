@@ -354,7 +354,7 @@ class StepFunctionsConstruct(Construct):
         )
         # Note: No catch block here - errors handled at Map state level to avoid CDK recursion issues
         
-        # Retrieve all KB queries in single lambda (replaces parallel Map state)
+        # Retrieve all KB queries in single lambda
         # Loads structure results from S3, retrieves queries, stores KB results in S3
         retrieve_all_kb_queries = tasks.LambdaInvoke(
             self, "RetrieveAllKBQueries",
@@ -495,7 +495,7 @@ class StepFunctionsConstruct(Construct):
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
                 "conflicts_s3_key": sfn.JsonPath.string_at("$.conflicts_result.conflicts_s3_key"),  # S3 reference from merge
-                "conflicts_result": sfn.JsonPath.object_at("$.conflicts_result"),  # Fallback for legacy support
+                "conflicts_result": sfn.JsonPath.object_at("$.conflicts_result"),  # Fallback support
                 "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
                 "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),  # For loading conflicts from S3
                 "bucket_type": sfn.JsonPath.string_at("$.bucket_type"),  # Pass bucket_type for correct S3 bucket lookup
@@ -522,7 +522,7 @@ class StepFunctionsConstruct(Construct):
             retry_on_service_exceptions=True,
             payload=sfn.TaskInput.from_object({
                 "conflicts_s3_key": sfn.JsonPath.string_at("$.conflicts_result.conflicts_s3_key"),  # S3 reference from merge
-                "analysis_json": sfn.JsonPath.object_at("$.conflicts_result"),  # Fallback for legacy support
+                "analysis_json": sfn.JsonPath.object_at("$.conflicts_result"),  # Fallback support
                 "bucket_name": sfn.JsonPath.string_at("$.split_result.bucket_name"),  # For loading conflicts from S3
                 "document_s3_key": sfn.JsonPath.string_at("$.document_s3_key"),
                 "redlined_s3_key": sfn.JsonPath.string_at("$.redline_result.redlined_document_s3_key"),  # From generate_redline
