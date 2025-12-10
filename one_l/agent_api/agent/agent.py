@@ -38,37 +38,6 @@ class Agent:
         
         logger.info(f"Agent initialized with knowledge base: {knowledge_base_id}")
     
-    def review_document(self, bucket_type: str, document_s3_key: str) -> Dict[str, Any]:
-        """
-        Review a document for conflicts using AI analysis.
-        
-        Args:
-            bucket_type: Type of source bucket
-            document_s3_key: S3 key of the document to review
-            
-        Returns:
-            Dictionary containing review results
-        """
-        try:
-            logger.info("Starting document review process")
-            
-            # Delegate to the model for AI analysis with document attachment
-            result = self._model.review_document(bucket_type, document_s3_key)
-            
-            logger.info(f"Document review completed successfully: {result.get('success', False)}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in agent document review: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "analysis": "",
-                "tool_results": [],
-                "usage": {},
-                "thinking": ""
-            }
-    
     def create_redlined_document(self, analysis_data: str, document_s3_key: str, bucket_type: str = "user_documents", session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """
         Create a redlined version of the document with conflicts highlighted.
@@ -98,51 +67,6 @@ class Agent:
                 "success": False,
                 "error": str(e),
                 "original_document": document_s3_key
-            }
-    
-    def review_and_redline(self, bucket_type: str, document_s3_key: str, analysis_id: str) -> Dict[str, Any]:
-        """
-        Complete workflow: review document and create redlined version.
-        
-        Args:
-            bucket_type: Type of source bucket
-            document_s3_key: S3 key of the original document
-            analysis_id: Analysis ID for storing results
-            
-        Returns:
-            Dictionary containing both review and redlining results
-        """
-        try:
-            logger.info("Starting complete review and redline workflow")
-            
-            # Step 1: Review the document
-            review_result = self.review_document(bucket_type, document_s3_key)
-            
-            if not review_result.get('success', False):
-                return {
-                    "success": False,
-                    "error": f"Review failed: {review_result.get('error', 'Unknown error')}",
-                    "review_result": review_result,
-                    "redline_result": None
-                }
-            
-            # Step 2: Create redlined document
-            redline_result = self.create_redlined_document(analysis_id, document_s3_key)
-            
-            return {
-                "success": True,
-                "review_result": review_result,
-                "redline_result": redline_result,
-                "message": "Document review and redlining completed"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in complete workflow: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "review_result": None,
-                "redline_result": None
             }
     
     def get_knowledge_base_id(self) -> str:
