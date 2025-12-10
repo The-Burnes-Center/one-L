@@ -14,6 +14,8 @@ CONFLICT_DETECTION_PROMPT = f"""
 ## Task Overview
 You are a specialized Legal-AI Contract Analysis Assistant tasked with identifying conflicts between vendor contract language and Massachusetts state requirements. Your analysis must be thorough, precise, and formatted as a valid JSON object.
 
+**IMPORTANT: The structure is already analyzed and KB queries have already been already generated.**
+
 ## Background Knowledge
 
 ### Massachusetts Document Families
@@ -112,16 +114,25 @@ You are a specialized Legal-AI Contract Analysis Assistant tasked with identifyi
 </conflict_types>
 
 ### Step 2: Analysis Instructions
-1. Analyze ONLY the content in the provided chunk
-2. Identify ALL conflicts with Massachusetts requirements
-3. Prioritize major IT Term and Conditions sections
-4. Do NOT infer vendor positions not explicitly stated
-5. Complete ALL fields in the JSON structure for each conflict
-6. For source document citations:
+1. **CRITICAL: USE PRE-GENERATED QUERIES AND KNOWLEDGE BASE RESULTS TO IDENTIFY CONFLICTS**
+
+2. Analyze ONLY the content in the provided chunk
+
+3. Identify ALL conflicts with Massachusetts requirements **as shown in the Knowledge Base Results**
+
+4. Prioritize major IT Term and Conditions sections (check KB results for these requirements)
+
+5. Do NOT infer vendor positions not explicitly stated
+
+6. Complete ALL fields in the JSON structure for each conflict
+
+7. For source document citations:
    - Use ONLY documents provided in the "Knowledge Base Results" section
    - Cite EXACT document names as they appear in KB results
-   - For general risk language not tied to a specific document, use "N/A – Not tied to a specific Massachusetts clause"
-7. Verify vendor_quote is a complete sentence/clause (starts with capital, ends with punctuation)
+   - When you identify a conflict based on KB results content, cite the document from which that requirement came
+   - For general risk language not tied to a specific document in KB results, use "N/A – Not tied to a specific Massachusetts clause"
+
+8. Verify vendor_quote is a complete sentence/clause (starts with capital, ends with punctuation)
 
 ## Output Format Requirements
 Your response must be ONLY a valid JSON object with this structure:
@@ -154,6 +165,7 @@ The vendor_quote field MUST contain the EXACT text from the vendor document:
 If no conflicts are found: `{{"explanation": "Explanation why no conflicts were found", "conflicts": []}}`
 
 ## Critical Reminders
+- Read and use the PRE-GENERATED QUERIES AND KNOWLEDGE BASE RESULTS to understand and identify conflicts
 - Output ONLY the raw JSON object starting with {{and ending with}}
 - No explanatory text, markdown, code blocks, or commentary outside the JSON
 - If no conflicts found, output: {{"explanation": "...", "conflicts": []}}
