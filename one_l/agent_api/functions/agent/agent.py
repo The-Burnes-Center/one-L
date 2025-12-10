@@ -17,20 +17,6 @@ from aws_cdk import (
     RemovalPolicy
 )
 
-# Google Document AI configuration removed - PDF conversion no longer needed for vendor submissions
-# try:
-#     import sys
-#     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../'))
-#     from constants import (
-#         GOOGLE_CLOUD_PROJECT_ID,
-#         GOOGLE_DOCUMENT_AI_PROCESSOR_ID,
-#         GOOGLE_DOCUMENT_AI_LOCATION
-#     )
-# except ImportError:
-#     GOOGLE_CLOUD_PROJECT_ID = ""
-#     GOOGLE_DOCUMENT_AI_PROCESSOR_ID = ""
-#     GOOGLE_DOCUMENT_AI_LOCATION = "us"
-
 
 class AgentConstruct(Construct):
     """
