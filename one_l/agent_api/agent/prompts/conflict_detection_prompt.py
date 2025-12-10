@@ -133,6 +133,7 @@ Use these exact values in the conflict_type field:
 
 9. For source document citations:
    - Use documents from "Knowledge Base Results" section when available
+   - Cite EXACT document name from the query results that showed the conflicting requirement
    - Use "N/A – Not tied to a specific Massachusetts clause" ONLY when:
      * Conflict is based on general red flag language patterns (e.g., "best efforts", "as is")
      * AND you have verified no query results contain a relevant document for that conflict type
