@@ -74,9 +74,9 @@ Divide the vendor content into 8-15 distinct logical zones based on:
 
 IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a predetermined pattern.
 
-### STEP 3: QUERY GENERATION
+### STEP 3: INTELLIGENT STRUCTURE-BASED QUERYING
 
-Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk.
+Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
 Each query MUST:
 - Use the `section` field to indicate the vendor section/exhibit/zone it targets
@@ -85,32 +85,24 @@ Each query MUST:
 - Incorporate major legal concepts when they appear
 - Not repeat the same vendor content across multiple queries
 
-Query focus areas:
-- Major document sections addressed by the vendor
-- Vendor language potentially conflicting with Massachusetts requirements
-- Massachusetts requirements being modified
+Build queries based on:
+- Major document sections the vendor addresses 
+- Vendor language that may be in conflict with Massachusetts requirements
+- Massachusetts requirements they're modifying
 - State-specific sections if applicable
 - Technical vs. legal/governance terms
 - Financial/payment vs. operational requirements
 - Security/compliance vs. business terms
 
-REQUIRED: Always include 1-2 queries for general Commonwealth requirements covering:
-1. Constitutional requirements: Massachusetts Constitution Commonwealth indemnification prohibition vendor contractor indemnify defend hold harmless
-2. General contract standards: Commonwealth set-off rights intercept payment Massachusetts standard contract auto-renewal prohibition automatic renewal clauses government contracts
-3. Payment/performance standards: payment before performance delivery Massachusetts Commonwealth payment terms billing before service delivery implementation delays
-4. Governing law requirements: governing law venue Massachusetts state contracts jurisdiction requirements Massachusetts law
-
 Your queries should collectively check against:
 - IT Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
-- Standard Contract Form Terms and Conditions
 - All referenced Exhibits
 - Request for Response (RFR)
-- Commonwealth-specific requirements and constitutional provisions
-- General Massachusetts contract standards and prohibitions
+- Commonwealth-specific requirements
 - Any other mentioned documents
 - State-specific requirements if applicable
 
-IMPORTANT: Let the vendor document structure guide your queries, but always ensure coverage of general Commonwealth requirements even if not explicitly mentioned in the vendor document.
+IMPORTANT: Let the vendor document structure guide your queries.
 
 ### STEP 4: QUERY DISTRIBUTION & VALIDATION
 
@@ -127,7 +119,6 @@ Verification checklist:
 - ✓ Each query contains 50-100+ unique terms
 - ✓ Comprehensive coverage of Massachusetts documents
 - ✓ Adapted to actual vendor document structure
-- ✓ At least 1-2 queries covering general Commonwealth requirements
 
 ## CONTEXT AWARENESS
 
