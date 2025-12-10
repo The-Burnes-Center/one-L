@@ -22,7 +22,7 @@ ARG CACHE_BUST
 RUN echo "Cache bust: ${CACHE_BUST}"
 
 # Copy requirements file first for better layer caching
-COPY one_l/agent_api/functions/agent/document_review/requirements.txt .
+COPY one_l/agent_api/functions/stepfunctions/requirements.txt .
 
 # Copy fix script for python-docx warning
 COPY scripts/fix_docx_warning.py ./fix_docx_warning.py
