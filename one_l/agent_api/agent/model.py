@@ -936,6 +936,137 @@ class Model:
         logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
         return sanitized
     
+    def _call_claude_without_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False) -> Dict[str, Any]:
+        """
+        Call Claude without tool support using Converse API.
+        Use this when KB results are already pre-loaded in the prompt.
+        Implements graceful queuing with call spacing to prevent token rate limiting.
+        Supports fallback: Primary Sonnet 4 (once) -> Sonnet 4 1M -> Retry Sonnet 4 with backoff
+        
+        Args:
+            messages: List of message dictionaries
+            retry_count: Current retry attempt number
+            use_1m_context: Whether to use 1M context version (fallback)
+            tried_1m: Whether we've already attempted 1M context (prevents loops)
+        """
+        
+        # Implement graceful call spacing to prevent token rate limiting
+        current_time = time.time()
+        time_since_last_call = current_time - _call_tracker['last_call_time']
+        
+        if time_since_last_call < CALL_SPACING_DELAY:
+            wait_time = CALL_SPACING_DELAY - time_since_last_call
+            logger.info(f"Graceful queuing: waiting {wait_time:.2f}s to prevent token rate limiting")
+            time.sleep(wait_time)
+        
+        # Always use Claude Sonnet 4 - just toggle 1M context via beta parameter
+        current_model_id = CLAUDE_MODEL_ID
+        
+        # Log attempt (but don't increment counter until successful)
+        model_name = "Sonnet 4 1M" if use_1m_context else "Sonnet 4"
+        logger.info(f"Calling Claude ({model_name}: {current_model_id}) with {len(messages)} messages without tools (attempt {retry_count + 1}, use_1m_context={use_1m_context}) - Total successful calls so far: {_call_tracker['total_model_calls']}")
+        
+        try:
+            # Prepare inference config
+            inference_config = {
+                "temperature": TEMPERATURE,
+                "maxTokens": MAX_TOKENS
+            }
+            
+            # Prepare API call parameters - NO tools
+            api_params = {
+                "modelId": current_model_id,
+                "messages": messages,
+                "system": [{"text": SYSTEM_PROMPT}],
+                "inferenceConfig": inference_config,
+                # NO toolConfig - tools disabled
+                "additionalModelRequestFields": {
+                    "thinking": {
+                        "type": "enabled",
+                        "budget_tokens": THINKING_BUDGET_TOKENS
+                    }
+                }
+            }
+            
+            # Add 1M context beta parameter if using 1M fallback
+            # AWS Bedrock expects anthropic_beta to be a list of strings
+            if use_1m_context:
+                api_params["additionalModelRequestFields"]["anthropic_beta"] = [ANTHROPIC_BETA_1M]
+            
+            # Call Bedrock using Converse API (supports document attachments)
+            response = bedrock_client.converse(**api_params)
+            
+            # SUCCESS: Only now increment the counter for successful calls
+            _call_tracker['total_model_calls'] += 1
+            _call_tracker['last_call_time'] = time.time()
+            
+            logger.info(f"Claude API call successful! Total successful model calls: {_call_tracker['total_model_calls']}")
+            
+            # Extract and log thinking content
+            thinking_context = f"inference_call_{_call_tracker['total_model_calls']}"
+            _extract_and_log_thinking(response, thinking_context)
+            
+            # No tool calls possible - return response directly
+            return response
+            
+        except Exception as e:
+            error_msg = str(e)
+            error_type = type(e).__name__
+            
+            # Check for throttling errors and implement exponential backoff
+            is_throttling = ("ThrottlingException" in error_msg or "Too many tokens" in error_msg or 
+                            "rate" in error_msg.lower() or "throttl" in error_msg.lower() or
+                            "limit" in error_msg.lower())
+            
+            # Check for transient errors that should be retried
+            is_transient = (
+                "ServiceUnavailableException" in error_type or
+                "InternalServerError" in error_type or
+                "InternalFailure" in error_msg or
+                "ServiceUnavailable" in error_msg or
+                "timeout" in error_msg.lower() or
+                "Timeout" in error_type or
+                "Connection" in error_type or
+                "ReadTimeout" in error_type or
+                "502" in error_msg or  # Bad Gateway
+                "503" in error_msg or  # Service Unavailable
+                "504" in error_msg     # Gateway Timeout
+            )
+            
+            # Handle throttling with exponential backoff
+            if is_throttling and retry_count < MAX_RETRIES:
+                wait_time = min(2 ** retry_count, MAX_BACKOFF_SECONDS)
+                logger.warning(f"Claude API throttling error detected ({error_type}), retrying in {wait_time} seconds (attempt {retry_count + 1}/{MAX_RETRIES})")
+                time.sleep(wait_time)
+                return self._call_claude_without_tools(messages, retry_count + 1, use_1m_context, tried_1m)
+            
+            # Handle transient errors
+            if is_transient and retry_count < MAX_RETRIES:
+                wait_time = min(2 ** retry_count, MAX_BACKOFF_SECONDS)
+                logger.warning(f"Claude API transient error detected ({error_type}), retrying in {wait_time} seconds (attempt {retry_count + 1}/{MAX_RETRIES})")
+                time.sleep(wait_time)
+                return self._call_claude_without_tools(messages, retry_count + 1, use_1m_context, tried_1m)
+            
+            # Try 1M context fallback if primary model fails and we haven't tried it yet
+            if not tried_1m and not use_1m_context:
+                logger.warning(f"Sonnet 4 failed on first attempt. Attempting fallback to Sonnet 4 1M")
+                return self._call_claude_without_tools(messages, retry_count, use_1m_context=True, tried_1m=True)
+            
+            # If 1M context also failed, retry with exponential backoff
+            if use_1m_context and retry_count < MAX_RETRIES:
+                wait_time = min(2 ** retry_count, MAX_BACKOFF_SECONDS)
+                logger.warning(f"Sonnet 4 1M also failed. Retrying Sonnet 4 with exponential backoff")
+                logger.warning(f"Retrying Sonnet 4 in {wait_time} seconds (attempt {retry_count + 1})")
+                time.sleep(wait_time)
+                return self._call_claude_without_tools(messages, retry_count + 1, use_1m_context=False, tried_1m=True)
+            
+            # Max retries exceeded
+            if retry_count >= MAX_RETRIES:
+                logger.error(f"Max retries exceeded for Claude API error after {MAX_RETRIES} attempts")
+            
+            # Re-raise the exception if we can't handle it
+            raise
+    
     def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False) -> Dict[str, Any]:
         """
         Call Claude with tool support using Converse API.

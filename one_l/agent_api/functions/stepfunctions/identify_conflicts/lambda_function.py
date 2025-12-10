@@ -167,12 +167,13 @@ def lambda_handler(event, context):
         ]
         
         # Call Claude with conflict detection prompt
+        # Use _call_claude_without_tools since KB results are already pre-loaded in the prompt
         if is_chunk:
-            logger.info(f"Calling Claude for chunk {chunk_num + 1} conflict detection")
+            logger.info(f"Calling Claude for chunk {chunk_num + 1} conflict detection (KB results pre-loaded in prompt)")
         else:
-            logger.info("Calling Claude for document conflict detection")
+            logger.info("Calling Claude for document conflict detection (KB results pre-loaded in prompt)")
         
-        response = model._call_claude_with_tools(messages)
+        response = model._call_claude_without_tools(messages)
         
         # Extract content
         content = ""
