@@ -2197,39 +2197,6 @@ def _create_redlined_filename(original_s3_key: str, session_id: str = None, user
     return redlined_s3_key
 
 
-def _get_google_credentials_from_secrets_manager(secret_name: str) -> dict:
-    """
-    Retrieve Google Cloud service account credentials from AWS Secrets Manager.
-    Credentials are stored as JSON string in the secret.
-    
-    Args:
-        secret_name: Name of the secret in AWS Secrets Manager
-        
-    Returns:
-        Dictionary containing Google Cloud credentials, or None if not available
-    """
-    try:
-        secrets_client = boto3.client('secretsmanager')
-        response = secrets_client.get_secret_value(SecretId=secret_name)
-        secret_string = response['SecretString']
-        
-        # Parse JSON credentials
-        import json
-        credentials = json.loads(secret_string)
-        
-        logger.info(f"Successfully retrieved Google credentials from Secrets Manager: {secret_name}")
-        return credentials
-    except secrets_client.exceptions.ResourceNotFoundException:
-        logger.warning(f"Secret {secret_name} not found in Secrets Manager - Google Document AI will not be available")
-        return None
-    except Exception as e:
-        logger.warning(f"Error retrieving Google credentials from Secrets Manager: {e}")
-        return None
-
-
-# PDF conversion functions removed - only DOCX supported now
-
-
 
 
 def save_analysis_to_dynamodb(
