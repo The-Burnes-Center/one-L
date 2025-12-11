@@ -4,14 +4,14 @@
 
 ### AWS Account Setup
 - **AWS Account** with sufficient permissions for:
-  - Lambda, API Gateway, S3, DynamoDB, Cognito
+  - Lambda, Step Functions, API Gateway, S3, DynamoDB, Cognito
   - Bedrock (Claude 4 Sonnet access)
   - OpenSearch Serverless, CloudFront
 - **AWS CLI** configured with appropriate credentials
 - **Bedrock Model Access**: Ensure Claude 4 Sonnet is available in your region
 
 ### Local Development Environment
-- **Python 3.9+** with pip
+- **Python 3.12+** with pip
 - **Node.js 18+** with npm
 - **AWS CDK v2** (`npm install -g aws-cdk`)
 - **Git** for version control
@@ -29,6 +29,7 @@ Your AWS user/role needs the following managed policies:
         "Effect": "Allow",
         "Action": [
           "lambda:*",
+          "states:*",
           "apigateway:*",
           "s3:*",
           "dynamodb:*",
@@ -277,8 +278,11 @@ cdk deploy --context region=eu-west-1
 # View Lambda function logs
 aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/OneLStack"
 
-# Tail specific function logs
-aws logs tail /aws/lambda/OneLStack-document-review --follow
+# Tail Step Functions state machine logs
+aws logs tail /aws/vendedlogs/states/OneL-DV2-document-review --follow
+
+# Tail specific Lambda function logs (example: start workflow)
+aws logs tail /aws/lambda/OneL-DV2-stepfunctions-startworkflow --follow
 ```
 
 ## Troubleshooting
@@ -328,7 +332,11 @@ cdk doctor
 aws cloudformation describe-stack-events --stack-name OneLStack
 
 # Lambda function configuration
-aws lambda get-function-configuration --function-name OneLStack-document-review
+# Get Step Functions state machine details
+aws stepfunctions describe-state-machine --state-machine-arn "arn:aws:states:<region>:<account>:stateMachine:OneL-DV2-document-review"
+
+# Get Lambda function configuration (example: start workflow)
+aws lambda get-function-configuration --function-name OneL-DV2-stepfunctions-startworkflow
 
 # Check IAM role permissions
 aws iam get-role-policy --role-name OneLStack-DocumentReviewRole --policy-name policy-name
@@ -397,23 +405,49 @@ aws cloudformation delete-stack --stack-name CDKToolkit
 
 ### Monitoring Setup
 ```bash
-# Create CloudWatch alarms for critical functions
+# Create CloudWatch alarms for Step Functions executions
 aws cloudwatch put-metric-alarm \
-  --alarm-name "OneLStack-DocumentReview-Errors" \
-  --alarm-description "Lambda function errors" \
+  --alarm-name "OneLStack-StepFunctions-ExecutionFailures" \
+  --alarm-description "Step Functions execution failures" \
+  --metric-name ExecutionsFailed \
+  --namespace AWS/States \
+  --statistic Sum \
+  --period 300 \
+  --threshold 3 \
+  --comparison-operator GreaterThanThreshold \
+  --dimensions Name=StateMachineArn,Value="arn:aws:states:region:account:stateMachine:OneL-DV2-document-review"
+
+# Create CloudWatch alarms for Lambda function errors
+aws cloudwatch put-metric-alarm \
+  --alarm-name "OneLStack-StepFunctions-Lambda-Errors" \
+  --alarm-description "Step Functions Lambda function errors" \
   --metric-name Errors \
   --namespace AWS/Lambda \
   --statistic Sum \
   --period 300 \
   --threshold 5 \
   --comparison-operator GreaterThanThreshold
+
+# Monitor Step Functions execution duration
+aws cloudwatch put-metric-alarm \
+  --alarm-name "OneLStack-StepFunctions-LongExecution" \
+  --alarm-description "Step Functions executions exceeding 10 minutes" \
+  --metric-name ExecutionTime \
+  --namespace AWS/States \
+  --statistic Average \
+  --period 300 \
+  --threshold 600 \
+  --comparison-operator GreaterThanThreshold
 ```
 
 ### Cost Optimization
-- Monitor AWS costs with Cost Explorer
-- Set up billing alerts
-- Use AWS Budgets for spend management
-- Review CloudWatch logs retention periods
-- Optimize Lambda memory allocation based on usage
+- **Step Functions Pricing**: Pay per state transition (first 4,000 free per month)
+- **Lambda Optimization**: Right-size memory allocation for Step Functions Lambda functions
+- **Monitor AWS costs**: Use Cost Explorer with Step Functions and Lambda filters
+- **Set up billing alerts**: Configure budgets for Step Functions and Lambda spend
+- **Use AWS Budgets**: Track Step Functions execution costs
+- **Review CloudWatch logs retention**: Adjust retention periods for Step Functions execution logs
+- **Optimize workflow**: Reduce unnecessary state transitions in Step Functions definition
+- **Parallel processing**: Leverage Step Functions Map state for cost-effective concurrent processing
 
 For additional support, refer to the [CONTRIBUTING.md](../CONTRIBUTING.md) guide or open an issue in the project repository.

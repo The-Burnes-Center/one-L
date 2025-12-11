@@ -117,7 +117,7 @@ GET /knowledge_management/sessions?action=list&user_id=user123&filter_by_results
 GET /knowledge_management/sessions?action=session_results&session_id=session123&user_id=user123
 ```
 
-### Agent Document Review
+### Agent Document Review (Step Functions Workflow)
 
 #### Review Document
 ```http
@@ -125,12 +125,15 @@ POST /agent/review
 Content-Type: application/json
 
 {
-  "document_s3_key": "uploads/user123/contract.docx",
-  "bucket_type": "user_documents",
+  "document_s3_key": "vendor-submissions/contract.docx",
+  "bucket_type": "agent_processing",
   "session_id": "session123",
-  "user_id": "user123"
+  "user_id": "user123",
+  "terms_profile": "it"
 }
 ```
+
+**Note**: This endpoint starts a Step Functions workflow that orchestrates the entire document analysis process. The workflow runs asynchronously and can take 2-5 minutes for completion.
 
 **Response (Immediate):**
 ```json
@@ -138,8 +141,32 @@ Content-Type: application/json
   "success": true,
   "processing": true,
   "job_id": "job-uuid",
+  "execution_arn": "arn:aws:states:region:account:execution:state-machine-name:execution-name",
   "message": "Document review started successfully",
   "estimated_completion_time": "2-5 minutes"
+}
+```
+
+#### Get Job Status
+```http
+POST /agent/job-status
+Content-Type: application/json
+
+{
+  "job_id": "job-uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "job_id": "job-uuid",
+  "status": "processing",
+  "stage": "analyzing",
+  "progress": 50,
+  "message": "Analyzing document structure...",
+  "execution_status": "RUNNING"
 }
 ```
 
@@ -206,16 +233,19 @@ wss://<websocket-api-id>.execute-api.<region>.amazonaws.com/prod?userId=user123
 }
 ```
 
-#### Job Progress
+#### Job Progress (Step Functions Execution Updates)
 ```json
 {
   "type": "job_progress",
   "job_id": "job-uuid",
   "session_id": "session123",
   "data": {
-    "status": "analyzing",
+    "status": "processing",
+    "stage": "analyzing_structure",
     "progress": 50,
-    "message": "Analyzing document with AI..."
+    "message": "Step Functions workflow: Analyzing document structure...",
+    "execution_arn": "arn:aws:states:region:account:execution:state-machine-name:execution-name",
+    "current_state": "AnalyzeStructure"
   }
 }
 ```
@@ -247,7 +277,7 @@ wss://<websocket-api-id>.execute-api.<region>.amazonaws.com/prod?userId=user123
 - `403 Forbidden` - Insufficient permissions
 - `404 Not Found` - Resource not found
 - `500 Internal Server Error` - Server error
-- `504 Gateway Timeout` - Request timeout (often triggers background processing)
+- `504 Gateway Timeout` - Request timeout (Step Functions workflow continues execution asynchronously)
 
 ### Error Response Format
 ```json
@@ -267,8 +297,9 @@ wss://<websocket-api-id>.execute-api.<region>.amazonaws.com/prod?userId=user123
 
 #### Document Processing Errors
 - Document not found in S3
-- AI analysis timeout (switches to background processing)
+- Step Functions execution failure (check execution ARN in response)
 - Knowledge base sync in progress
+- Workflow timeout (Step Functions supports up to 2 hours)
 
 #### Authentication Errors
 - Expired JWT token
@@ -278,14 +309,15 @@ wss://<websocket-api-id>.execute-api.<region>.amazonaws.com/prod?userId=user123
 ## Rate Limits
 
 - **File Uploads**: 50 files per minute per user
-- **Document Analysis**: 5 concurrent jobs per user
+- **Document Analysis**: 5 concurrent Step Functions executions per user
 - **WebSocket Connections**: 10 connections per user
 - **API Calls**: 1000 requests per minute per user
 
 ## Monitoring and Debugging
 
 ### CloudWatch Logs
-- Function logs: `/aws/lambda/OneLStack-<function-name>`
+- Lambda function logs: `/aws/lambda/OneLStack-<function-name>`
+- Step Functions execution logs: `/aws/vendedlogs/states/<state-machine-name>/<execution-name>`
 - API Gateway logs: Available via CloudWatch integration
 - WebSocket logs: `/aws/apigateway/<websocket-api-id>/prod`
 

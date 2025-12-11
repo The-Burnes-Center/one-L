@@ -41,7 +41,8 @@ Welcome to the comprehensive documentation for the One-L Legal AI Document Revie
 | **Frontend** | React 18 + WebSocket | User interface and real-time updates | [Architecture](./ARCHITECTURE.md#frontend-layer) |
 | **Authentication** | AWS Cognito | User management and JWT tokens | [Architecture](./ARCHITECTURE.md#authentication--authorization) |
 | **API Layer** | API Gateway + WebSocket API | HTTP and real-time communication | [API Docs](./API.md) |
-| **AI Engine** | AWS Bedrock (Claude 4 Sonnet) | Legal document analysis | [Architecture](./ARCHITECTURE.md#aiml-services) |
+| **AI Engine** | AWS Bedrock (Claude 4 Sonnet) + Step Functions | Legal document analysis workflow orchestration | [Architecture](./ARCHITECTURE.md#aiml-services) |
+| **Workflow Orchestration** | AWS Step Functions | Multi-stage document processing pipeline | [Architecture](./ARCHITECTURE.md#step-functions-workflow-document-review) |
 | **Storage** | S3 + DynamoDB + OpenSearch | Document and data storage | [Architecture](./ARCHITECTURE.md#storage-layer) |
 | **Infrastructure** | AWS CDK (Python) | Infrastructure as Code | [Deployment](./DEPLOYMENT.md) |
 
@@ -62,11 +63,13 @@ cd one_l/user_interface && npm install && npm start
 
 ## 🔍 **Common Use Cases**
 
-### **Document Analysis Workflow**
+### **Document Analysis Workflow (Step Functions)**
 1. **Upload Documents**: Reference docs (MA requirements) + vendor submissions
-2. **AI Analysis**: Automatic conflict detection using Claude 4 Sonnet
-3. **Review Results**: Download redlined documents with conflict annotations
-4. **Session Management**: Organize work into tracked sessions
+2. **Trigger Workflow**: POST to `/agent/review` starts Step Functions state machine
+3. **Step Functions Orchestration**: Multi-stage workflow (Initialize → Split → Analyze → Merge → Redline → Save)
+4. **AI Analysis**: Automatic conflict detection using Claude 4 Sonnet with RAG context
+5. **Review Results**: Download redlined documents with conflict annotations
+6. **Session Management**: Organize work into tracked sessions with complete audit trail
 
 ### **System Administration**
 1. **Knowledge Base Management**: Upload and sync reference documents
@@ -75,8 +78,9 @@ cd one_l/user_interface && npm install && npm start
 
 ### **API Integration**
 1. **File Upload**: Presigned URLs for secure client-side uploads
-2. **Document Processing**: RESTful API for triggering AI analysis
-3. **Real-time Updates**: WebSocket for progress tracking and notifications
+2. **Document Processing**: RESTful API (`/agent/review`) triggers Step Functions workflow
+3. **Workflow Status**: Poll `/agent/job-status` or subscribe via WebSocket for real-time progress
+4. **Real-time Updates**: WebSocket for Step Functions execution progress and completion notifications
 
 ## 🛡️ **Security & Compliance**
 

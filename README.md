@@ -8,7 +8,7 @@
 
 The system provides a React-based interface with session management, real-time progress tracking, and automated redlined document generation.
 
-> **Key Demo Flow**: Upload vendor contracts → AI analyzes against MA legal requirements → Download redlined documents with conflict annotations
+> **Key Demo Flow**: Upload vendor contracts → Step Functions workflow orchestrates AI analysis against MA legal requirements → Download redlined documents with conflict annotations
 
 ---
 
@@ -23,7 +23,7 @@ The system provides a React-based interface with session management, real-time p
   Uses RAG (Retrieval-Augmented Generation) for accurate legal context and analysis.
 
 - 📊 **Session-Based Workflow**: Organize document reviews into tracked sessions with complete audit trails and historical results  
-  Real-time progress tracking via WebSocket integration for long-running AI analysis tasks.
+  Real-time progress tracking via WebSocket integration for Step Functions workflow execution (2-5 minute AI analysis tasks).
 
 ---
 
@@ -34,13 +34,14 @@ The system provides a React-based interface with session management, real-time p
 The system follows a modern serverless microservices architecture on AWS:
 
 ```
-[React SPA] → [CloudFront CDN] → [API Gateway + WebSocket API] → [Lambda Functions] → [Bedrock AI + Knowledge Base] → [OpenSearch + S3 + DynamoDB]
+[React SPA] → [CloudFront CDN] → [API Gateway + WebSocket API] → [Step Functions + Lambda Functions] → [Bedrock AI + Knowledge Base] → [OpenSearch + S3 + DynamoDB]
 ```
 
 **Key Components:**
 - **Frontend**: React SPA with real-time WebSocket integration
 - **Authentication**: AWS Cognito with OAuth 2.0 flows
-- **AI Engine**: AWS Bedrock with Claude 4 Sonnet and Knowledge Base RAG
+- **AI Engine**: AWS Bedrock with Claude 4 Sonnet and Knowledge Base RAG  
+- **Workflow Orchestration**: AWS Step Functions for multi-stage document processing
 - **Storage**: Multi-tier S3 architecture with OpenSearch Serverless vector database
 - **Infrastructure**: AWS CDK with modular construct-based deployment
 
@@ -51,7 +52,7 @@ The system follows a modern serverless microservices architecture on AWS:
 | Layer              | Tools & Frameworks                                           |
 |--------------------|--------------------------------------------------------------|
 | **Frontend**       | React 18, React Router, Custom WebSocket Service            |
-| **Backend**        | AWS Lambda (Python 3.9), API Gateway, WebSocket API        |
+| **Backend**        | AWS Lambda (Python 3.12), API Gateway, WebSocket API, Step Functions        |
 | **AI/ML**          | AWS Bedrock (Claude 4 Sonnet), Knowledge Base, Titan Embeddings |
 | **Storage**        | S3 (3-tier), DynamoDB, OpenSearch Serverless               |
 | **Auth**           | AWS Cognito User Pool, JWT Tokens, OAuth 2.0               |
@@ -65,7 +66,7 @@ The system follows a modern serverless microservices architecture on AWS:
 ### Prerequisites
 - AWS CLI configured with appropriate permissions
 - Node.js 18+ for frontend development
-- Python 3.9+ for CDK deployment
+- Python 3.12+ for CDK deployment
 - AWS CDK v2 installed (`npm install -g aws-cdk`)
 
 ### Deployment
@@ -108,23 +109,28 @@ The system automatically generates runtime configuration post-deployment. No man
 | **`agent_api/agent/model.py`** | Claude 4 Sonnet integration with sophisticated legal prompting        |
 | **`agent_api/agent/tools.py`** | Document redlining and DynamoDB operations for analysis results         |
 | **`agent_api/agent/prompts/`** | AI prompts and output models for conflict detection and analysis         |
-| **`functions/stepfunctions/`** | Step Functions workflow Lambda functions for document processing        |
+| **`functions/stepfunctions/`** | Step Functions state machine and Lambda functions orchestrating document processing workflow        |
 | **`functions/knowledge_management/`** | S3 operations, Knowledge Base sync, and session management      |
 | **`functions/websocket/`**     | Real-time communication handlers for progress tracking                   |
 | **`user_interface/src/`**      | React frontend with session management and real-time updates            |
 
 ---
 
-## 🌍 AI Analysis Flow
+## 🌍 AI Analysis Flow (Step Functions Workflow)
 
-The system employs a sophisticated multi-stage AI analysis workflow:
+The system employs a sophisticated multi-stage AI analysis workflow orchestrated by AWS Step Functions:
 
-1. 📄 **Document Ingestion** → Upload and session-based organization with automatic S3 storage  
-2. 🔍 **Knowledge Base Sync** → Vector embedding and indexing using Titan Text v2  
-3. 🧠 **AI Analysis Agent** → Claude 4 Sonnet with 8-15 adaptive queries for complete coverage  
-4. ⚖️ **Conflict Detection** → Identifies contradictions, modifications, omissions, and reversals  
-5. 📝 **Document Redlining** → Generates marked-up documents with detailed conflict annotations  
-6. 💾 **Results Storage** → Structured conflict data saved to DynamoDB with session tracking
+1. 📄 **Document Ingestion** → Upload vendor submissions and reference documents with session-based organization  
+2. 🔍 **Knowledge Base Sync** → Vector embedding and indexing using Titan Text v2 for reference documents  
+3. 🚀 **Workflow Initiation** → StartWorkflow Lambda triggers Step Functions state machine  
+4. 📑 **Document Splitting** → Chunks large documents for parallel processing  
+5. 🧠 **Structure Analysis** → Analyzes document structure and generates adaptive KB queries  
+6. 🔎 **Knowledge Retrieval** → Retrieves relevant context from knowledge base for all queries  
+7. ⚖️ **Conflict Detection** → Claude 4 Sonnet identifies contradictions, modifications, omissions, and reversals  
+8. 🔀 **Result Merging** → Combines parallel chunk results into unified analysis  
+9. 📝 **Document Redlining** → Generates marked-up documents with detailed conflict annotations  
+10. 💾 **Results Storage** → Structured conflict data saved to DynamoDB with session tracking  
+11. 🧹 **Cleanup** → Removes temporary processing files
 
 ---
 

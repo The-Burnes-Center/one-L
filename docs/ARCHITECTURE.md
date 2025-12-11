@@ -103,7 +103,7 @@ sequenceDiagram
   - Connection health monitoring
 - **Connection Management**: DynamoDB-backed persistent connections
 
-### **Compute Layer (AWS Lambda)**
+### **Compute Layer (AWS Lambda + Step Functions)**
 
 #### **Knowledge Management Functions**
 
@@ -127,20 +127,129 @@ sequenceDiagram
 - **Database**: DynamoDB for session metadata and tracking
 - **Features**: Session-based file organization, result tracking
 
-#### **AI Agent Functions**
+#### **Step Functions Workflow (Document Review)**
 
-**Document Review Function**
-- **Purpose**: Core AI analysis using Claude 4 Sonnet
-- **Pattern**: Background processing for long-running tasks
+**Step Functions State Machine**
+- **Purpose**: Orchestrates multi-stage AI document analysis workflow
+- **Pattern**: Serverless workflow with parallel processing and error handling
 - **Features**:
-  - API Gateway timeout handling (30s limit)
-  - WebSocket progress notifications
-  - Comprehensive error handling and recovery
+  - Long-running workflow support (up to 2 hours)
+  - Automatic retries and error recovery
+  - Progress tracking via DynamoDB and WebSocket notifications
+  - Parallel chunk processing for large documents
 
-**Analysis Workflow**:
+**Workflow Stages**:
 ```
-Document Upload → Knowledge Base Sync → AI Analysis → Conflict Detection → Redline Generation → Results Storage
+Initialize Job → Split Document → Analyze Chunks (Parallel) → Merge Results → Generate Redline → Save Results → Cleanup
 ```
+
+**Step Functions Lambda Functions**:
+- **InitializeJob**: Sets up job tracking in DynamoDB
+- **SplitDocument**: Chunks documents for parallel processing
+- **AnalyzeStructure**: Analyzes document structure and generates KB queries
+- **RetrieveAllKBQueries**: Retrieves knowledge base context for all queries
+- **IdentifyConflicts**: Detects conflicts using Claude 4 Sonnet with RAG context
+- **MergeChunkResults**: Combines results from parallel chunk processing
+- **GenerateRedline**: Creates redlined document with conflict annotations
+- **SaveResults**: Stores final results in DynamoDB
+- **CleanupSession**: Removes temporary processing files
+- **HandleError**: Centralized error handling and cleanup
+- **StartWorkflow**: Entry point Lambda that starts Step Functions execution
+- **JobStatus**: Polling endpoint for job status and progress
+
+**Step Functions State Machine Definition**:
+```json
+{
+  "Comment": "Document Review Workflow",
+  "StartAt": "InitializeJob",
+  "States": {
+    "InitializeJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "SplitDocument"
+    },
+    "SplitDocument": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "AnalyzeStructure"
+    },
+    "AnalyzeStructure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "RetrieveKBQueries"
+    },
+    "RetrieveKBQueries": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "IdentifyConflicts"
+    },
+    "IdentifyConflicts": {
+      "Type": "Map",
+      "ItemsPath": "$.chunks",
+      "MaxConcurrency": 5,
+      "Iterator": {
+        "StartAt": "ProcessChunk",
+        "States": {
+          "ProcessChunk": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "End": true
+          }
+        }
+      },
+      "Next": "MergeChunkResults"
+    },
+    "MergeChunkResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "GenerateRedline"
+    },
+    "GenerateRedline": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "SaveResults"
+    },
+    "SaveResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Next": "CleanupSession"
+    },
+    "CleanupSession": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "End": true
+    },
+    "HandleError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "End": true
+    }
+  },
+  "Retry": [
+    {
+      "ErrorEquals": ["States.ALL"],
+      "IntervalSeconds": 2,
+      "MaxAttempts": 3,
+      "BackoffRate": 2.0
+    }
+  ],
+  "Catch": [
+    {
+      "ErrorEquals": ["States.ALL"],
+      "Next": "HandleError"
+    }
+  ]
+}
+```
+
+**Key Step Functions Features**:
+- **Error Handling**: Automatic retries with exponential backoff
+- **Parallel Processing**: Map state for concurrent chunk analysis
+- **State Management**: Passes data between Lambda functions via JSON
+- **Progress Tracking**: Updates DynamoDB at each stage
+- **WebSocket Notifications**: Sends progress updates to connected clients
+- **Timeout Management**: 2-hour maximum execution time
+- **Cost Optimization**: Pay only for state transitions, not idle time
 
 #### **WebSocket Functions**
 
@@ -270,7 +379,7 @@ OneLStack
 │   ├── KnowledgeBaseConstruct (Bedrock integration)
 │   └── FunctionsConstruct
 │       ├── KnowledgeManagementConstruct
-│       ├── AgentConstruct
+│       ├── AgentConstruct (Step Functions + Lambda Functions)
 │       └── WebSocketConstruct
 ├── ApiGatewayConstruct (REST + WebSocket APIs)
 └── UserInterfaceConstruct (React app + CloudFront)
@@ -290,9 +399,11 @@ OneLStack
    S3 Event → Knowledge Base Sync Lambda → Bedrock Ingestion → Vector Indexing
    ```
 
-3. **AI Analysis**
+3. **AI Analysis (Step Functions Workflow)**
    ```
-   User Request → Agent Lambda → Claude 4 Sonnet + RAG Context → Conflict Analysis
+   User Request → StartWorkflow Lambda → Step Functions State Machine → 
+   [Initialize → Split → Analyze Structure → Retrieve KB Queries → Identify Conflicts → 
+   Merge Results → Generate Redline → Save Results → Cleanup]
    ```
 
 4. **Real-time Updates**
@@ -312,9 +423,9 @@ stateDiagram-v2
     [*] --> SessionCreated: User starts new session
     SessionCreated --> DocumentUpload: Upload vendor documents
     DocumentUpload --> KnowledgeSync: Auto-sync reference docs
-    KnowledgeSync --> AIAnalysis: Trigger document review
-    AIAnalysis --> Processing: Background AI processing
-    Processing --> ResultsReady: Analysis complete
+    KnowledgeSync --> AIAnalysis: Trigger Step Functions workflow
+    AIAnalysis --> Processing: Step Functions orchestrates multi-stage processing
+    Processing --> ResultsReady: Workflow execution complete
     ResultsReady --> SessionArchived: Session with results
     SessionArchived --> [*]: User views historical results
 ```
@@ -367,7 +478,9 @@ def create_s3_read_role(self, role_name: str, buckets: List[s3.Bucket]):
 - **Cold Start Mitigation**: Minimal dependencies in Lambda functions
 - **Connection Pooling**: Reuse database connections across invocations
 - **Caching Strategy**: CloudFront CDN for static assets, API response caching
-- **Async Processing**: Background processing for long-running AI tasks
+- **Async Processing**: Step Functions orchestrates long-running AI tasks (up to 2 hours)
+- **Parallel Processing**: Step Functions Map state for concurrent chunk analysis
+- **Error Recovery**: Step Functions automatic retries with exponential backoff
 
 ### **Monitoring and Observability**
 - **CloudWatch**: Comprehensive metrics and logging
