@@ -72,7 +72,7 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 
 ### STEP 3: INTELLIGENT STRUCTURE-BASED QUERYING
 <instructions>
-Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
+Generate 10-18 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
 Each query MUST:
 - Use the `section` field to indicate the vendor section/exhibit/zone it targets
@@ -82,7 +82,7 @@ Each query MUST:
 - Not repeat the same vendor content across multiple queries
 
 Build queries based on:
-- Major document sections the vendor addresses 
+- Major document sections the vendor addresses (e.g. End User Agreements, Master Agreements, Service Catalogues, etc)
 - Vendor language that may be in conflict with Massachusetts requirements
 - Massachusetts requirements they're modifying
 - Technical vs. legal/governance terms
@@ -103,14 +103,15 @@ IMPORTANT: Let the vendor document structure guide your queries.
 
 ### STEP 4: VALIDATE QUERY COMPLETENESS
 <instructions>
-Distribute your 6-12 queries based on vendor document structure:
+Distribute your 10-18 queries based on vendor document structure:
 - For fewer sections → more queries per section
 - For many sections → group related sections intelligently
 - For heavily focused areas → allocate more queries there
-- Always include 1-2 queries for cross-cutting concerns
+- Always include 2-3 queries for cross-cutting concerns
+- Ensure queries cover all vendor-defined terms and sections
 
 Verification checklist:
-- ✓ 6-12 distinct queries minimum
+- ✓ 10-18 distinct queries minimum
 - ✓ Major legal concepts included when they appear in multiple sections
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms

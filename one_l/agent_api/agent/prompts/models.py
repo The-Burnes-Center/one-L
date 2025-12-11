@@ -35,7 +35,7 @@ class ChunkStructureModel(BaseModel):
 
 class StructureAnalysisOutput(BaseModel):
     """Model for structure analysis response."""
-    queries: List[QueryModel] = Field(..., min_length=6, max_length=15, description="List of queries to execute")
+    queries: List[QueryModel] = Field(..., min_length=10, max_length=20, description="List of queries to execute")
     chunk_structure: ChunkStructureModel = Field(..., description="Structure metadata for this chunk")
     explanation: Optional[str] = Field(None, description="Optional explanation of structure analysis")
     
