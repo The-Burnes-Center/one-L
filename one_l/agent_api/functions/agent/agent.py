@@ -2,19 +2,14 @@
 Agent functions construct for AI-powered document review operations.
 """
 
-import os
-from typing import Optional
 from constructs import Construct
 from aws_cdk import (
-    aws_lambda as _lambda,
     aws_iam as iam,
     aws_s3 as s3,
     aws_dynamodb as dynamodb,
     aws_opensearchserverless as aoss,
-    aws_logs as logs,
     Duration,
-    Stack,
-    RemovalPolicy
+    Stack
 )
 
 

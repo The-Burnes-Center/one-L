@@ -2,7 +2,6 @@
 Lambda Functions construct for Agent API operations.
 """
 
-from typing import Optional
 from constructs import Construct
 from aws_cdk import (
     aws_s3 as s3,

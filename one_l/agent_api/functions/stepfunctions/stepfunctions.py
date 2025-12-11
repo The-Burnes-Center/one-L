@@ -4,7 +4,6 @@ Creates all Lambda functions and Step Functions state machine.
 """
 
 import os
-from typing import Optional
 from constructs import Construct
 from aws_cdk import (
     aws_lambda as _lambda,
