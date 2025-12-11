@@ -2,7 +2,9 @@
 
 ## System Overview
 
-One-L is a serverless, cloud-native legal document analysis platform built on AWS. It leverages cutting-edge AI services to automatically identify conflicts between vendor contract submissions and Massachusetts state legal requirements.
+One-L is a serverless, cloud-native legal document analysis platform built on AWS. The system uses **AWS Step Functions** to orchestrate a multi-stage workflow that leverages cutting-edge AI services to automatically identify conflicts between vendor contract submissions and Massachusetts state legal requirements.
+
+**Core Architecture Pattern**: All document analysis operations are orchestrated by a Step Functions state machine that coordinates 12 Lambda functions across 11 distinct stages, ensuring reliable, scalable, and maintainable processing.
 
 ## Architecture Principles
 
@@ -387,33 +389,47 @@ OneLStack
 
 ## Data Flow Architecture
 
-### **Document Analysis Pipeline**
+### **Document Analysis Workflow (Step Functions Orchestration)**
+
+The entire document analysis process is orchestrated by a **Step Functions state machine** that coordinates 12 Lambda functions across 11 stages:
 
 1. **Upload Phase**
    ```
    User → Frontend → API Gateway → Upload Lambda → S3 Presigned URL → Direct S3 Upload
    ```
 
-2. **Processing Trigger**
+2. **Knowledge Base Sync (Automatic)**
    ```
    S3 Event → Knowledge Base Sync Lambda → Bedrock Ingestion → Vector Indexing
    ```
 
-3. **AI Analysis (Step Functions Workflow)**
+3. **Step Functions Workflow Initiation**
    ```
-   User Request → StartWorkflow Lambda → Step Functions State Machine → 
-   [Initialize → Split → Analyze Structure → Retrieve KB Queries → Identify Conflicts → 
-   Merge Results → Generate Redline → Save Results → Cleanup]
+   User Request → API Gateway → StartWorkflow Lambda → Step Functions State Machine Started
    ```
 
-4. **Real-time Updates**
+4. **Step Functions Orchestrated Analysis (11 Stages)**
    ```
-   Lambda Progress → WebSocket API → Connected Clients → UI Updates
+   Step Functions State Machine:
+   ├── InitializeJob → Sets up job tracking
+   ├── SplitDocument → Chunks document for parallel processing
+   ├── AnalyzeStructure → Analyzes structure, generates KB queries
+   ├── RetrieveAllKBQueries → Retrieves knowledge base context
+   ├── IdentifyConflicts (Map State) → Parallel chunk analysis with Claude 4 Sonnet
+   ├── MergeChunkResults → Combines parallel results
+   ├── GenerateRedline → Creates redlined document
+   ├── SaveResults → Stores results in DynamoDB
+   └── CleanupSession → Removes temporary files
    ```
 
-5. **Results Generation**
+5. **Real-time Progress Updates**
    ```
-   Analysis Complete → Document Redlining → S3 Storage → DynamoDB Metadata → User Notification
+   Step Functions Progress → Lambda Updates DynamoDB → WebSocket API → Connected Clients → UI Updates
+   ```
+
+6. **Completion Notification**
+   ```
+   Step Functions Complete → SaveResults Lambda → DynamoDB + S3 → WebSocket Notification → User Sees Results
    ```
 
 ### **Session Management Flow**

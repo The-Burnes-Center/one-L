@@ -31,17 +31,22 @@ The system provides a React-based interface with session management, real-time p
 
 ![System Architecture](./docs/architecture-diagram.png)
 
-The system follows a modern serverless microservices architecture on AWS:
+> **Note**: The architecture diagram shows the complete system flow. The document analysis process is orchestrated by **AWS Step Functions**, which coordinates all Lambda functions in a multi-stage workflow.
+
+The system follows a modern serverless microservices architecture on AWS, orchestrated by **AWS Step Functions**:
 
 ```
-[React SPA] → [CloudFront CDN] → [API Gateway + WebSocket API] → [Step Functions + Lambda Functions] → [Bedrock AI + Knowledge Base] → [OpenSearch + S3 + DynamoDB]
+[React SPA] → [CloudFront CDN] → [API Gateway + WebSocket API] → 
+[Step Functions State Machine] → [Lambda Functions] → 
+[Bedrock AI + Knowledge Base] → [OpenSearch + S3 + DynamoDB]
 ```
 
 **Key Components:**
-- **Frontend**: React SPA with real-time WebSocket integration
+- **Frontend**: React SPA with real-time WebSocket integration for Step Functions progress tracking
 - **Authentication**: AWS Cognito with OAuth 2.0 flows
-- **AI Engine**: AWS Bedrock with Claude 4 Sonnet and Knowledge Base RAG  
-- **Workflow Orchestration**: AWS Step Functions for multi-stage document processing
+- **Workflow Orchestration**: **AWS Step Functions** - Orchestrates the entire document analysis workflow (11 stages)
+- **AI Engine**: AWS Bedrock with Claude 4 Sonnet and Knowledge Base RAG (invoked by Step Functions)
+- **Compute**: AWS Lambda functions (12 functions) orchestrated by Step Functions state machine
 - **Storage**: Multi-tier S3 architecture with OpenSearch Serverless vector database
 - **Infrastructure**: AWS CDK with modular construct-based deployment
 
@@ -52,12 +57,14 @@ The system follows a modern serverless microservices architecture on AWS:
 | Layer              | Tools & Frameworks                                           |
 |--------------------|--------------------------------------------------------------|
 | **Frontend**       | React 18, React Router, Custom WebSocket Service            |
-| **Backend**        | AWS Lambda (Python 3.12), API Gateway, WebSocket API, Step Functions        |
+| **Workflow Orchestration** | **AWS Step Functions** - Multi-stage state machine for document processing |
+| **Compute**        | AWS Lambda (Python 3.12) - 12 functions orchestrated by Step Functions |
+| **API Layer**      | API Gateway (REST), WebSocket API for real-time updates     |
 | **AI/ML**          | AWS Bedrock (Claude 4 Sonnet), Knowledge Base, Titan Embeddings |
 | **Storage**        | S3 (3-tier), DynamoDB, OpenSearch Serverless               |
 | **Auth**           | AWS Cognito User Pool, JWT Tokens, OAuth 2.0               |
 | **Infra/DevOps**   | AWS CDK (Python), CloudFront, IAM, CloudWatch              |
-| **Real-time**      | WebSocket API, Lambda notifications, DynamoDB connections   |
+| **Real-time**      | WebSocket API for Step Functions progress tracking          |
 
 ---
 
@@ -83,10 +90,12 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate.bat
 # Install CDK dependencies
 pip install -r requirements.txt
 
-# Configure constants (optional customization)
-# Edit constants.py to modify stack name or Cognito domain
+# Configure constants (REQUIRED before deployment)
+# Edit constants.py to set your stack name and Cognito domain
+# Dev branch: STACK_NAME = "OneL-DV2"
+# Prod branch: STACK_NAME = "OneL-v2"
 
-# Deploy the infrastructure
+# Deploy the infrastructure (creates Step Functions state machine + all Lambda functions)
 cdk bootstrap  # One-time setup per AWS account/region
 cdk deploy
 
@@ -95,6 +104,14 @@ cd one_l/user_interface
 npm install
 npm run build
 ```
+
+**What Gets Deployed:**
+- **Step Functions State Machine**: Orchestrates the 11-stage document analysis workflow
+- **12 Lambda Functions**: Each handles a specific stage in the Step Functions workflow
+- **API Gateway**: REST API and WebSocket API endpoints
+- **Storage**: S3 buckets, DynamoDB tables, OpenSearch Serverless collection
+- **Knowledge Base**: AWS Bedrock Knowledge Base with vector embeddings
+- **Frontend**: React app hosted on S3 with CloudFront CDN
 
 ### Environment Configuration
 The system automatically generates runtime configuration post-deployment. No manual `.env` setup required.
@@ -106,13 +123,14 @@ The system automatically generates runtime configuration post-deployment. No man
 | Module                          | Description                                                               |
 |---------------------------------|---------------------------------------------------------------------------|
 | **`one_l_stack.py`**           | Main CDK stack orchestrating all AWS resources with dependency management |
+| **`functions/stepfunctions/stepfunctions.py`** | **Step Functions construct** - Creates state machine and all 12 Lambda functions for workflow orchestration |
+| **`functions/stepfunctions/*/lambda_function.py`** | **12 Lambda functions** - Each handles a specific stage (Initialize, Split, Analyze, Retrieve, Identify, Merge, Redline, Save, Cleanup, HandleError, StartWorkflow, JobStatus) |
 | **`agent_api/agent/model.py`** | Claude 4 Sonnet integration with sophisticated legal prompting        |
 | **`agent_api/agent/tools.py`** | Document redlining and DynamoDB operations for analysis results         |
 | **`agent_api/agent/prompts/`** | AI prompts and output models for conflict detection and analysis         |
-| **`functions/stepfunctions/`** | Step Functions state machine and Lambda functions orchestrating document processing workflow        |
 | **`functions/knowledge_management/`** | S3 operations, Knowledge Base sync, and session management      |
-| **`functions/websocket/`**     | Real-time communication handlers for progress tracking                   |
-| **`user_interface/src/`**      | React frontend with session management and real-time updates            |
+| **`functions/websocket/`**     | Real-time communication handlers for Step Functions progress tracking                   |
+| **`user_interface/src/`**      | React frontend with session management and real-time Step Functions updates            |
 
 ---
 

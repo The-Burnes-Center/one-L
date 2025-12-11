@@ -63,13 +63,15 @@ cd one_l/user_interface && npm install && npm start
 
 ## 🔍 **Common Use Cases**
 
-### **Document Analysis Workflow (Step Functions)**
-1. **Upload Documents**: Reference docs (MA requirements) + vendor submissions
-2. **Trigger Workflow**: POST to `/agent/review` starts Step Functions state machine
-3. **Step Functions Orchestration**: Multi-stage workflow (Initialize → Split → Analyze → Merge → Redline → Save)
-4. **AI Analysis**: Automatic conflict detection using Claude 4 Sonnet with RAG context
-5. **Review Results**: Download redlined documents with conflict annotations
-6. **Session Management**: Organize work into tracked sessions with complete audit trail
+### **Document Analysis Workflow (Step Functions Orchestration)**
+1. **Upload Documents**: Reference docs (MA requirements) + vendor submissions via S3 presigned URLs
+2. **Trigger Step Functions Workflow**: POST to `/agent/review` → StartWorkflow Lambda → Step Functions state machine execution starts
+3. **Step Functions Orchestration**: State machine coordinates 11 stages across 12 Lambda functions:
+   - Initialize → Split → Analyze Structure → Retrieve KB Queries → Identify Conflicts (parallel) → Merge → Generate Redline → Save → Cleanup
+4. **AI Analysis**: Each stage invokes appropriate Lambda functions; IdentifyConflicts uses Claude 4 Sonnet with RAG context
+5. **Real-time Progress**: Step Functions progress tracked via DynamoDB and WebSocket notifications
+6. **Review Results**: Download redlined documents with conflict annotations from S3
+7. **Session Management**: Organize work into tracked sessions with complete audit trail
 
 ### **System Administration**
 1. **Knowledge Base Management**: Upload and sync reference documents
