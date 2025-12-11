@@ -50,7 +50,21 @@ CRITICAL: vendor_exceptions MUST be a list of objects (dictionaries), NOT string
 ### STEP 1: ANALYZE VENDOR DOCUMENT STRUCTURE
 <instructions>
 Within THIS CHUNK, identify all structural elements and vendor language:
-- Document sections (headings, exhibits, attachments, appendices)
+- Document sections (headings, exhibits, attachments, appendices), including but not limited to:
+  - Termination, Suspension, Cancellation, Force Majeure
+  - Indemnification, Indemnify, Hold Harmless, Control of Defense
+  - Liability, Limitation of Liability, Damages
+  - Payment, Fees, Charges, Billing, Compensation
+  - Warranties, Warrant, Disclaimers, Non-Infringement
+  - Assignment, Transfer, Assignment Rights
+  - Confidentiality, Non-Disclosure, Privacy, Data Protection
+  - Notice, Notices, Notification Requirements, Written Notice
+  - Governing Law, Jurisdiction, Venue, Dispute Resolution, Mediation
+  - Insurance, Insurance Requirements
+  - Audit, Audit Rights, Inspection, Record-Keeping, Retention
+  - Intellectual Property, IP, Ownership
+  - Risk of Loss
+  - Subcontracting, Subcontractors
 - Massachusetts document references (IT Terms & Conditions, Standard Contract Form Terms, RFR, Exhibits)
 - Cross-references within this chunk (e.g., "see Section 9")
 - Number of distinct sections/exception clusters
@@ -72,7 +86,9 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 
 ### STEP 3: INTELLIGENT STRUCTURE-BASED QUERYING
 <instructions>
-Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
+Generate 10-20 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
+
+**CRITICAL: Generate at least one query for EACH major section title/heading identified in structure analysis.**
 
 Each query MUST:
 - Use the `section` field to indicate the vendor section/exhibit/zone it targets
@@ -103,14 +119,15 @@ IMPORTANT: Let the vendor document structure guide your queries.
 
 ### STEP 4: VALIDATE QUERY COMPLETENESS
 <instructions>
-Distribute your 6-12 queries based on vendor document structure:
+Distribute your 10-20 queries based on vendor document structure:
+- **CRITICAL: Ensure at least one query exists for each major section title/heading identified in this chunk.**
 - For fewer sections → more queries per section
 - For many sections → group related sections intelligently
 - For heavily focused areas → allocate more queries there
 - Always include 1-2 queries for cross-cutting concerns
 
 Verification checklist:
-- ✓ 6-12 distinct queries minimum
+- ✓ 10-20 distinct queries
 - ✓ Major legal concepts included when they appear in multiple sections
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
