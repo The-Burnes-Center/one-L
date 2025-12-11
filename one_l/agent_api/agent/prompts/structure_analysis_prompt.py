@@ -50,7 +50,6 @@ CRITICAL: vendor_exceptions MUST be a list of objects (dictionaries), NOT string
 ### STEP 1: ANALYZE VENDOR DOCUMENT STRUCTURE
 <instructions>
 Within THIS CHUNK, identify all structural elements and vendor language:
-- IMPORTANT: Major title sections/headings (these correspond to IT Terms & Conditions sections - generate queries for each)
 - Document sections (headings, exhibits, attachments, appendices)
 - Massachusetts document references (IT Terms & Conditions, Standard Contract Form Terms, RFR, Exhibits)
 - Cross-references within this chunk (e.g., "see Section 9")
@@ -75,8 +74,6 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 <instructions>
 Generate 6-12 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
-CRITICAL: Generate at least one query for EACH major title section/heading in the vendor document. Major title sections (e.g., "Indemnification", "Liability", "Termination", "Payment Terms", "Confidentiality", "Governing Law") correspond to IT Terms & Conditions sections and should each have dedicated queries.
-
 Each query MUST:
 - Use the `section` field to indicate the vendor section/exhibit/zone it targets
 - Be distinct from other queries (different sections, topics, contexts)
@@ -85,8 +82,7 @@ Each query MUST:
 - Not repeat the same vendor content across multiple queries
 
 Build queries based on:
-- EACH major title section/heading in the vendor document (PRIORITY - these map to IT Terms sections)
-- Major document sections the vendor addresses (e.g. End User Agreements, Master Agreements, Service Catalogues, etc)
+- Major document sections the vendor addresses 
 - Vendor language that may be in conflict with Massachusetts requirements
 - Massachusetts requirements they're modifying
 - Technical vs. legal/governance terms
@@ -108,16 +104,13 @@ IMPORTANT: Let the vendor document structure guide your queries.
 ### STEP 4: VALIDATE QUERY COMPLETENESS
 <instructions>
 Distribute your 6-12 queries based on vendor document structure:
-- CRITICAL: At least one query per major title section/heading (these map to IT Terms sections)
 - For fewer sections → more queries per section
 - For many sections → group related sections intelligently
 - For heavily focused areas → allocate more queries there
-- Always include 2-3 queries for cross-cutting concerns
-- Ensure queries cover all vendor-defined terms and sections
+- Always include 1-2 queries for cross-cutting concerns
 
 Verification checklist:
 - ✓ 6-12 distinct queries minimum
-- ✓ At least one query per major title section/heading
 - ✓ Major legal concepts included when they appear in multiple sections
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
