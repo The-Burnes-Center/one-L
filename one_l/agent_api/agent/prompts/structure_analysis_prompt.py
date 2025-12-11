@@ -96,6 +96,7 @@ Each query MUST:
 - Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
 - Not repeat the same vendor content across multiple queries
+- For contract term sections (Termination, Indemnification, Liability, Payment, Warranties, Assignment, Confidentiality, Notice, Governing Law, Insurance, Audit), include "IT Terms and Conditions" or "IT Terms" in the query text
 
 Build queries based on:
 - Major document sections the vendor addresses 
