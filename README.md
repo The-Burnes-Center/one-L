@@ -105,9 +105,10 @@ The system automatically generates runtime configuration post-deployment. No man
 | Module                          | Description                                                               |
 |---------------------------------|---------------------------------------------------------------------------|
 | **`one_l_stack.py`**           | Main CDK stack orchestrating all AWS resources with dependency management |
-| **`agent_api/agent/agent.py`** | Core AI agent for document analysis using composition design pattern     |
 | **`agent_api/agent/model.py`** | Claude 4 Sonnet integration with sophisticated legal prompting        |
 | **`agent_api/agent/tools.py`** | Document redlining and DynamoDB operations for analysis results         |
+| **`agent_api/agent/prompts/`** | AI prompts and output models for conflict detection and analysis         |
+| **`functions/stepfunctions/`** | Step Functions workflow Lambda functions for document processing        |
 | **`functions/knowledge_management/`** | S3 operations, Knowledge Base sync, and session management      |
 | **`functions/websocket/`**     | Real-time communication handlers for progress tracking                   |
 | **`user_interface/src/`**      | React frontend with session management and real-time updates            |

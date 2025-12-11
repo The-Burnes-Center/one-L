@@ -2,7 +2,6 @@
 Agent API construct that combines all service-level constructs.
 """
 
-from typing import Optional
 from constructs import Construct
 from aws_cdk import Stack, aws_iam as iam
 from .storage.storage import StorageConstruct

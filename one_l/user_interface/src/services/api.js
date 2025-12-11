@@ -524,22 +524,6 @@ const agentAPI = {
  */
 const fileUtils = {
   /**
-   * Convert File object to base64 (DEPRECATED - not needed with presigned URLs)
-   * @deprecated Use presigned URLs for direct S3 upload instead
-   */
-  fileToBase64: (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64 = reader.result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = error => reject(error);
-    });
-  },
-  
-  /**
    * Prepare files for upload (no base64 conversion needed for presigned URLs)
    */
   prepareFilesForUpload: async (files, options = {}) => {
