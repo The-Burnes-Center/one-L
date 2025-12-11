@@ -141,14 +141,15 @@ Use these exact values in the conflict_type field:
 
 <vendor_quote_rules>
 ### CRITICAL: vendor_quote Field Requirements
-
-**Core Principle:** Copy text CHARACTER-BY-CHARACTER exactly as it appears - preserve misspellings, unusual spacing, capitalization, and punctuation. DO NOT MODIFY VENDOR QUOTE.
-
-**Completeness:** Extract COMPLETE sentences/clauses from beginning (capital letter) to ending punctuation (. ! ?). 
-- If you encounter a fragment, extend backwards/forwards to include the complete sentence/clause. 
-- If a clause spans a whole title section or multiple sentences, lines, provisions, etc. include ALL parts of the vendor quote until complete.
-
-**Special Cases:** For omissions (missing required provisions), use: "N/A - Missing provision"
+- Copy text CHARACTER-BY-CHARACTER exactly as it appears in the document
+- Extract COMPLETE sentences/clauses - NEVER truncate mid-sentence
+- ALWAYS start at sentence/clause beginning (capital letter) and end at sentence/clause ending punctuation (. ! ?)
+- If you encounter a fragment, extend backwards/forwards to include the complete sentence/clause
+- Include the ENTIRE clause, sentence, or provision - copy from beginning to end
+- If a clause spans multiple sentences, include ALL sentences until complete
+- Do NOT modify the text in any way - copy EXACT text word-for-word
+- Include any unusual spacing, capitalization, or punctuation exactly as written
+- For omissions (missing required provisions), use: "N/A - Missing provision"
 </vendor_quote_rules>
 
 ## Output Format
