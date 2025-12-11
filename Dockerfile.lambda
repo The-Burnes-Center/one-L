@@ -47,10 +47,9 @@ COPY one_l/agent_api/functions/stepfunctions/job_status/ ./python/job_status/
 # Shared utilities (progress tracking, etc.)
 COPY one_l/agent_api/functions/stepfunctions/shared/ ./python/shared/
 
-# Workflow step functions
+# Step Functions workflow Lambda functions
 COPY one_l/agent_api/functions/stepfunctions/initialize_job/ ./python/initialize_job/
 COPY one_l/agent_api/functions/stepfunctions/split_document/ ./python/split_document/
-# Unified functions (replaced duplicate chunk/document functions)
 COPY one_l/agent_api/functions/stepfunctions/analyze_structure/ ./python/analyze_structure/
 COPY one_l/agent_api/functions/stepfunctions/retrieve_all_kb_queries/ ./python/retrieve_all_kb_queries/
 COPY one_l/agent_api/functions/stepfunctions/identify_conflicts/ ./python/identify_conflicts/

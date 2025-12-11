@@ -78,10 +78,10 @@ vim constants.py
 Key configuration options:
 ```python
 # Stack name for all AWS resources
-STACK_NAME = "OneLStack"  # Modify as needed
+STACK_NAME = "YourStackName"  # MUST be set - use your actual stack name
 
 # Cognito domain name (must be globally unique)
-COGNITO_DOMAIN_NAME = "one-l-auth"  # Change to unique name
+COGNITO_DOMAIN_NAME = "your-unique-domain-name"  # MUST be globally unique
 ```
 
 #### Verify AWS Configuration
@@ -154,11 +154,12 @@ npm run build  # For production build
 #### Verify Deployment
 ```bash
 # Check stack status
-aws cloudformation describe-stacks --stack-name OneLStack
+# Replace <STACK_NAME> with your actual stack name from constants.py
+aws cloudformation describe-stacks --stack-name <STACK_NAME>
 
 # Get important outputs
 aws cloudformation describe-stacks \
-  --stack-name OneLStack \
+  --stack-name <STACK_NAME> \
   --query 'Stacks[0].Outputs'
 ```
 
@@ -167,7 +168,7 @@ The system automatically updates Cognito callback URLs, but you can manually ver
 ```bash
 # Get User Pool Client ID from outputs
 USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
-  --stack-name OneLStack \
+  --stack-name <STACK_NAME> \
   --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
   --output text)
 
@@ -183,7 +184,7 @@ aws cognito-idp describe-user-pool-client \
 ```bash
 # Upload Massachusetts legal documents to knowledge bucket
 KNOWLEDGE_BUCKET=$(aws cloudformation describe-stacks \
-  --stack-name OneLStack \
+  --stack-name <STACK_NAME> \
   --query 'Stacks[0].Outputs[?OutputKey==`KnowledgeBucketName`].OutputValue' \
   --output text)
 
@@ -196,13 +197,14 @@ The system automatically syncs when files are uploaded, or trigger manually:
 ```bash
 # Get sync function name
 SYNC_FUNCTION=$(aws cloudformation describe-stacks \
-  --stack-name OneLStack \
+  --stack-name <STACK_NAME> \
   --query 'Stacks[0].Outputs[?OutputKey==`SyncKnowledgeBaseFunctionArn`].OutputValue' \
   --output text)
 
 # Trigger manual sync
+# Replace <STACK_NAME> with your actual stack name from constants.py
 aws lambda invoke \
-  --function-name OneLStack-sync-knowledge-base \
+  --function-name <STACK_NAME>-sync-knowledge-base \
   --payload '{"action": "start_sync", "data_source": "all"}' \
   response.json
 ```
@@ -214,8 +216,8 @@ aws lambda invoke \
 # Deploy with development settings
 cdk deploy --context environment=dev
 
-# Use separate stack name
-cdk deploy OneLStackDev
+# Use separate stack name (update constants.py with your dev stack name)
+cdk deploy
 ```
 
 ### Production Environment
@@ -241,8 +243,9 @@ cdk deploy --context region=eu-west-1
 1. **API Gateway**
    ```bash
    # Get API Gateway URL
+   # Replace <STACK_NAME> with your actual stack name from constants.py
    API_URL=$(aws cloudformation describe-stacks \
-     --stack-name OneLStack \
+     --stack-name <STACK_NAME> \
      --query 'Stacks[0].Outputs[?OutputKey==`MainApiUrl`].OutputValue' \
      --output text)
    
@@ -253,8 +256,9 @@ cdk deploy --context region=eu-west-1
 2. **WebSocket API**
    ```bash
    # Get WebSocket URL
+   # Replace <STACK_NAME> with your actual stack name from constants.py
    WS_URL=$(aws cloudformation describe-stacks \
-     --stack-name OneLStack \
+     --stack-name <STACK_NAME> \
      --query 'Stacks[0].Outputs[?OutputKey==`WebSocketApiUrl`].OutputValue' \
      --output text)
    
@@ -264,8 +268,9 @@ cdk deploy --context region=eu-west-1
 3. **Frontend Application**
    ```bash
    # Get CloudFront URL
+   # Replace <STACK_NAME> with your actual stack name from constants.py
    WEBSITE_URL=$(aws cloudformation describe-stacks \
-     --stack-name OneLStack \
+     --stack-name <STACK_NAME> \
      --query 'Stacks[0].Outputs[?OutputKey==`WebsiteUrl`].OutputValue' \
      --output text)
    
@@ -276,13 +281,15 @@ cdk deploy --context region=eu-west-1
 ### CloudWatch Logs
 ```bash
 # View Lambda function logs
-aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/OneLStack"
+# Replace <STACK_NAME> with your actual stack name from constants.py
+aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/<STACK_NAME>"
 
 # Tail Step Functions state machine logs
-aws logs tail /aws/vendedlogs/states/OneL-DV2-document-review --follow
+# Replace <STACK_NAME> with your actual stack name from constants.py
+aws logs tail /aws/vendedlogs/states/<STACK_NAME>-document-review --follow
 
 # Tail specific Lambda function logs (example: start workflow)
-aws logs tail /aws/lambda/OneL-DV2-stepfunctions-startworkflow --follow
+aws logs tail /aws/lambda/<STACK_NAME>-stepfunctions-startworkflow --follow
 ```
 
 ## Troubleshooting
@@ -329,17 +336,21 @@ aws cognito-idp describe-user-pool-domain --domain one-l-auth
 cdk doctor
 
 # CloudFormation stack events
-aws cloudformation describe-stack-events --stack-name OneLStack
+# Replace <STACK_NAME> with your actual stack name from constants.py
+aws cloudformation describe-stack-events --stack-name <STACK_NAME>
 
 # Lambda function configuration
 # Get Step Functions state machine details
-aws stepfunctions describe-state-machine --state-machine-arn "arn:aws:states:<region>:<account>:stateMachine:OneL-DV2-document-review"
+# Replace <STACK_NAME>, <region>, and <account> with actual values
+aws stepfunctions describe-state-machine --state-machine-arn "arn:aws:states:<region>:<account>:stateMachine:<STACK_NAME>-document-review"
 
 # Get Lambda function configuration (example: start workflow)
-aws lambda get-function-configuration --function-name OneL-DV2-stepfunctions-startworkflow
+# Replace <STACK_NAME> with your actual stack name from constants.py
+aws lambda get-function-configuration --function-name <STACK_NAME>-stepfunctions-startworkflow
 
 # Check IAM role permissions
-aws iam get-role-policy --role-name OneLStack-DocumentReviewRole --policy-name policy-name
+# Replace <STACK_NAME> with your actual stack name from constants.py
+aws iam get-role-policy --role-name <STACK_NAME>-DocumentReviewRole --policy-name policy-name
 ```
 
 ## Updating and Maintenance
@@ -360,14 +371,15 @@ cdk deploy  # Apply changes
 ### Backup and Recovery
 ```bash
 # Export CloudFormation template
+# Replace <STACK_NAME> with your actual stack name from constants.py
 aws cloudformation get-template \
-  --stack-name OneLStack \
+  --stack-name <STACK_NAME> \
   --template-stage Processed > backup-template.json
 
 # Backup DynamoDB tables
 aws dynamodb create-backup \
-  --table-name OneLStack-analysis-results \
-  --backup-name OneLStack-backup-$(date +%Y%m%d)
+  --table-name <STACK_NAME>-analysis-results \
+  --backup-name <STACK_NAME>-backup-$(date +%Y%m%d)
 ```
 
 ### Clean Up
@@ -406,8 +418,9 @@ aws cloudformation delete-stack --stack-name CDKToolkit
 ### Monitoring Setup
 ```bash
 # Create CloudWatch alarms for Step Functions executions
+# Replace <STACK_NAME> with your actual stack name from constants.py
 aws cloudwatch put-metric-alarm \
-  --alarm-name "OneLStack-StepFunctions-ExecutionFailures" \
+  --alarm-name "<STACK_NAME>-StepFunctions-ExecutionFailures" \
   --alarm-description "Step Functions execution failures" \
   --metric-name ExecutionsFailed \
   --namespace AWS/States \
@@ -415,11 +428,11 @@ aws cloudwatch put-metric-alarm \
   --period 300 \
   --threshold 3 \
   --comparison-operator GreaterThanThreshold \
-  --dimensions Name=StateMachineArn,Value="arn:aws:states:region:account:stateMachine:OneL-DV2-document-review"
+  --dimensions Name=StateMachineArn,Value="arn:aws:states:<region>:<account>:stateMachine:<STACK_NAME>-document-review"
 
 # Create CloudWatch alarms for Lambda function errors
 aws cloudwatch put-metric-alarm \
-  --alarm-name "OneLStack-StepFunctions-Lambda-Errors" \
+  --alarm-name "<STACK_NAME>-StepFunctions-Lambda-Errors" \
   --alarm-description "Step Functions Lambda function errors" \
   --metric-name Errors \
   --namespace AWS/Lambda \
@@ -430,7 +443,7 @@ aws cloudwatch put-metric-alarm \
 
 # Monitor Step Functions execution duration
 aws cloudwatch put-metric-alarm \
-  --alarm-name "OneLStack-StepFunctions-LongExecution" \
+  --alarm-name "<STACK_NAME>-StepFunctions-LongExecution" \
   --alarm-description "Step Functions executions exceeding 10 minutes" \
   --metric-name ExecutionTime \
   --namespace AWS/States \

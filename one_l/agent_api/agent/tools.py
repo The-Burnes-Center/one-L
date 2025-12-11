@@ -2502,7 +2502,9 @@ def _get_function_names() -> Dict[str, str]:
     current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
     
     if current_function and 'stepfunctions-generateredline' in current_function:
-        # Extract stack name: OneL-DV2-stepfunctions-generateredline -> OneL-DV2
+        # Extract stack name dynamically from function name
+        # Example: OneL-DV2-stepfunctions-generateredline -> OneL-DV2
+        #          OneL-v2-stepfunctions-generateredline -> OneL-v2
         stack_name = current_function.replace('-stepfunctions-generateredline', '')
         
         return {
@@ -2520,8 +2522,30 @@ def _get_function_names() -> Dict[str, str]:
             import constants
             stack_name = constants.STACK_NAME
         except ImportError:
-            # Final fallback if constants not available
-            stack_name = 'OneL-DV2'
+            # Final fallback: extract from current function name if available
+            # This ensures we always use the correct stack name from the deployment
+            current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
+            if current_function and '-' in current_function:
+                # Extract stack name from function name pattern: <stack-name>-<function-type>-<function-name>
+                # Example: OneL-DV2-stepfunctions-generateredline -> OneL-DV2
+                parts = current_function.split('-')
+                if len(parts) >= 2:
+                    # Try to find where function type starts (stepfunctions, knowledge-management, etc.)
+                    function_types = ['stepfunctions', 'knowledge', 'websocket', 'session', 'upload', 'retrieve', 'delete', 'sync', 'create', 'auth']
+                    stack_parts = []
+                    for part in parts:
+                        if part in function_types:
+                            break
+                        stack_parts.append(part)
+                    if stack_parts:
+                        stack_name = '-'.join(stack_parts)
+                    else:
+                        # If we can't parse, use first two parts as fallback
+                        stack_name = '-'.join(parts[:2])
+                else:
+                    raise ValueError(f"Cannot determine stack name from function name: {current_function}")
+            else:
+                raise ValueError("Cannot determine stack name: constants module not available and AWS_LAMBDA_FUNCTION_NAME not set")
         
         return {
             'delete_function': f'{stack_name}-delete-from-s3',

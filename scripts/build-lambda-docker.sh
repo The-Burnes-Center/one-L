@@ -6,11 +6,11 @@
 set -e
 
 # Configuration
-FUNCTION_NAME="document-review"
+# Note: This builds deployment packages for all Step Functions Lambda functions
 DOCKER_IMAGE="one-l-lambda-builder"
 OUTPUT_DIR="./build"
 
-echo "Building Lambda deployment package for ${FUNCTION_NAME}..."
+echo "Building Lambda deployment packages for Step Functions workflow..."
 
 # Create output directory
 mkdir -p ${OUTPUT_DIR}
