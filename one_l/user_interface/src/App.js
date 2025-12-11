@@ -568,8 +568,8 @@ const SessionWorkspace = ({ session }) => {
     return () => {
       cleanupWebSocket();
       // Clean up progress interval when component unmounts
-      // Note: This will clear the progress indicator, but processing continues in background
-      // The WebSocket will still receive completion notifications if the user returns to this session
+      // Note: This clears the progress indicator, but Step Functions workflow continues execution
+      // WebSocket will still receive completion notifications if the user returns to this session
       if (window.progressInterval) {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
@@ -1786,8 +1786,8 @@ const SessionWorkspace = ({ session }) => {
             
             // DON'T add to redlineResults - just use the unified progress UI
             // Store the job info for WebSocket tracking without showing old UI
-            // Note: We can't get the real job ID from the backend due to timeout,
-            // but the session-level subscription will catch the completion notification
+            // Note: Due to API Gateway timeout, job ID may not be immediately available,
+            // but the session-level WebSocket subscription will catch completion notifications
             // Ensure WebSocket connection is strong and subscribe to any updates for this session
             try {
               if (!webSocketService.getConnectionStatus().isConnected) {

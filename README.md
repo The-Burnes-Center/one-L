@@ -147,8 +147,8 @@ The system employs a sophisticated multi-stage AI analysis workflow orchestrated
 
 ## 📖 Documentation
 
-### Implementation Playbook
-**[Complete Implementation Guide](https://docs.google.com/document/d/1TGCLBY8JlsL46_5L6Bnm4dIeTpoVE3Ec/edit?usp=sharing&ouid=117647832595317958025&rtpof=true&sd=trued)** - Contains all required information for setup, deployment, and configuration.
+### Documentation Guides
+All implementation details are documented in the local documentation files below. For additional context or historical reference, see the external implementation guide (if available).
 
 | Guide | Description |
 |-------|-------------|

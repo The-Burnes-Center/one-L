@@ -162,7 +162,7 @@ def generate_presigned_url(file_data: Dict[str, Any], bucket_name: str, prefix: 
                 'Metadata': {
                     'original_filename': filename,
                     'upload_timestamp': str(uuid.uuid4()),
-                    'session_id': session_id or 'legacy',
+                    'session_id': session_id or 'no-session',
                     'user_id': user_id or 'unknown'
                 }
             },

@@ -7,7 +7,7 @@ Welcome to the comprehensive documentation for the One-L Legal AI Document Revie
 ### **Getting Started**
 - **[Main README](../README.md)** - Project overview, features, and quick setup
 - **[Deployment Guide](./DEPLOYMENT.md)** - Complete deployment instructions and troubleshooting
-- **[Contributing Guide](../CONTRIBUTING.md)** - Development guidelines and contribution process
+- **Development Guidelines** - See main README for development commands and setup
 
 ### **Technical Documentation**
 - **[Architecture Overview](./ARCHITECTURE.md)** - Detailed system architecture and design principles
@@ -23,7 +23,7 @@ Welcome to the comprehensive documentation for the One-L Legal AI Document Revie
 1. Start with [Architecture Overview](./ARCHITECTURE.md) to understand the system design
 2. Follow [Deployment Guide](./DEPLOYMENT.md) for environment setup
 3. Reference [API Documentation](./API.md) for integration details
-4. See [Contributing Guide](../CONTRIBUTING.md) for development workflows
+4. Review main README for development workflows and commands
 
 ### **For DevOps/Infrastructure**
 1. Review [Deployment Guide](./DEPLOYMENT.md) for infrastructure setup

@@ -15,8 +15,10 @@ from aws_cdk import (
 
 class AgentConstruct(Construct):
     """
-    Agent construct that pieces together individual Lambda functions for AI-powered document review.
-    Follows the same pattern as KnowledgeManagementConstruct.
+    Agent construct that creates and orchestrates the Step Functions workflow for AI-powered document review.
+    
+    This construct creates the Step Functions state machine and all associated Lambda functions
+    that handle the multi-stage document analysis pipeline.
     """
     
     def __init__(
