@@ -2497,13 +2497,12 @@ def _cleanup_session_documents(session_id: str, user_id: str) -> Dict[str, Any]:
             'error': str(e)
         }
 
-# TO DO: Change this to the new stack name dynamically instead of hardcoding it
 def _get_function_names() -> Dict[str, str]:
     """Get Lambda function names based on current function naming pattern."""
     current_function = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', '')
     
     if current_function and 'stepfunctions-generateredline' in current_function:
-        # Extract stack name: OneL-DV2-document-review -> OneL-DV2
+        # Extract stack name: OneL-DV2-stepfunctions-generateredline -> OneL-DV2
         stack_name = current_function.replace('-stepfunctions-generateredline', '')
         
         return {
@@ -2511,10 +2510,22 @@ def _get_function_names() -> Dict[str, str]:
             'sync_function': f"{stack_name}-sync-knowledge-base"
         }
     else:
-        # Fallback: use known stack name
+        # Fallback: use stack name from constants if available, otherwise hardcoded default
+        try:
+            import sys
+            import os as os_module
+            _parent_dir = os_module.path.dirname(os_module.path.dirname(os_module.path.dirname(os_module.path.dirname(os_module.path.abspath(__file__)))))
+            if _parent_dir not in sys.path:
+                sys.path.insert(0, _parent_dir)
+            import constants
+            stack_name = constants.STACK_NAME
+        except ImportError:
+            # Final fallback if constants not available
+            stack_name = 'OneL-DV2'
+        
         return {
-            'delete_function': 'OneL-DV2-delete-from-s3',
-            'sync_function': 'OneL-DV2-sync-knowledge-base'
+            'delete_function': f'{stack_name}-delete-from-s3',
+            'sync_function': f'{stack_name}-sync-knowledge-base'
         }
 
 
