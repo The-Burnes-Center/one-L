@@ -120,9 +120,10 @@ Use these exact values in the conflict_type field:
 3. Identify ALL conflicts by checking each query's results against vendor language
 
 4. For each conflict you identify:
-   - Cite documents from query results whose scope matches the conflict type (e.g., IT Terms for contract terms, security standards for security)
-   - Do NOT cite documents whose scope doesn't match (e.g., security standards for indemnification)
-   - Do NOT use "N/A" if query results contain a document whose scope governs this conflict type
+   - Read the document content from query results to verify it actually contains the requirement being violated
+   - Cite the EXACT document name from that query's results ONLY if the document content directly relates to the conflict type
+   - Do NOT cite a document just because it appears in query results - verify the document's scope/topic matches the conflict type
+   - Do NOT use "N/A" if a query result contains a document that actually governs this conflict type
 
 5. After checking all queries, identify conflicts based on general MA requirements and red flag language patterns (use "N/A – Not tied to a specific Massachusetts clause" for these)
 
@@ -133,10 +134,12 @@ Use these exact values in the conflict_type field:
 8. Complete ALL fields in the JSON structure for each conflict
 
 9. For source document citations:
-   - Cite documents whose scope matches the conflict type (contract terms → IT Terms/Standard Contract; security → ISP/IS standards)
+   - CRITICAL: Only cite documents whose content actually governs the requirement being violated
+   - Verify document content from query results matches the conflict type before citing (e.g., don't cite a security standard for a contract term conflict, or vice versa)
+   - Consider document scope: contract terms documents (IT Terms, Standard Contract Form) govern legal/commercial terms; security standards (ISP/IS) govern technical security; RFR/Exhibits govern engagement-specific requirements
    - Use "N/A – Not tied to a specific Massachusetts clause" ONLY when:
      * Conflict is based on general red flag language patterns (e.g., "best efforts", "as is")
-     * AND no query results contain a document whose scope governs this conflict type
+     * OR you have verified no query results contain a document that actually governs this conflict type
 </analysis_process>
 
 <vendor_quote_rules>
