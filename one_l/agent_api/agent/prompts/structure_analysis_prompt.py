@@ -86,7 +86,7 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 
 ### STEP 3: INTELLIGENT STRUCTURE-BASED QUERYING
 <instructions>
-Generate 10-20 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
+Generate 6-15 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
 **CRITICAL: Generate at least one query for EACH major section title/heading identified in structure analysis.**
 
@@ -119,7 +119,7 @@ IMPORTANT: Let the vendor document structure guide your queries.
 
 ### STEP 4: VALIDATE QUERY COMPLETENESS
 <instructions>
-Distribute your 10-20 queries based on vendor document structure:
+Distribute your 6-15 queries based on vendor document structure:
 - **CRITICAL: Ensure at least one query exists for each major section title/heading identified in this chunk.**
 - For fewer sections → more queries per section
 - For many sections → group related sections intelligently
@@ -127,7 +127,7 @@ Distribute your 10-20 queries based on vendor document structure:
 - Always include 1-2 queries for cross-cutting concerns
 
 Verification checklist:
-- ✓ 10-20 distinct queries
+- ✓ 6-15 distinct queries minimum
 - ✓ Major legal concepts included when they appear in multiple sections
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
