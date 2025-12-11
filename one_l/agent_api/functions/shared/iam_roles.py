@@ -255,17 +255,6 @@ class IAMRolesConstruct(Construct):
                 ]
             )
         )
-
-        # Grant Textract permissions for OCR fallback on PDFs
-        role.add_to_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "textract:DetectDocumentText"
-                ],
-                resources=["*"]
-            )
-        )
         
         # Grant Lambda invoke permissions for WebSocket notifications, session management, and cleanup operations
         role.add_to_policy(
