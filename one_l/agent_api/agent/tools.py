@@ -155,18 +155,31 @@ def _chunk_content_intelligently(text: str, max_size: int = MAX_CHUNK_SIZE) -> L
 
 def _filter_and_prioritize_results(results: List[Dict], max_results: int) -> List[Dict]:
     """Filter results by relevance and prioritize for optimal context usage."""
+    import os
+    
     # Filter by minimum relevance score
     filtered_results = [
         r for r in results 
         if r.get('score', 0) >= MIN_RELEVANCE_SCORE
     ]
     
-    # Sort by score (descending)
-    sorted_results = sorted(
-        filtered_results, 
-        key=lambda x: x.get('score', 0), 
-        reverse=True
-    )
+    # Sort by score (descending), then prioritize IT Terms documents, then by document name (ascending) for deterministic ordering
+    def sort_key(result: Dict) -> tuple:
+        score = result.get('score', 0)
+        # Extract filename from source for consistent sorting
+        source = result.get('source', '')
+        # Extract just the filename if source is a path
+        filename = os.path.basename(source) if source else ''
+        filename_lower = filename.lower()
+        # Check if document contains "IT Terms" or "IT Terms and Conditions" (prioritize these)
+        # Handle variations: spaces, underscores, hyphens
+        normalized_filename = filename_lower.replace('_', ' ').replace('-', ' ')
+        is_it_terms = 'it terms' in normalized_filename
+        # Return tuple: (negative score for descending, priority flag inverted so True=0/False=1, filename)
+        # This ensures IT Terms docs come first when scores are equal
+        return (-score, 0 if is_it_terms else 1, filename_lower)
+    
+    sorted_results = sorted(filtered_results, key=sort_key)
     
     # Limit results for optimal performance
     return sorted_results[:min(max_results, OPTIMAL_RESULTS_PER_QUERY)]
