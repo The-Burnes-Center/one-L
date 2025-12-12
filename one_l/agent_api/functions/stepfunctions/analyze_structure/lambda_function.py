@@ -111,12 +111,13 @@ def lambda_handler(event, context):
         ]
         
         # Call Claude with structure analysis prompt
+        # Use deterministic settings (no thinking, temp=0.0) for query generation consistency
         if is_chunk:
-            logger.info(f"Calling Claude for chunk {chunk_num + 1} structure analysis")
+            logger.info(f"Calling Claude for chunk {chunk_num + 1} structure analysis (deterministic mode: no thinking, temp=0.0)")
         else:
-            logger.info("Calling Claude for document structure analysis")
+            logger.info("Calling Claude for document structure analysis (deterministic mode: no thinking, temp=0.0)")
         
-        response = model._call_claude_with_tools(messages)
+        response = model._call_claude_with_tools(messages, enable_thinking=False, temperature=0.0)
         
         # Extract content
         content = ""

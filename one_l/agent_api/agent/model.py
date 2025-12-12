@@ -523,7 +523,7 @@ class Model:
         logger.info(f"Sanitized filename from '{filename}' to '{sanitized}'")
         return sanitized
     
-    def _call_claude_without_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False) -> Dict[str, Any]:
+    def _call_claude_without_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False, enable_thinking: bool = True, temperature: float = None) -> Dict[str, Any]:
         """
         Call Claude without tool support using Converse API.
         Use this when KB results are already pre-loaded in the prompt.
@@ -535,6 +535,8 @@ class Model:
             retry_count: Current retry attempt number
             use_1m_context: Whether to use 1M context version (fallback)
             tried_1m: Whether we've already attempted 1M context (prevents loops)
+            enable_thinking: Whether to enable thinking mode (default: True). If False, allows lower temperature.
+            temperature: Temperature to use (default: TEMPERATURE constant). If thinking disabled, can use 0.0-0.3.
         """
         
         # Implement graceful call spacing to prevent token rate limiting
@@ -554,9 +556,16 @@ class Model:
         logger.info(f"Calling Claude ({model_name}: {current_model_id}) with {len(messages)} messages without tools (attempt {retry_count + 1}, use_1m_context={use_1m_context}) - Total successful calls so far: {_call_tracker['total_model_calls']}")
         
         try:
+            # Determine temperature: use provided value, or TEMPERATURE constant, or 0.0 if thinking disabled
+            if temperature is None:
+                if enable_thinking:
+                    temperature = TEMPERATURE  # Must be 1.0 when thinking enabled
+                else:
+                    temperature = 0.0  # Deterministic when thinking disabled
+            
             # Prepare inference config
             inference_config = {
-                "temperature": TEMPERATURE,
+                "temperature": temperature,
                 "maxTokens": MAX_TOKENS
             }
             
@@ -565,15 +574,18 @@ class Model:
             api_params = {
                 "modelId": current_model_id,
                 "messages": messages,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": inference_config
                 # NO toolConfig - tools disabled
-                "additionalModelRequestFields": {
+            }
+            
+            # Add thinking config only if enabled
+            if enable_thinking:
+                api_params["additionalModelRequestFields"] = {
                     "thinking": {
                         "type": "enabled",
                         "budget_tokens": THINKING_BUDGET_TOKENS
                     }
                 }
-            }
             
             # Add 1M context beta parameter if using 1M fallback
             # AWS Bedrock expects anthropic_beta to be a list of strings
@@ -654,7 +666,7 @@ class Model:
             # Re-raise the exception if we can't handle it
             raise
     
-    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False) -> Dict[str, Any]:
+    def _call_claude_with_tools(self, messages: List[Dict[str, Any]], retry_count: int = 0, use_1m_context: bool = False, tried_1m: bool = False, enable_thinking: bool = True, temperature: float = None) -> Dict[str, Any]:
         """
         Call Claude with tool support using Converse API.
         Implements graceful queuing with call spacing to prevent token rate limiting.
@@ -665,6 +677,8 @@ class Model:
             retry_count: Current retry attempt number
             use_1m_context: Whether to use 1M context version (fallback)
             tried_1m: Whether we've already attempted 1M context (prevents loops)
+            enable_thinking: Whether to enable thinking mode (default: True). If False, allows lower temperature.
+            temperature: Temperature to use (default: TEMPERATURE constant). If thinking disabled, can use 0.0-0.3.
         """
         
         # Implement graceful call spacing to prevent token rate limiting
@@ -684,9 +698,16 @@ class Model:
         logger.info(f"Calling Claude ({model_name}: {current_model_id}) with {len(messages)} messages and {len(self.tools)} tools (attempt {retry_count + 1}, use_1m_context={use_1m_context}) - Total successful calls so far: {_call_tracker['total_model_calls']}")
         
         try:
+            # Determine temperature: use provided value, or TEMPERATURE constant, or 0.0 if thinking disabled
+            if temperature is None:
+                if enable_thinking:
+                    temperature = TEMPERATURE  # Must be 1.0 when thinking enabled
+                else:
+                    temperature = 0.0  # Deterministic when thinking disabled
+            
             # Prepare inference config
             inference_config = {
-                "temperature": TEMPERATURE,
+                "temperature": temperature,
                 "maxTokens": MAX_TOKENS
             }
             
@@ -696,14 +717,17 @@ class Model:
                 "modelId": current_model_id,
                 "messages": messages,
                 "inferenceConfig": inference_config,
-                "toolConfig": {"tools": self.tools},
-                "additionalModelRequestFields": {
+                "toolConfig": {"tools": self.tools}
+            }
+            
+            # Add thinking config only if enabled
+            if enable_thinking:
+                api_params["additionalModelRequestFields"] = {
                     "thinking": {
                         "type": "enabled",
                         "budget_tokens": THINKING_BUDGET_TOKENS
                     }
                 }
-            }
             
             # Add 1M context beta parameter if using 1M fallback
             # AWS Bedrock expects anthropic_beta to be a list of strings
