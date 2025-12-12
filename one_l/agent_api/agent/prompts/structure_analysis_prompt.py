@@ -5,7 +5,7 @@ Extracted from original system prompt lines 1-6, 8-12, 16-117.
 
 from .models import StructureAnalysisOutput
 
-# JSON Schema for output validation
+# JSON Schema for output validation, test
 STRUCTURE_ANALYSIS_SCHEMA = StructureAnalysisOutput.model_json_schema()
 
 STRUCTURE_ANALYSIS_PROMPT = f"""
