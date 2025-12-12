@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Main CDK application entry point
 import aws_cdk as cdk
 from one_l.one_l_stack import OneLStack
 from constants import STACK_NAME
