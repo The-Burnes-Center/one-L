@@ -84,35 +84,35 @@ jobs:
 
     - name: CDK Diff
       env:
-        STACK_NAME: "OneL-v2"
-        COGNITO_DOMAIN_NAME: "one-l-auth"
+        STACK_NAME: "OneL-Prod"
+        COGNITO_DOMAIN_NAME: "one-l-auth-prod"
       run: |
         cdk diff
 
     - name: CDK Synth
       env:
-        STACK_NAME: "OneL-v2"
-        COGNITO_DOMAIN_NAME: "one-l-auth"
+        STACK_NAME: "OneL-Prod"
+        COGNITO_DOMAIN_NAME: "one-l-auth-prod"
       run: |
         cdk synth
 
     - name: CDK Deploy
       env:
         USE_STEP_FUNCTIONS: "true"
-        STACK_NAME: "OneL-v2"
-        COGNITO_DOMAIN_NAME: "one-l-auth"
+        STACK_NAME: "OneL-Prod"
+        COGNITO_DOMAIN_NAME: "one-l-auth-prod"
       run: |
         cdk deploy --require-approval never || {
           echo "=== CDK Deploy Failed - Getting detailed error information ==="
           echo ""
           echo "=== Stack Events (most recent first) ==="
-          aws cloudformation describe-stack-events --stack-name OneL-v2 --max-items 50 --query 'StackEvents[*].{Time:Timestamp,Resource:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}' --output table 2>/dev/null || echo "Could not get stack events"
+          aws cloudformation describe-stack-events --stack-name OneL-Prod --max-items 50 --query 'StackEvents[*].{Time:Timestamp,Resource:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}' --output table 2>/dev/null || echo "Could not get stack events"
           echo ""
           echo "=== Change Set Details ==="
-          aws cloudformation describe-change-set --stack-name OneL-v2 --change-set-name cdk-deploy-change-set --query '{Status:Status,StatusReason:StatusReason,Changes:Changes[0:10]}' --output json 2>/dev/null || echo "Could not get change set details"
+          aws cloudformation describe-change-set --stack-name OneL-Prod --change-set-name cdk-deploy-change-set --query '{Status:Status,StatusReason:StatusReason,Changes:Changes[0:10]}' --output json 2>/dev/null || echo "Could not get change set details"
           echo ""
           echo "=== Stack Status ==="
-          aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].{Status:StackStatus,Reason:StackStatusReason}' --output table 2>/dev/null || echo "Stack does not exist yet"
+          aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].{Status:StackStatus,Reason:StackStatusReason}' --output table 2>/dev/null || echo "Stack does not exist yet"
           exit 1
         }
 
@@ -121,29 +121,29 @@ jobs:
       run: |
         # First, list ALL outputs to see what's available
         echo "=== Listing ALL CloudFormation Outputs ==="
-        aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
+        aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
         
         # Get CloudFront distribution ID
-        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDistributionId8824EC56`].OutputValue' --output text)
+        DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDistributionId8824EC56`].OutputValue' --output text)
         
         # Get CloudFront domain name
-        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDomainName896373DA`].OutputValue' --output text)
+        CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceCloudFrontDomainName896373DA`].OutputValue' --output text)
         
         # Get Cognito domain
-        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolDomainUrl533E5574`].OutputValue' --output text)
+        COGNITO_DOMAIN=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolDomainUrl533E5574`].OutputValue' --output text)
         
         # Get API Gateway URL
-        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayMainApiUrl65B78421`].OutputValue' --output text)
+        API_GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayMainApiUrl65B78421`].OutputValue' --output text)
         
         # Get WebSocket URL
-        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AgentApiFunctionsWebSocketWebSocketApiUrl63196B11`].OutputValue' --output text)
+        WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`AgentApiFunctionsWebSocketWebSocketApiUrl63196B11`].OutputValue' --output text)
         
         # Get website bucket name
-        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceWebsiteBucketNameEE842B3A`].OutputValue' --output text)
+        WEBSITE_BUCKET=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`UserInterfaceWebsiteBucketNameEE842B3A`].OutputValue' --output text)
         
         # Get Cognito User Pool ID and Client ID
-        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolId47D46FEF`].OutputValue' --output text)
-        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-v2 --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolClientId24468C3D`].OutputValue' --output text)
+        USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolId47D46FEF`].OutputValue' --output text)
+        USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name OneL-Prod --query 'Stacks[0].Outputs[?OutputKey==`AuthorizationUserPoolClientId24468C3D`].OutputValue' --output text)
         
         echo "DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> $GITHUB_ENV
         echo "CLOUDFRONT_DOMAIN=${CLOUDFRONT_DOMAIN}" >> $GITHUB_ENV
@@ -191,7 +191,7 @@ jobs:
           "userPoolClientId": "${USER_POOL_CLIENT_ID}",
           "userPoolDomain": "${COGNITO_DOMAIN}",
           "region": "us-east-1",
-          "stackName": "OneL-v2",
+          "stackName": "OneL-Prod",
           "knowledgeManagementUploadEndpointUrl": "${API_GATEWAY_URL}knowledge_management/upload",
           "knowledgeManagementRetrieveEndpointUrl": "${API_GATEWAY_URL}knowledge_management/retrieve",
           "knowledgeManagementDeleteEndpointUrl": "${API_GATEWAY_URL}knowledge_management/delete",
