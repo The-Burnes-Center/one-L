@@ -83,16 +83,24 @@ jobs:
         npm install -g aws-cdk
 
     - name: CDK Diff
+      env:
+        STACK_NAME: "OneL-DV2"
+        COGNITO_DOMAIN_NAME: "one-l-auth-dv2"
       run: |
         cdk diff
 
     - name: CDK Synth
+      env:
+        STACK_NAME: "OneL-DV2"
+        COGNITO_DOMAIN_NAME: "one-l-auth-dv2"
       run: |
         cdk synth
 
     - name: CDK Deploy
       env:
         USE_STEP_FUNCTIONS: "true"
+        STACK_NAME: "OneL-DV2"
+        COGNITO_DOMAIN_NAME: "one-l-auth-dv2"
       run: |
         cdk deploy --require-approval never || {
           echo "=== CDK Deploy Failed - Getting detailed error information ==="

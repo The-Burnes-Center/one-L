@@ -9,6 +9,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     
     permissions:
       id-token: write
@@ -82,16 +83,24 @@ jobs:
         npm install -g aws-cdk
 
     - name: CDK Diff
+      env:
+        STACK_NAME: "OneL-v2"
+        COGNITO_DOMAIN_NAME: "one-l-auth"
       run: |
         cdk diff
 
     - name: CDK Synth
+      env:
+        STACK_NAME: "OneL-v2"
+        COGNITO_DOMAIN_NAME: "one-l-auth"
       run: |
         cdk synth
 
     - name: CDK Deploy
       env:
         USE_STEP_FUNCTIONS: "true"
+        STACK_NAME: "OneL-v2"
+        COGNITO_DOMAIN_NAME: "one-l-auth"
       run: |
         cdk deploy --require-approval never || {
           echo "=== CDK Deploy Failed - Getting detailed error information ==="
@@ -197,16 +206,6 @@ jobs:
         echo "Generated config.json:"
         cat config.json
 
-    - name: Upload frontend build to S3
-      run: |
-        echo "Uploading React frontend build to S3 bucket: ${WEBSITE_BUCKET}"
-        aws s3 sync one_l/user_interface/build/ s3://${WEBSITE_BUCKET}/ \
-          --delete \
-          --cache-control "public, max-age=31536000, immutable"
-        aws s3 cp one_l/user_interface/build/index.html s3://${WEBSITE_BUCKET}/index.html \
-          --cache-control "public, max-age=0, must-revalidate"
-        echo "Frontend build uploaded successfully"
-
     - name: Upload config.json to S3
       run: |
         aws s3 cp config.json s3://${WEBSITE_BUCKET}/config.json --content-type application/json
@@ -218,4 +217,3 @@ jobs:
         echo "Attempting CloudFront invalidation (this may fail due to rate limits)..."
         aws cloudfront create-invalidation --distribution-id ${DISTRIBUTION_ID} --paths "/*" || echo "CloudFront invalidation skipped (rate limit exceeded or other error)"
         echo "CloudFront cache will expire naturally within 24 hours"
-
