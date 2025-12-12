@@ -1,5 +1,16 @@
 # One-L Deployment Guide
 
+## Overview
+
+One-L uses a **branch-based deployment strategy** with two environments:
+
+| Environment | Branch | Stack Name | Cognito Domain |
+|-------------|--------|------------|----------------|
+| Development | `dev` | `OneL-DV2` | `one-l-auth-dv2` |
+| Production | `main` | `OneL-Prod` | `one-l-auth-prod` |
+
+Deployments are automated via **GitHub Actions** - pushing to either branch triggers the corresponding deployment.
+
 ## Prerequisites
 
 ### AWS Account Setup
@@ -12,7 +23,7 @@
 
 ### Local Development Environment
 - **Python 3.12+** with pip
-- **Node.js 18+** with npm
+- **Node.js 20+** with npm
 - **AWS CDK v2** (`npm install -g aws-cdk`)
 - **Git** for version control
 
@@ -47,9 +58,44 @@ Your AWS user/role needs the following managed policies:
   }
   ```
 
-## Deployment Steps
+## Automated Deployment (GitHub Actions)
 
-### 1. **Clone and Setup**
+### How It Works
+
+1. **Push to `dev` branch** → Deploys to `OneL-DV2` stack
+2. **Push to `main` branch** → Deploys to `OneL-Prod` stack
+
+The `constants.py` file uses **environment variables** that are set by GitHub Actions:
+
+```python
+# constants.py reads from environment variables
+STACK_NAME = os.environ.get("STACK_NAME", "OneL-DV2")  # Default: dev
+COGNITO_DOMAIN_NAME = os.environ.get("COGNITO_DOMAIN_NAME", "one-l-auth-dv2")
+```
+
+### GitHub Actions Workflows
+
+| Workflow | File | Trigger | Stack |
+|----------|------|---------|-------|
+| Deploy to Dev | `.github/workflows/deploy.yml` | Push to `dev` | `OneL-DV2` |
+| Deploy to Production | `.github/workflows/deploy-production.yml` | Push to `main` | `OneL-Prod` |
+
+### Triggering a Deployment
+
+**Option 1: Push to branch**
+```bash
+git push origin dev    # Deploys to dev
+git push origin main   # Deploys to production
+```
+
+**Option 2: Manual trigger via GitHub UI**
+1. Go to https://github.com/The-Burnes-Center/one-L/actions
+2. Select the workflow (Deploy to Dev or Deploy to Production)
+3. Click "Run workflow"
+
+## Local Deployment
+
+### 1. Clone and Setup
 
 ```bash
 # Clone the repository
@@ -67,36 +113,25 @@ source .venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
-### 2. **Configure Environment**
+### 2. Configure Environment
 
-#### Edit Configuration Constants
+Set environment variables to choose which stack to deploy:
+
 ```bash
-# Edit constants.py to customize deployment
-vim constants.py
+# For dev deployment
+export STACK_NAME="OneL-DV2"
+export COGNITO_DOMAIN_NAME="one-l-auth-dv2"
+
+# For production deployment
+export STACK_NAME="OneL-Prod"
+export COGNITO_DOMAIN_NAME="one-l-auth-prod"
+
+# For a custom stack (testing)
+export STACK_NAME="OneL-MyTest"
+export COGNITO_DOMAIN_NAME="one-l-auth-mytest"
 ```
 
-Key configuration options:
-```python
-# Stack name for all AWS resources
-STACK_NAME = "YourStackName"  # MUST be set - use your actual stack name
-
-# Cognito domain name (must be globally unique)
-COGNITO_DOMAIN_NAME = "your-unique-domain-name"  # MUST be globally unique
-```
-
-#### Verify AWS Configuration
-```bash
-# Check AWS credentials
-aws sts get-caller-identity
-
-# Verify CDK installation
-cdk --version
-
-# Check available regions and Bedrock access
-aws bedrock list-foundation-models --region us-east-1
-```
-
-### 3. **CDK Bootstrap (One-time Setup)**
+### 3. CDK Bootstrap (One-time Setup)
 
 ```bash
 # Bootstrap CDK in your AWS account/region
@@ -106,227 +141,140 @@ cdk bootstrap
 cdk bootstrap aws://ACCOUNT-NUMBER/REGION
 ```
 
-### 4. **Deploy Infrastructure**
+### 4. Deploy Infrastructure
 
-#### Preview Deployment
 ```bash
-# See what will be created
+# Preview changes
 cdk diff
 
 # Generate CloudFormation template
 cdk synth
-```
 
-#### Deploy Stack
-```bash
-# Deploy with progress output
+# Deploy stack
 cdk deploy --require-approval never
-
-# Deploy with specific profile
-cdk deploy --profile your-aws-profile
-
-# Deploy with parameters
-cdk deploy --parameters stackName=YourCustomStack
 ```
 
 **Deployment Time**: Approximately 15-20 minutes for initial deployment.
 
-### 5. **Frontend Build and Deployment**
+### 5. Post-Deployment Configuration
 
-The frontend is automatically built and deployed as part of the CDK stack:
+After CDK deploy completes, you need to:
+
+1. **Update Cognito OAuth settings** with CloudFront callback URLs
+2. **Generate and upload config.json** to the S3 website bucket
+3. **Invalidate CloudFront cache**
+
+These steps are automated in GitHub Actions but for local deployment:
 
 ```bash
-# Frontend dependencies are installed automatically
-# Build process is handled by CDK during deployment
-# CloudFront distribution is created and configured
-```
+# Get stack outputs
+aws cloudformation describe-stacks --stack-name $STACK_NAME \
+  --query 'Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}' --output table
 
-Manual frontend development:
-```bash
-cd one_l/user_interface
-npm install
-npm start  # For local development
-npm run build  # For production build
-```
-
-### 6. **Post-Deployment Configuration**
-
-#### Verify Deployment
-```bash
-# Check stack status
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws cloudformation describe-stacks --stack-name <STACK_NAME>
-
-# Get important outputs
-aws cloudformation describe-stacks \
-  --stack-name <STACK_NAME> \
-  --query 'Stacks[0].Outputs'
-```
-
-#### Update Cognito Callback URLs (if needed)
-The system automatically updates Cognito callback URLs, but you can manually verify:
-```bash
-# Get User Pool Client ID from outputs
-USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
-  --stack-name <STACK_NAME> \
-  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
-  --output text)
-
-# Check callback URLs
-aws cognito-idp describe-user-pool-client \
+# Update Cognito (replace values from outputs above)
+aws cognito-idp update-user-pool-client \
   --user-pool-id <USER_POOL_ID> \
-  --client-id $USER_POOL_CLIENT_ID
+  --client-id <CLIENT_ID> \
+  --callback-urls "https://<CLOUDFRONT_DOMAIN>" "https://<CLOUDFRONT_DOMAIN>/" \
+  --logout-urls "https://<CLOUDFRONT_DOMAIN>" "https://<CLOUDFRONT_DOMAIN>/" \
+  --supported-identity-providers "COGNITO" \
+  --allowed-o-auth-flows "code" \
+  --allowed-o-auth-scopes "openid" "email" "profile" \
+  --allowed-o-auth-flows-user-pool-client
+
+# Create config.json and upload to S3
+cat > config.json << EOF
+{
+  "apiGatewayUrl": "<API_GATEWAY_URL>",
+  "userPoolId": "<USER_POOL_ID>",
+  "userPoolClientId": "<CLIENT_ID>",
+  "userPoolDomain": "<COGNITO_DOMAIN_URL>",
+  "region": "us-east-1",
+  "stackName": "$STACK_NAME",
+  "webSocketUrl": "<WEBSOCKET_URL>",
+  "callbackUrl": "https://<CLOUDFRONT_DOMAIN>"
+}
+EOF
+
+aws s3 cp config.json s3://<WEBSITE_BUCKET>/config.json --content-type application/json
+
+# Invalidate CloudFront
+aws cloudfront create-invalidation --distribution-id <DISTRIBUTION_ID> --paths "/*"
 ```
 
-### 7. **Knowledge Base Setup**
+## Environment URLs
 
-#### Upload Reference Documents
-```bash
-# Upload Massachusetts legal documents to knowledge bucket
-KNOWLEDGE_BUCKET=$(aws cloudformation describe-stacks \
-  --stack-name <STACK_NAME> \
-  --query 'Stacks[0].Outputs[?OutputKey==`KnowledgeBucketName`].OutputValue' \
-  --output text)
+### Development (OneL-DV2)
+- **Website**: https://d3j5z1r06hg5fy.cloudfront.net
+- **Stack**: `OneL-DV2`
 
-# Upload reference documents
-aws s3 cp ./reference-docs/ s3://$KNOWLEDGE_BUCKET/admin-uploads/ --recursive
-```
-
-#### Trigger Knowledge Base Sync
-The system automatically syncs when files are uploaded, or trigger manually:
-```bash
-# Get sync function name
-SYNC_FUNCTION=$(aws cloudformation describe-stacks \
-  --stack-name <STACK_NAME> \
-  --query 'Stacks[0].Outputs[?OutputKey==`SyncKnowledgeBaseFunctionArn`].OutputValue' \
-  --output text)
-
-# Trigger manual sync
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws lambda invoke \
-  --function-name <STACK_NAME>-sync-knowledge-base \
-  --payload '{"action": "start_sync", "data_source": "all"}' \
-  response.json
-```
-
-## Environment-Specific Deployments
-
-### Development Environment
-```bash
-# Deploy with development settings
-cdk deploy --context environment=dev
-
-# Use separate stack name (update constants.py with your dev stack name)
-cdk deploy
-```
-
-### Production Environment
-```bash
-# Deploy with production optimizations
-cdk deploy --context environment=prod
-
-# Enable additional security features
-cdk deploy --context enableWaf=true
-```
-
-### Multi-Region Deployment
-```bash
-# Deploy to different regions
-cdk deploy --context region=us-west-2
-cdk deploy --context region=eu-west-1
-```
+### Production (OneL-Prod)
+- **Website**: https://d3kb9da2xipcfv.cloudfront.net
+- **Stack**: `OneL-Prod`
 
 ## Monitoring and Verification
 
 ### Health Checks
 
-1. **API Gateway**
-   ```bash
-   # Get API Gateway URL
-   # Replace <STACK_NAME> with your actual stack name from constants.py
-   API_URL=$(aws cloudformation describe-stacks \
-     --stack-name <STACK_NAME> \
-     --query 'Stacks[0].Outputs[?OutputKey==`MainApiUrl`].OutputValue' \
-     --output text)
-   
-   # Test API connectivity
-   curl $API_URL/knowledge_management/retrieve
-   ```
+```bash
+# Check stack status
+aws cloudformation describe-stacks --stack-name $STACK_NAME
 
-2. **WebSocket API**
-   ```bash
-   # Get WebSocket URL
-   # Replace <STACK_NAME> with your actual stack name from constants.py
-   WS_URL=$(aws cloudformation describe-stacks \
-     --stack-name <STACK_NAME> \
-     --query 'Stacks[0].Outputs[?OutputKey==`WebSocketApiUrl`].OutputValue' \
-     --output text)
-   
-   echo "WebSocket URL: $WS_URL"
-   ```
+# Get important outputs
+aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].Outputs'
 
-3. **Frontend Application**
-   ```bash
-   # Get CloudFront URL
-   # Replace <STACK_NAME> with your actual stack name from constants.py
-   WEBSITE_URL=$(aws cloudformation describe-stacks \
-     --stack-name <STACK_NAME> \
-     --query 'Stacks[0].Outputs[?OutputKey==`WebsiteUrl`].OutputValue' \
-     --output text)
-   
-   echo "Website URL: $WEBSITE_URL"
-   curl -I $WEBSITE_URL
-   ```
+# Test API connectivity
+API_URL=$(aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].Outputs[?contains(OutputKey, `ApiUrl`)].OutputValue' \
+  --output text)
+curl $API_URL
+```
 
 ### CloudWatch Logs
+
 ```bash
 # View Lambda function logs
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/<STACK_NAME>"
+aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/$STACK_NAME"
 
-# Tail Step Functions state machine logs
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws logs tail /aws/vendedlogs/states/<STACK_NAME>-document-review --follow
-
-# Tail specific Lambda function logs (example: start workflow)
-aws logs tail /aws/lambda/<STACK_NAME>-stepfunctions-startworkflow --follow
+# Tail specific Lambda function logs
+aws logs tail /aws/lambda/$STACK_NAME-stepfunctions-startworkflow --follow
 ```
 
 ## Troubleshooting
 
 ### Common Deployment Issues
 
-#### 1. **Bedrock Access Denied**
+#### 1. **Stack in DELETE_FAILED state**
+If a previous deployment failed and the stack is stuck:
 ```bash
-# Check if Claude 4 Sonnet is available in your region
-aws bedrock list-foundation-models \
-  --region us-east-1 \
-  --query 'modelSummaries[?contains(modelId, `claude-4`)]'
-
-# Request model access in AWS Console if needed
+# Delete the stack, skipping failed resources
+aws cloudformation delete-stack --stack-name $STACK_NAME --retain-resources <RESOURCE_ID>
 ```
+Or use the AWS Console to delete with "retain resources" option.
 
-#### 2. **OpenSearch Serverless Limits**
-```bash
-# Check OpenSearch Serverless quotas
-aws opensearchserverless list-collections
-
-# Delete unused collections if at limit
-aws opensearchserverless delete-collection --id collection-id
-```
-
-#### 3. **Cognito Domain Already Exists**
+#### 2. **Cognito Domain Already Exists**
 ```bash
 # Check if domain is available
-aws cognito-idp describe-user-pool-domain --domain one-l-auth
+aws cognito-idp describe-user-pool-domain --domain $COGNITO_DOMAIN_NAME
 
-# Use different domain name in constants.py
+# Use different domain name in environment variable
+export COGNITO_DOMAIN_NAME="one-l-auth-unique-suffix"
 ```
 
-#### 4. **S3 Bucket Name Conflicts**
+#### 3. **Orphaned Resources Blocking Deployment**
+If you see `ResourceExistenceCheck` errors, manually delete orphaned resources:
+- Lambda functions with the stack prefix
+- IAM roles with the stack prefix
+- CloudWatch Log Groups
+- S3 buckets (empty first, then delete)
+
+#### 4. **CDK Bootstrap Version Mismatch**
 ```bash
-# Bucket names must be globally unique
-# Modify bucket names in storage construct or use random suffix
+# Re-bootstrap with latest version
+cdk bootstrap --force
 ```
 
 ### Debug Commands
@@ -336,61 +284,23 @@ aws cognito-idp describe-user-pool-domain --domain one-l-auth
 cdk doctor
 
 # CloudFormation stack events
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws cloudformation describe-stack-events --stack-name <STACK_NAME>
+aws cloudformation describe-stack-events --stack-name $STACK_NAME
 
 # Lambda function configuration
-# Get Step Functions state machine details
-# Replace <STACK_NAME>, <region>, and <account> with actual values
-aws stepfunctions describe-state-machine --state-machine-arn "arn:aws:states:<region>:<account>:stateMachine:<STACK_NAME>-document-review"
-
-# Get Lambda function configuration (example: start workflow)
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws lambda get-function-configuration --function-name <STACK_NAME>-stepfunctions-startworkflow
-
-# Check IAM role permissions
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws iam get-role-policy --role-name <STACK_NAME>-DocumentReviewRole --policy-name policy-name
+aws lambda get-function-configuration --function-name $STACK_NAME-stepfunctions-startworkflow
 ```
 
-## Updating and Maintenance
+## Clean Up
 
-### Update Deployment
-```bash
-# Pull latest changes
-git pull origin main
-
-# Update dependencies
-pip install -r requirements.txt
-
-# Deploy updates
-cdk diff  # Preview changes
-cdk deploy  # Apply changes
-```
-
-### Backup and Recovery
-```bash
-# Export CloudFormation template
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws cloudformation get-template \
-  --stack-name <STACK_NAME> \
-  --template-stage Processed > backup-template.json
-
-# Backup DynamoDB tables
-aws dynamodb create-backup \
-  --table-name <STACK_NAME>-analysis-results \
-  --backup-name <STACK_NAME>-backup-$(date +%Y%m%d)
-```
-
-### Clean Up
 ```bash
 # Delete entire stack
 cdk destroy
 
-# Remove CDK bootstrap (if no other CDK apps)
-# Note: This will affect other CDK deployments
-aws cloudformation delete-stack --stack-name CDKToolkit
+# Or via CloudFormation
+aws cloudformation delete-stack --stack-name $STACK_NAME
 ```
+
+**Warning**: This will delete all resources including S3 buckets and DynamoDB tables.
 
 ## Security Considerations
 
@@ -407,60 +317,6 @@ aws cloudformation delete-stack --stack-name CDKToolkit
 - Implement least privilege access principles
 - Enable MFA for all administrative access
 
-### Data Protection
-- Enable S3 bucket encryption with KMS keys
-- Configure DynamoDB encryption at rest
-- Use VPC endpoints for internal traffic
-- Implement data retention policies
-
-## Support and Maintenance
-
-### Monitoring Setup
-```bash
-# Create CloudWatch alarms for Step Functions executions
-# Replace <STACK_NAME> with your actual stack name from constants.py
-aws cloudwatch put-metric-alarm \
-  --alarm-name "<STACK_NAME>-StepFunctions-ExecutionFailures" \
-  --alarm-description "Step Functions execution failures" \
-  --metric-name ExecutionsFailed \
-  --namespace AWS/States \
-  --statistic Sum \
-  --period 300 \
-  --threshold 3 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=StateMachineArn,Value="arn:aws:states:<region>:<account>:stateMachine:<STACK_NAME>-document-review"
-
-# Create CloudWatch alarms for Lambda function errors
-aws cloudwatch put-metric-alarm \
-  --alarm-name "<STACK_NAME>-StepFunctions-Lambda-Errors" \
-  --alarm-description "Step Functions Lambda function errors" \
-  --metric-name Errors \
-  --namespace AWS/Lambda \
-  --statistic Sum \
-  --period 300 \
-  --threshold 5 \
-  --comparison-operator GreaterThanThreshold
-
-# Monitor Step Functions execution duration
-aws cloudwatch put-metric-alarm \
-  --alarm-name "<STACK_NAME>-StepFunctions-LongExecution" \
-  --alarm-description "Step Functions executions exceeding 10 minutes" \
-  --metric-name ExecutionTime \
-  --namespace AWS/States \
-  --statistic Average \
-  --period 300 \
-  --threshold 600 \
-  --comparison-operator GreaterThanThreshold
-```
-
-### Cost Optimization
-- **Step Functions Pricing**: Pay per state transition (first 4,000 free per month)
-- **Lambda Optimization**: Right-size memory allocation for Step Functions Lambda functions
-- **Monitor AWS costs**: Use Cost Explorer with Step Functions and Lambda filters
-- **Set up billing alerts**: Configure budgets for Step Functions and Lambda spend
-- **Use AWS Budgets**: Track Step Functions execution costs
-- **Review CloudWatch logs retention**: Adjust retention periods for Step Functions execution logs
-- **Optimize workflow**: Reduce unnecessary state transitions in Step Functions definition
-- **Parallel processing**: Leverage Step Functions Map state for cost-effective concurrent processing
+## Support
 
 For additional support, refer to the [CONTRIBUTING.md](../CONTRIBUTING.md) guide or open an issue in the project repository.
