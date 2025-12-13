@@ -65,7 +65,7 @@ Within THIS CHUNK, identify all structural elements and vendor language:
   - Intellectual Property, IP, Ownership
   - Risk of Loss
   - Subcontracting, Subcontractors
-- Massachusetts document references (IT Terms & Conditions, Standard Contract Form Terms, RFR, Exhibits)
+- Massachusetts document references (Terms & Conditions, Standard Contract Form Terms, RFR, Exhibits)
 - Cross-references within this chunk (e.g., "see Section 9")
 - Number of distinct sections/exception clusters
 - Vendor's organizational patterns
@@ -96,7 +96,12 @@ Each query MUST:
 - Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
 - Not repeat the same vendor content across multiple queries
-- For contract term sections (Termination, Indemnification, Liability, Payment, Warranties, Assignment, Confidentiality, Notice, Governing Law, Insurance, Audit), include "IT Terms and Conditions" or "IT Terms" in the query text
+- **CRITICAL: ALWAYS include Massachusetts context keywords in EVERY query:**
+  * For major contract sections (Termination, Indemnification, Liability, Payment, Warranties, Assignment, Confidentiality, Notice, Governing Law, Insurance, Audit): Include "Terms and Conditions" OR "Massachusetts Terms" OR "Commonwealth Terms" OR "MA Terms"
+  * For ALL queries: Include at least one of: "Massachusetts", "Commonwealth", "Massachusetts state", "MA requirements"
+  * Even for software-specific or vendor-specific sections, add Massachusetts context to ensure queries match Terms and Conditions documents
+- **Query construction strategy**: Combine vendor-specific terms + Massachusetts keywords + legal concepts
+  * Example: "software license termination" → "termination software licenses Massachusetts Terms and Conditions Commonwealth contract terms"
 
 Build queries based on:
 - Major document sections the vendor addresses 
@@ -108,7 +113,7 @@ Build queries based on:
 - State-specific sections if applicable
 
 Your queries should collectively check against:
-- IT Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
+- Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
 - All referenced Exhibits
 - Request for Response (RFR)
 - Commonwealth-specific requirements
@@ -132,8 +137,10 @@ Verification checklist:
 - ✓ Major legal concepts included when they appear in multiple sections
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
+- ✓ **CRITICAL: Every query includes Massachusetts/Commonwealth/Terms and Conditions keywords**
 - ✓ Comprehensive coverage of Massachusetts documents
 - ✓ Adapted to actual vendor document structure
+- ✓ **Pre-verification**: Before finalizing, check that each query would semantically match Massachusetts documents by including state-specific terminology
 </instructions>
 
 ### STEP 5: OUTPUT VALIDATION
