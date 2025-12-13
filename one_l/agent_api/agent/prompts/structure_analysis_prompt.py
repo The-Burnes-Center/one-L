@@ -86,45 +86,26 @@ IMPORTANT: Adapt to the vendor's actual document structure rather than forcing a
 
 ### STEP 3: INTELLIGENT STRUCTURE-BASED QUERYING
 <instructions>
-Generate 12-25 comprehensive, non-repetitive queries that collectively cover EVERY section/exception in this chunk:
+Generate 6-15 comprehensive, non-repetitive queries that collectively cover every section/exception in this chunk:
 
-**CRITICAL REQUIREMENTS:**
-1. **MANDATORY COVERAGE**: Generate at least one query for EACH major section title/heading identified in structure analysis. If you identify 15 sections, generate at least 15 queries (one per section minimum).
-2. **MINIMUM COUNT**: Generate at least 12 queries, even for simple documents. For complex documents with many sections, generate more (up to 25).
-3. **GRANULARITY**: For complex sections (e.g., "Your Obligations", "Termination"), break them into sub-queries covering different aspects:
-   - Example: "Your Obligations" → separate queries for Compliance, Cooperation, Content Management, End Users, Audit
-   - Example: "Termination" → separate queries for Termination Rights, Suspension Rights, Post-Termination Obligations
-4. **CRITICAL SECTIONS**: These sections MUST have queries if they appear in the document:
-   - Termination/Suspension (mandatory)
-   - Indemnification (mandatory)
-   - Liability/Limitation of Liability (mandatory)
-   - Payment/Fees (mandatory)
-   - Warranties/Disclaimers (mandatory)
-   - Assignment/Transfer (mandatory)
-   - Confidentiality/Privacy (mandatory)
-   - Governing Law/Jurisdiction (mandatory)
-   - Insurance (mandatory)
-   - Audit Rights (mandatory)
-   - Intellectual Property/Ownership (mandatory)
-   - Order of Precedence (mandatory)
-   - External Terms Incorporation (mandatory if present)
+**CRITICAL: Generate at least one query for EACH major section title/heading identified in structure analysis.**
 
 Each query MUST:
 - Use the `section` field to indicate the vendor section/exhibit/zone it targets
 - Be distinct from other queries (different sections, topics, contexts)
-- Contain 50-100+ unique terms from vendor document AND Massachusetts terminology
-- Include Massachusetts-specific terms: "Massachusetts", "Commonwealth", "IT Terms and Conditions", "IT Terms", "RFR", "Standard Contract Form"
+- Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
 - Not repeat the same vendor content across multiple queries
-- For contract term sections, ALWAYS include "IT Terms and Conditions" or "IT Terms" in the query text
-- Use vendor's exact terminology PLUS Massachusetts terminology for better KB matching
+- For contract term sections (Termination, Indemnification, Liability, Payment, Warranties, Assignment, Confidentiality, Notice, Governing Law, Insurance, Audit), include "IT Terms and Conditions" or "IT Terms" in the query text
 
-Query Quality Guidelines:
-- **Vendor Terms**: Include exact phrases from vendor document (e.g., "Service End Date", "Initial Service Period")
-- **Massachusetts Terms**: Include MA-specific terms (e.g., "Commonwealth", "IT Terms", "Massachusetts requirements")
-- **Legal Concepts**: Include legal terminology (e.g., "indemnify", "hold harmless", "limitation of liability")
-- **Synonyms**: Include variations (e.g., "termination" + "cancellation" + "expiration")
-- **Context**: Include surrounding context (e.g., "payment terms invoicing net 30 days")
+Build queries based on:
+- Major document sections the vendor addresses 
+- Vendor language that may be in conflict with Massachusetts requirements
+- Massachusetts requirements they're modifying
+- Technical vs. legal/governance terms
+- Financial/payment vs. operational requirements
+- Security/compliance vs. business terms
+- State-specific sections if applicable
 
 Your queries should collectively check against:
 - IT Terms and Conditions (PRIORITY REFERENCE DOCUMENT)
@@ -134,32 +115,25 @@ Your queries should collectively check against:
 - Any other mentioned documents
 - State-specific requirements if applicable
 
-IMPORTANT: Better to generate MORE queries (15-25) than FEWER queries (6-10). More queries = better KB coverage = more conflicts detected.
+IMPORTANT: Let the vendor document structure guide your queries.
 </instructions>
 
 ### STEP 4: VALIDATE QUERY COMPLETENESS
 <instructions>
-Before finalizing, verify your query generation:
+Distribute your 6-15 queries based on vendor document structure:
+- **CRITICAL: Ensure at least one query exists for each major section title/heading identified in this chunk.**
+- For fewer sections → more queries per section
+- For many sections → group related sections intelligently
+- For heavily focused areas → allocate more queries there
+- Always include 1-2 queries for cross-cutting concerns
 
-**MANDATORY VERIFICATION CHECKLIST:**
-1. ✓ **Count**: At least 12 queries generated (more if document has many sections)
-2. ✓ **Coverage**: Every major section title/heading has at least one query
-3. ✓ **Critical Sections**: All critical sections listed in STEP 3 have queries (if present in document)
-4. ✓ **Granularity**: Complex sections are broken into sub-queries (e.g., "Your Obligations" → 3-5 queries)
-5. ✓ **Quality**: Each query contains 50-100+ unique terms including vendor terms + Massachusetts terms
-6. ✓ **Distinctness**: No two queries cover the same exact vendor content
-7. ✓ **Massachusetts Terms**: Each query includes MA-specific terminology ("IT Terms", "Commonwealth", etc.)
-8. ✓ **Document Coverage**: Queries collectively check against IT Terms, RFR, Exhibits, and other referenced documents
-
-**If any checklist item fails, generate additional queries until all requirements are met.**
-
-Distribution Strategy:
-- For documents with 10+ sections → Generate 15-25 queries (1-2 per section, more for complex sections)
-- For documents with 5-9 sections → Generate 12-18 queries (2-3 per section)
-- For documents with <5 sections → Generate 12-15 queries (3+ per section for thorough coverage)
-- Always include 2-3 queries for cross-cutting concerns (Order of Precedence, General Terms, etc.)
-
-**CRITICAL**: If you identified 15 sections but only generated 10 queries, you MUST generate 5+ more queries to cover the missing sections.
+Verification checklist:
+- ✓ 6-15 distinct queries minimum
+- ✓ Major legal concepts included when they appear in multiple sections
+- ✓ Every vendor document section represented
+- ✓ Each query contains 50-100+ unique terms
+- ✓ Comprehensive coverage of Massachusetts documents
+- ✓ Adapted to actual vendor document structure
 </instructions>
 
 ### STEP 5: OUTPUT VALIDATION
