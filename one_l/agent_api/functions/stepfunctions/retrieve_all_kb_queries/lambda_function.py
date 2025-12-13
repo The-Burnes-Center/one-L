@@ -230,6 +230,93 @@ def lambda_handler(event, context):
         # Sort results by query_id to maintain order
         all_results.sort(key=lambda x: x.get('query_id', 0))
         
+        # POST-PROCESSING: Add fallback queries for major sections missing Terms and Conditions documents
+        # Major contract sections from Massachusetts Terms and Conditions document
+        major_sections = [
+            'INDEMNITY', 'INDEMNIFICATION', 'LIABILITY', 'LIMITATION', 'LIMITATIONS',
+            'TERMINATION', 'SUSPENSION', 'FORCE MAJEURE',
+            'PAYMENT', 'PAYMENTS', 'COMPENSATION', 'CONTRACTOR PAYMENTS',
+            'WARRANTY', 'WARRANTIES', 'NON-INFRINGEMENT',
+            'CONFIDENTIALITY', 'PRIVACY', 'DATA', 'PROTECTION',
+            'ASSIGNMENT', 'TRANSFER',
+            'NOTICE', 'NOTICES', 'WRITTEN NOTICE',
+            'SUBCONTRACTING', 'SUBCONTRACTOR',
+            'INSURANCE',
+            'RECORD', 'RETENTION', 'INSPECTION', 'AUDIT',
+            'RISK OF LOSS',
+            'WAIVER', 'WAIVERS',
+            'GOVERNING LAW', 'FORUM', 'JURISDICTION', 'MEDIATION', 'CHOICE OF LAW',
+            'SEVERABILITY', 'INTEGRATION', 'BOILERPLATE', 'CONFLICTS',
+            'AFFIRMATIVE ACTION', 'NON-DISCRIMINATION',
+            'PRESS RELEASE', 'MARKETING', 'PUBLICITY',
+            'AI USAGE', 'DISCLOSURE'
+        ]
+        fallback_queries = []
+        max_query_id = max([r.get('query_id', 0) for r in all_results], default=0)
+        
+        for result in all_results:
+            section = result.get('section', '').upper()
+            results = result.get('results', [])
+            
+            # Check if this is a major section query
+            is_major_section = any(keyword in section for keyword in major_sections)
+            
+            if is_major_section and results:
+                # Check if Terms and Conditions documents are in results
+                has_terms_doc = False
+                for r in results:
+                    source = r.get('source', '') or r.get('metadata', {}).get('source', '')
+                    if 'terms' in source.lower() or 'conditions' in source.lower():
+                        has_terms_doc = True
+                        break
+                
+                # If major section query has results but no Terms docs, add fallback
+                if not has_terms_doc:
+                    max_query_id += 1
+                    # Create fallback query specifically targeting Terms and Conditions
+                    # Extract the main section keyword(s) from the section name
+                    section_keywords = [kw for kw in major_sections if kw in section]
+                    if not section_keywords:
+                        # Fallback: use first word of section if no keyword matches
+                        section_keywords = [section.split()[0]] if section else ['Terms']
+                    
+                    # Create focused fallback query targeting Terms and Conditions document
+                    fallback_query = f"{' '.join(section_keywords)} Terms and Conditions Massachusetts Commonwealth document requirements"
+                    
+                    logger.info(f"KB_FALLBACK_QUERY: Adding fallback query {max_query_id} for section '{result.get('section')}' - original query had {len(results)} results but no Terms and Conditions documents")
+                    
+                    fallback_queries.append({
+                        'query_id': max_query_id,
+                        'query': fallback_query,
+                        'section': result.get('section', '') + ' (Fallback)',
+                        'is_fallback': True,
+                        'original_query_id': result.get('query_id')
+                    })
+        
+        # Execute fallback queries if any were created
+        if fallback_queries:
+            logger.info(f"KB_FALLBACK_EXECUTION: Executing {len(fallback_queries)} fallback queries for Terms and Conditions documents")
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                fallback_futures = {
+                    executor.submit(retrieve_single_query, query_data, knowledge_base_id, region): query_data
+                    for query_data in fallback_queries
+                }
+                
+                for future in as_completed(fallback_futures):
+                    query_data = fallback_futures[future]
+                    try:
+                        fallback_result = future.result()
+                        all_results.append(fallback_result)
+                        if fallback_result.get('success') and fallback_result.get('results_count', 0) > 0:
+                            logger.info(f"KB_FALLBACK_SUCCESS: Fallback query {fallback_result.get('query_id')} returned {fallback_result.get('results_count')} results")
+                        else:
+                            logger.warning(f"KB_FALLBACK_NO_RESULTS: Fallback query {fallback_result.get('query_id')} returned no results")
+                    except Exception as e:
+                        logger.error(f"KB_FALLBACK_ERROR: Exception executing fallback query {query_data.get('query_id', 'unknown')}: {e}")
+            
+            # Re-sort after adding fallback results
+            all_results.sort(key=lambda x: x.get('query_id', 0))
+        
         # Calculate total results count and analyze query effectiveness
         total_results_count = sum(r.get('results_count', 0) for r in all_results)
         queries_with_results = [r for r in all_results if r.get('results_count', 0) > 0]
