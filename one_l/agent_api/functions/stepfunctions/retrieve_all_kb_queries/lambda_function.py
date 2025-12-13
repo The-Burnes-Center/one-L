@@ -281,7 +281,9 @@ def lambda_handler(event, context):
                         section_keywords = [section.split()[0]] if section else ['Terms']
                     
                     # Create focused fallback query targeting Terms and Conditions document
-                    fallback_query = f"{' '.join(section_keywords)} Terms and Conditions Massachusetts Commonwealth document requirements"
+                    # Use more specific query format that matches how Terms docs are structured
+                    section_name = result.get('section', '').replace('(Fallback)', '').strip()
+                    fallback_query = f"{' '.join(section_keywords)} section Terms and Conditions Massachusetts Commonwealth IT Terms and Conditions document {section_name} requirements provisions"
                     
                     logger.info(f"KB_FALLBACK_QUERY: Adding fallback query {max_query_id} for section '{result.get('section')}' - original query had {len(results)} results but no Terms and Conditions documents")
                     
