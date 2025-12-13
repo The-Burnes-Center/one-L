@@ -751,7 +751,7 @@ class Model:
             
             # Handle tool calls if present
             if response.get("stopReason") == "tool_use":
-                return self._handle_tool_calls(messages, response)
+                return self._handle_tool_calls(messages, response, enable_thinking=enable_thinking, temperature=temperature)
             
             return response
             
@@ -834,9 +834,15 @@ class Model:
                 logger.error(f"Error calling Claude (non-retryable {error_type}): {str(e)}")
                 raise
     
-    def _handle_tool_calls(self, messages: List[Dict[str, Any]], claude_response: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_tool_calls(self, messages: List[Dict[str, Any]], claude_response: Dict[str, Any], enable_thinking: bool = True, temperature: float = None) -> Dict[str, Any]:
         """
         Handle tool calls from Claude and continue the conversation.
+        
+        Args:
+            messages: Current conversation messages
+            claude_response: Claude's response containing tool calls
+            enable_thinking: Whether thinking mode is enabled (passed through from original call)
+            temperature: Temperature setting (passed through from original call)
         """
         
         # Log thinking from the initial tool use response
@@ -920,8 +926,10 @@ class Model:
                     })
         
         # Continue the conversation with tool results
+        # CRITICAL: Pass through enable_thinking and temperature to maintain consistency
+        # If thinking was disabled initially, keep it disabled to avoid validation errors
         logger.info("=== CONTINUING CONVERSATION AFTER TOOL EXECUTION ===")
-        final_response = self._call_claude_with_tools(messages)
+        final_response = self._call_claude_with_tools(messages, enable_thinking=enable_thinking, temperature=temperature)
         
         # Log thinking from the final response after tool execution
         logger.info("=== LOGGING THINKING AFTER TOOL EXECUTION ===")
