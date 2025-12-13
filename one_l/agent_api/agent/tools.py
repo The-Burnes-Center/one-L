@@ -90,7 +90,7 @@ s3_client = boto3.client('s3')
 
 # Knowledge base optimization constants - TUNED FOR MAXIMUM CONFLICT DETECTION
 MAX_CHUNK_SIZE = 3000  # Increased tokens per chunk for more context
-MIN_RELEVANCE_SCORE = 0.5  # Lowered threshold to capture more potentially relevant content
+MIN_RELEVANCE_SCORE = 0.4  # Lowered threshold to capture more potentially relevant content
 OPTIMAL_RESULTS_PER_QUERY = 50  # Increased results per query for comprehensive coverage
 DEDUPLICATION_THRESHOLD = 0.90  # Slightly higher threshold to allow more similar content variations
 
