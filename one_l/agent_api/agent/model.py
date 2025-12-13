@@ -365,11 +365,29 @@ def _split_document_into_chunks(doc, chunk_size_characters=30000, chunk_overlap_
     chunks = []
     
     # For DOCX: Extract full text and chunk by characters
-    # Extract all text from document
+    # Extract all text from document (paragraphs AND tables)
     full_text_parts = []
+    
+    # Extract text from paragraphs
     for para in doc.paragraphs:
         if para.text.strip():
             full_text_parts.append(para.text)
+    
+    # Extract text from tables (for table-formatted exception documents)
+    for table in doc.tables:
+        table_rows = []
+        for row in table.rows:
+            row_cells = []
+            for cell in row.cells:
+                cell_text = cell.text.strip()
+                if cell_text:
+                    row_cells.append(cell_text)
+            if row_cells:
+                # Join cells with " | " separator to preserve table structure
+                table_rows.append(" | ".join(row_cells))
+        if table_rows:
+            # Add table content with clear markers
+            full_text_parts.append("\n[TABLE START]\n" + "\n".join(table_rows) + "\n[TABLE END]\n")
     
     full_text = '\n\n'.join(full_text_parts)
     total_chars = len(full_text)

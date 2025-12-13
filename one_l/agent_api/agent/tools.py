@@ -1406,7 +1406,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         Dictionary with redlining results
     """
     total_conflicts_input = len(redline_items)
-    logger.info(f"APPLY_START: Processing {total_conflicts_input} conflicts across {len(doc.paragraphs)} paragraphs")
+    logger.info(f"APPLY_START: Processing {total_conflicts_input} conflicts across {len(doc.paragraphs)} paragraphs and {len(doc.tables)} tables")
     
     try:
         total_paragraphs = len(doc.paragraphs)
@@ -1430,6 +1430,7 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
         # This allows us to handle multiple conflicts per paragraph
         paragraph_matches = {}  # para_idx -> list of (start_pos, end_pos, comment, vendor_quote, conflict_id)
         cross_para_matches = []  # List of cross-paragraph matches to handle separately
+        table_cell_matches = []  # List of table cell matches to handle separately
         
         for redline_item in redline_items:
             vendor_quote = redline_item.get('text', '').strip()
@@ -1480,6 +1481,17 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
                         'conflict_id': conflict_id
                     })
                     logger.info(f"FOUND: Cross-paragraph match spanning paragraphs {match_result['paragraphs']}")
+                elif match_result['type'] == 'table_cell':
+                    table_cell_matches.append({
+                        'table_idx': match_result['table_idx'],
+                        'row_idx': match_result['row_idx'],
+                        'cell_idx': match_result['cell_idx'],
+                        'comment': comment,
+                        'vendor_quote': vendor_quote,
+                        'conflict_id': conflict_id,
+                        'match_type': match_result['match_type']
+                    })
+                    logger.info(f"FOUND: Table cell match in table {match_result['table_idx']}, row {match_result['row_idx']}, cell {match_result['cell_idx']}")
             else:
                 failed_matches.append({
                     'text': vendor_quote,
@@ -1524,6 +1536,29 @@ def apply_exact_sentence_redlining(doc, redline_items: List[Dict[str, str]]) -> 
             
             matches_found += 1
             logger.info(f"CROSS_PARA_APPLIED: Redlined paragraphs {para_indices}")
+        
+        # PHASE 4: Handle table cell matches
+        tables_with_redlines = []
+        for table_match in table_cell_matches:
+            table_idx = table_match['table_idx']
+            row_idx = table_match['row_idx']
+            cell_idx = table_match['cell_idx']
+            comment = table_match['comment']
+            vendor_quote = table_match['vendor_quote']
+            
+            if table_idx < len(doc.tables):
+                table = doc.tables[table_idx]
+                if row_idx < len(table.rows):
+                    row = table.rows[row_idx]
+                    if cell_idx < len(row.cells):
+                        cell = row.cells[cell_idx]
+                        success = _apply_table_cell_redline(cell, vendor_quote, comment)
+                        if success:
+                            matches_found += 1
+                            table_key = (table_idx, row_idx, cell_idx)
+                            if table_key not in tables_with_redlines:
+                                tables_with_redlines.append(table_key)
+                            logger.info(f"TABLE_CELL_APPLIED: Redlined table {table_idx}, row {row_idx}, cell {cell_idx}")
         
         # Log results
         if paragraphs_with_redlines:
@@ -1575,6 +1610,7 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     3. Quote + whitespace normalized match (handle quote and whitespace variations)
     4. Fully normalized match (quotes + whitespace + case-insensitive)
     5. Cross-paragraph match (text spans multiple paragraphs)
+    6. Table cell match (searches within table cells)
     
     Args:
         doc: python-docx Document object
@@ -1589,7 +1625,69 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
     quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(quote_normalized))
     fully_normalized = normalize_for_matching(vendor_quote)
     
-    # Search through all paragraphs
+    # First, search through all tables (for table-formatted exception documents)
+    for table_idx, table in enumerate(doc.tables):
+        for row_idx, row in enumerate(table.rows):
+            for cell_idx, cell in enumerate(row.cells):
+                cell_text = cell.text.strip()
+                if not cell_text:
+                    continue
+                
+                # Check all matching tiers for table cells
+                if vendor_quote in cell_text:
+                    logger.info(f"MATCH_FOUND: TIER 1 (exact) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                    return {
+                        'type': 'table_cell',
+                        'table_idx': table_idx,
+                        'row_idx': row_idx,
+                        'cell_idx': cell_idx,
+                        'match_type': 'exact'
+                    }
+                
+                cell_quote_normalized = normalize_quotes(cell_text)
+                if quote_normalized in cell_quote_normalized:
+                    logger.info(f"MATCH_FOUND: TIER 2 (quote_normalized) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                    return {
+                        'type': 'table_cell',
+                        'table_idx': table_idx,
+                        'row_idx': row_idx,
+                        'cell_idx': cell_idx,
+                        'match_type': 'quote_normalized'
+                    }
+                
+                cell_quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(cell_quote_normalized))
+                if quote_ws_normalized in cell_quote_ws_normalized:
+                    logger.info(f"MATCH_FOUND: TIER 3 (quote_whitespace_normalized) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                    return {
+                        'type': 'table_cell',
+                        'table_idx': table_idx,
+                        'row_idx': row_idx,
+                        'cell_idx': cell_idx,
+                        'match_type': 'quote_whitespace_normalized'
+                    }
+                
+                if quote_ws_normalized.lower() in cell_quote_ws_normalized.lower():
+                    logger.info(f"MATCH_FOUND: TIER 3b (quote_whitespace_normalized_case_insensitive) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                    return {
+                        'type': 'table_cell',
+                        'table_idx': table_idx,
+                        'row_idx': row_idx,
+                        'cell_idx': cell_idx,
+                        'match_type': 'quote_whitespace_normalized_case_insensitive'
+                    }
+                
+                cell_fully_normalized = normalize_for_matching(cell_text).lower()
+                if fully_normalized.lower() in cell_fully_normalized:
+                    logger.info(f"MATCH_FOUND: TIER 4 (fully_normalized) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                    return {
+                        'type': 'table_cell',
+                        'table_idx': table_idx,
+                        'row_idx': row_idx,
+                        'cell_idx': cell_idx,
+                        'match_type': 'fully_normalized'
+                    }
+    
+    # Search through all paragraphs (fallback if not found in tables)
     paragraphs_checked = 0
     for para_idx, paragraph in enumerate(doc.paragraphs):
         para_text = paragraph.text
@@ -2094,6 +2192,108 @@ def _apply_full_paragraph_redline(paragraph, comment: str):
         
     except Exception as e:
         logger.error(f"Error applying full paragraph redline: {str(e)}")
+
+
+def _apply_table_cell_redline(cell, vendor_quote: str, comment: str) -> bool:
+    """
+    Apply redlining to a table cell containing vendor exception text.
+    
+    Args:
+        cell: python-docx Table cell object
+        vendor_quote: The vendor exception text to redline
+        comment: Comment to attach
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Get all paragraphs in the cell
+        cell_paragraphs = cell.paragraphs
+        if not cell_paragraphs:
+            return False
+        
+        # Search through all paragraphs in the cell to find the vendor_quote
+        quote_normalized = normalize_quotes(normalize_escaped_quotes(vendor_quote))
+        quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(quote_normalized))
+        fully_normalized = normalize_for_matching(vendor_quote)
+        
+        for para in cell_paragraphs:
+            para_text = para.text
+            if not para_text.strip():
+                continue
+            
+            # Try to find the vendor_quote in this paragraph
+            found_match = False
+            match_type = None
+            
+            if vendor_quote in para_text:
+                found_match = True
+                match_type = 'exact'
+            elif quote_normalized in normalize_quotes(para_text):
+                found_match = True
+                match_type = 'quote_normalized'
+            elif quote_ws_normalized in normalize_whitespace(normalize_subsection_markers(normalize_quotes(para_text))):
+                found_match = True
+                match_type = 'quote_whitespace_normalized'
+            elif fully_normalized.lower() in normalize_for_matching(para_text).lower():
+                found_match = True
+                match_type = 'fully_normalized'
+            
+            if found_match:
+                # Apply redlining to the entire paragraph (since cell text may be formatted)
+                # Clear existing runs
+                for run in para.runs:
+                    run.clear()
+                
+                # Add redlined text
+                redline_run = para.add_run(para_text)
+                redline_run.font.color.rgb = RGBColor(255, 0, 0)
+                redline_run.font.strike = True
+                
+                # Add comment
+                if comment and comment.strip():
+                    try:
+                        redline_run.add_comment(comment, author="One L", initials="1L")
+                        logger.info(f"TABLE_CELL_COMMENT: Added comment to cell")
+                    except Exception as comment_err:
+                        logger.warning(f"TABLE_CELL_COMMENT_FAILED: {comment_err}")
+                
+                logger.info(f"TABLE_CELL_REDLINE: Applied {match_type} match to cell paragraph")
+                return True
+        
+        # If we didn't find an exact match, redline the entire cell content
+        # This handles cases where the text might be split across paragraphs or formatted differently
+        if cell_paragraphs:
+            first_para = cell_paragraphs[0]
+            cell_text = cell.text.strip()
+            if cell_text:
+                # Clear all paragraphs
+                for para in cell_paragraphs:
+                    for run in para.runs:
+                        run.clear()
+                
+                # Add redlined text to first paragraph
+                redline_run = first_para.add_run(cell_text)
+                redline_run.font.color.rgb = RGBColor(255, 0, 0)
+                redline_run.font.strike = True
+                
+                # Add comment
+                if comment and comment.strip():
+                    try:
+                        redline_run.add_comment(comment, author="One L", initials="1L")
+                    except Exception:
+                        pass
+                
+                logger.info(f"TABLE_CELL_REDLINE: Applied to entire cell content")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error applying table cell redline: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
 
 
 def _get_bucket_name(bucket_type: str) -> str:

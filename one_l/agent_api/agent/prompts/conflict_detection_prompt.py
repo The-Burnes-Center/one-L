@@ -155,6 +155,15 @@ Use these exact values in the conflict_type field:
 - Do NOT modify the text in any way - copy EXACT text word-for-word
 - Include any unusual spacing, capitalization, or punctuation exactly as written
 - For omissions (missing required provisions), use: "N/A - Missing provision"
+
+**TABLE-FORMATTED EXCEPTIONS:**
+- If the document contains tables (marked with [TABLE START] and [TABLE END]):
+  - The vendor exception language is typically in the RIGHT column (e.g., "Bidder requested clarification or language")
+  - Extract the complete exception text from the rightmost column
+  - The left/middle columns may contain Massachusetts document references - use these to identify source_doc and clause_ref
+  - Each table row typically represents one distinct exception
+  - When extracting vendor_quote from tables, copy the exact text from the right column, including all sentences
+  - If table cells contain multiple paragraphs, include all paragraphs in the vendor_quote
 </vendor_quote_rules>
 
 ## Output Format

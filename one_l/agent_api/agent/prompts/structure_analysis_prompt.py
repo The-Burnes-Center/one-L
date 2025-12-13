@@ -70,6 +70,16 @@ Within THIS CHUNK, identify all structural elements and vendor language:
 - Number of distinct sections/exception clusters
 - Vendor's organizational patterns
 - Exact vendor language for each exception (verbatim)
+
+**CRITICAL: TABLE-FORMATTED EXCEPTIONS**
+If the document contains tables (marked with [TABLE START] and [TABLE END]), pay special attention to:
+- Tables with columns like "Document Title and location", "Current Language", "Bidder requested clarification or language"
+- The RIGHT column (typically "Bidder requested clarification or language") contains the vendor's exception language
+- Extract exceptions from the rightmost column of each table row
+- The left/middle columns may contain Massachusetts document references and current language
+- Each table row typically represents one exception
+- Extract the complete exception text from the right column, preserving exact wording
+- Use the left column information to identify clause_ref when available
 </instructions>
 
 ### STEP 2: ADAPTIVE ZONE MAPPING
