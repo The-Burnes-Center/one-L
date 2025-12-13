@@ -195,8 +195,25 @@ def lambda_handler(event, context):
         # Sort results by query_id to maintain order
         all_results.sort(key=lambda x: x.get('query_id', 0))
         
-        # Calculate total results count
+        # Calculate total results count and analyze query effectiveness
         total_results_count = sum(r.get('results_count', 0) for r in all_results)
+        queries_with_results = [r for r in all_results if r.get('results_count', 0) > 0]
+        queries_without_results = [r for r in all_results if r.get('results_count', 0) == 0]
+        
+        # Log query effectiveness metrics
+        query_success_rate = len(queries_with_results) / len(all_results) * 100 if all_results else 0
+        logger.info(f"KB Query Effectiveness: {len(queries_with_results)}/{len(all_results)} queries returned results ({query_success_rate:.1f}% success rate)")
+        
+        if queries_without_results:
+            logger.warning(f"KB Query Coverage Warning: {len(queries_without_results)} queries returned no results:")
+            for q in queries_without_results[:5]:  # Log first 5 for brevity
+                logger.warning(f"  Query {q.get('query_id')} ({q.get('section', 'N/A')}): {q.get('query', '')[:80]}...")
+            if len(queries_without_results) > 5:
+                logger.warning(f"  ... and {len(queries_without_results) - 5} more queries with no results")
+        
+        # Warn if success rate is low
+        if query_success_rate < 50:
+            logger.warning(f"KB Query Quality Warning: Low success rate ({query_success_rate:.1f}%). Consider improving query generation to include more Massachusetts-specific terminology.")
         
         # Store all results in S3 - include chunk_num to avoid overwrites when chunks run in parallel
         s3_key = f"{session_id}/kb_results/{job_id}_chunk_{chunk_num}_all_queries.json"

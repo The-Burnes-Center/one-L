@@ -111,12 +111,15 @@ def lambda_handler(event, context):
         ]
         
         # Call Claude with structure analysis prompt
+        # Use deterministic settings (no thinking, temp=0.0) for query generation consistency
         if is_chunk:
-            logger.info(f"Calling Claude for chunk {chunk_num + 1} structure analysis")
+            logger.info(f"Calling Claude for chunk {chunk_num + 1} structure analysis (deterministic mode: no thinking, temp=0.0)")
         else:
-            logger.info("Calling Claude for document structure analysis")
+            logger.info("Calling Claude for document structure analysis (deterministic mode: no thinking, temp=0.0)")
         
-        response = model._call_claude_with_tools(messages)
+        # Use _call_claude_without_tools since we're generating queries, not retrieving from KB
+        # Tools are not needed for query generation - we want Claude to analyze structure and generate queries
+        response = model._call_claude_without_tools(messages, enable_thinking=False, temperature=0.0)
         
         # Extract content
         content = ""
@@ -134,7 +137,27 @@ def lambda_handler(event, context):
         # Validate with Pydantic
         try:
             validated_output = StructureAnalysisOutput.model_validate_json(response_json)
-            logger.info(f"Pydantic validation successful: {len(validated_output.queries)} queries")
+            query_count = len(validated_output.queries)
+            logger.info(f"Pydantic validation successful: {query_count} queries")
+            
+            # Post-generation validation: Check query quality and coverage
+            if query_count < 12:
+                logger.warning(f"QUERY GENERATION WARNING: Only {query_count} queries generated (minimum recommended: 12). This may result in incomplete KB coverage.")
+            
+            # Check for critical sections coverage
+            sections = validated_output.chunk_structure.sections if validated_output.chunk_structure else []
+            section_count = len(sections) if sections else 0
+            
+            if section_count > query_count:
+                logger.warning(f"QUERY COVERAGE WARNING: Document has {section_count} sections but only {query_count} queries. Some sections may not be covered.")
+            
+            # Log query quality metrics
+            queries_with_sections = sum(1 for q in validated_output.queries if q.section)
+            queries_with_ma_terms = sum(1 for q in validated_output.queries 
+                                       if q.query and ("IT Terms" in q.query or "Massachusetts" in q.query or "Commonwealth" in q.query))
+            
+            logger.info(f"Query quality metrics: {queries_with_sections}/{query_count} queries have section tags, {queries_with_ma_terms}/{query_count} queries include MA-specific terms")
+            
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e.errors()}")
             raise ValueError(f"Invalid response structure: {e}")
