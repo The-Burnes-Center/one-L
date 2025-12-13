@@ -96,12 +96,6 @@ Each query MUST:
 - Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
 - Not repeat the same vendor content across multiple queries
-- **CRITICAL: ALWAYS include Massachusetts context keywords in EVERY query:**
-  * For major contract sections (Termination, Indemnification, Liability, Payment, Warranties, Assignment, Confidentiality, Notice, Governing Law, Insurance, Audit): Include "Terms and Conditions" OR "Massachusetts Terms" OR "Commonwealth Terms" OR "MA Terms"
-  * For ALL queries: Include at least one of: "Massachusetts", "Commonwealth", "Massachusetts state", "MA requirements"
-  * Even for software-specific or vendor-specific sections, add Massachusetts context to ensure queries match Terms and Conditions documents
-- **Query construction strategy**: Combine vendor-specific terms + Massachusetts keywords + legal concepts
-  * Example: "software license termination" → "termination software licenses Massachusetts Terms and Conditions Commonwealth contract terms"
 
 Build queries based on:
 - Major document sections the vendor addresses 
@@ -137,10 +131,8 @@ Verification checklist:
 - ✓ Major legal concepts included when they appear in multiple sections
 - ✓ Every vendor document section represented
 - ✓ Each query contains 50-100+ unique terms
-- ✓ **CRITICAL: Every query includes Massachusetts/Commonwealth/Terms and Conditions keywords**
 - ✓ Comprehensive coverage of Massachusetts documents
 - ✓ Adapted to actual vendor document structure
-- ✓ **Pre-verification**: Before finalizing, check that each query would semantically match Massachusetts documents by including state-specific terminology
 </instructions>
 
 ### STEP 5: OUTPUT VALIDATION
