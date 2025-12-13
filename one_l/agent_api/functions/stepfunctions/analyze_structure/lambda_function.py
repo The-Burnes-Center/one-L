@@ -134,9 +134,37 @@ def lambda_handler(event, context):
         # Validate with Pydantic
         try:
             validated_output = StructureAnalysisOutput.model_validate_json(response_json)
-            logger.info(f"Pydantic validation successful: {len(validated_output.queries)} queries")
+            query_count = len(validated_output.queries)
+            logger.info(f"QUERY_GENERATION: Pydantic validation successful: {query_count} queries generated")
+            
+            # Log detailed query generation metrics for consistency tracking
+            logger.info(f"QUERY_GENERATION_METRICS: Total queries={query_count}, chunk_num={chunk_num}, total_chunks={total_chunks}")
+            
+            # Log each query for consistency analysis
+            for idx, query in enumerate(validated_output.queries):
+                query_id = query.query_id if hasattr(query, 'query_id') and query.query_id else (idx + 1)
+                section = query.section if hasattr(query, 'section') else None
+                query_text = query.query if hasattr(query, 'query') else ''
+                query_length = len(query_text) if query_text else 0
+                has_ma_terms = bool(query_text and ("IT Terms" in query_text or "Massachusetts" in query_text or "Commonwealth" in query_text))
+                
+                logger.info(f"QUERY_GENERATED: query_id={query_id}, section='{section}', length={query_length}, has_ma_terms={has_ma_terms}, preview='{query_text[:80]}...'")
+            
+            # Log query consistency metrics
+            sections = validated_output.chunk_structure.sections if validated_output.chunk_structure else []
+            section_count = len(sections) if sections else 0
+            queries_with_sections = sum(1 for q in validated_output.queries if q.section)
+            queries_with_ma_terms = sum(1 for q in validated_output.queries 
+                                       if q.query and ("IT Terms" in q.query or "Massachusetts" in q.query or "Commonwealth" in q.query))
+            
+            logger.info(f"QUERY_CONSISTENCY: sections_found={section_count}, queries_with_section_tags={queries_with_sections}/{query_count}, queries_with_ma_terms={queries_with_ma_terms}/{query_count}")
+            
+            # Log section coverage
+            if sections:
+                logger.info(f"QUERY_SECTIONS_COVERED: {', '.join(sections[:10])}{'...' if len(sections) > 10 else ''}")
+            
         except ValidationError as e:
-            logger.error(f"Pydantic validation failed: {e.errors()}")
+            logger.error(f"QUERY_GENERATION_ERROR: Pydantic validation failed: {e.errors()}")
             raise ValueError(f"Invalid response structure: {e}")
         
         # Update progress

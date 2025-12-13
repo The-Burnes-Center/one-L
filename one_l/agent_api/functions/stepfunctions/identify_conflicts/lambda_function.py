@@ -80,7 +80,38 @@ def lambda_handler(event, context):
             else:
                 # Fallback: wrap in list if it's a single dict
                 kb_results = [kb_results_raw] if isinstance(kb_results_raw, dict) else []
-            logger.info(f"Loaded KB results from S3: {kb_results_s3_key}, found {len(kb_results)} query results")
+            
+            logger.info(f"CONFLICT_DETECTION_KB_LOADED: Loaded KB results from S3: {kb_results_s3_key}, found {len(kb_results)} query results")
+            
+            # Log detailed KB results summary for conflict detection
+            queries_with_results = [r for r in kb_results if isinstance(r, dict) and r.get('results_count', 0) > 0]
+            queries_without_results = [r for r in kb_results if isinstance(r, dict) and r.get('results_count', 0) == 0]
+            total_kb_results = sum(r.get('results_count', 0) for r in kb_results if isinstance(r, dict))
+            
+            logger.info(f"CONFLICT_DETECTION_KB_SUMMARY: total_queries={len(kb_results)}, queries_with_results={len(queries_with_results)}, queries_without_results={len(queries_without_results)}, total_kb_results={total_kb_results}")
+            
+            # Log all documents available for citation
+            all_available_documents = set()
+            for r in queries_with_results:
+                for result in r.get('results', []):
+                    if isinstance(result, dict):
+                        source = result.get('source') or result.get('metadata', {}).get('source') or 'unknown'
+                        all_available_documents.add(source)
+            
+            logger.info(f"CONFLICT_DETECTION_AVAILABLE_DOCS: {len(all_available_documents)} unique documents available for citation: {sorted(list(all_available_documents))[:15]}{'...' if len(all_available_documents) > 15 else ''}")
+            
+            # Log KB query details for each query with results
+            for r in queries_with_results[:10]:  # Log first 10 queries
+                query_id = r.get('query_id', 'unknown')
+                section = r.get('section', 'N/A')
+                results_count = r.get('results_count', 0)
+                documents = set()
+                for result in r.get('results', []):
+                    if isinstance(result, dict):
+                        source = result.get('source') or result.get('metadata', {}).get('source') or 'unknown'
+                        documents.add(source)
+                logger.info(f"CONFLICT_DETECTION_KB_QUERY: query_id={query_id}, section='{section}', results={results_count}, documents={sorted(list(documents))[:3]}{'...' if len(documents) > 3 else ''}")
+            
         except Exception as e:
             logger.error(f"CRITICAL: Failed to load KB results from S3 {kb_results_s3_key}: {e}")
             raise  # Fail fast - KB results must be in S3
@@ -187,11 +218,93 @@ def lambda_handler(event, context):
         # Validate with Pydantic
         try:
             validated_output = ConflictDetectionOutput.model_validate_json(response_json)
-            logger.info(f"Pydantic validation successful: {len(validated_output.conflicts)} conflicts")
+            total_conflicts = len(validated_output.conflicts)
+            logger.info(f"CONFLICT_DETECTION_VALIDATION: Pydantic validation successful: {total_conflicts} conflicts detected")
+            
+            # Log detailed conflict analysis for consistency tracking
+            conflicts_with_docs = [c for c in validated_output.conflicts if c.source_doc != "N/A – Not tied to a specific Massachusetts clause"]
+            conflicts_without_docs = [c for c in validated_output.conflicts if c.source_doc == "N/A – Not tied to a specific Massachusetts clause"]
+            
+            citation_rate = (len(conflicts_with_docs) / total_conflicts * 100) if total_conflicts > 0 else 0
+            logger.info(f"CONFLICT_DETECTION_SUMMARY: total_conflicts={total_conflicts}, conflicts_with_docs={len(conflicts_with_docs)}, conflicts_without_docs={len(conflicts_without_docs)}, citation_rate={citation_rate:.1f}%")
+            
+            # Log conflict type distribution
+            conflict_types = {}
+            for c in validated_output.conflicts:
+                conflict_types[c.conflict_type] = conflict_types.get(c.conflict_type, 0) + 1
+            logger.info(f"CONFLICT_DETECTION_TYPES: {conflict_types}")
+            
+            # Log document citation distribution
+            doc_citations = {}
+            for c in conflicts_with_docs:
+                doc_citations[c.source_doc] = doc_citations.get(c.source_doc, 0) + 1
+            logger.info(f"CONFLICT_DETECTION_DOC_CITATIONS: {doc_citations}")
+            
+            # Log detailed analysis for conflicts WITHOUT document citations
+            logger.info(f"CONFLICT_DETECTION_NA_ANALYSIS: Analyzing {len(conflicts_without_docs)} conflicts marked as N/A")
+            for idx, conflict in enumerate(conflicts_without_docs[:10]):  # Log first 10 N/A conflicts
+                conflict_id = conflict.clarification_id
+                conflict_type = conflict.conflict_type
+                summary = conflict.summary
+                vendor_quote_preview = conflict.vendor_quote[:150] if conflict.vendor_quote else ''
+                
+                logger.info(f"CONFLICT_NA_DETAIL: conflict_id={conflict_id}, type={conflict_type}, summary='{summary}', vendor_quote='{vendor_quote_preview}...'")
+                
+                # Check if any KB queries should have matched this conflict
+                matching_queries = []
+                for kb_result in kb_results:
+                    if isinstance(kb_result, dict) and kb_result.get('results_count', 0) > 0:
+                        query_text = kb_result.get('query', '').lower()
+                        section = kb_result.get('section', '')
+                        # Check if query topic matches conflict topic
+                        conflict_keywords = [w.lower() for w in summary.split()[:5]]  # First 5 words
+                        if any(kw in query_text for kw in conflict_keywords if len(kw) > 3):
+                            matching_queries.append({
+                                'query_id': kb_result.get('query_id'),
+                                'section': section,
+                                'results_count': kb_result.get('results_count', 0),
+                                'documents': [r.get('source') or r.get('metadata', {}).get('source', 'unknown') 
+                                             for r in kb_result.get('results', [])[:3]]
+                            })
+                
+                if matching_queries:
+                    logger.warning(f"CONFLICT_NA_MISSING_CITATION: conflict_id={conflict_id}, type={conflict_type}, found {len(matching_queries)} potentially matching KB queries but marked as N/A")
+                    for mq in matching_queries[:3]:
+                        logger.warning(f"CONFLICT_NA_MATCHING_QUERY: query_id={mq['query_id']}, section='{mq['section']}', results={mq['results_count']}, documents={mq['documents']}")
+                else:
+                    logger.info(f"CONFLICT_NA_NO_MATCH: conflict_id={conflict_id}, type={conflict_type}, no matching KB queries found - correctly marked as N/A")
+            
+            # Log conflicts WITH document citations for verification
+            logger.info(f"CONFLICT_DETECTION_DOC_ANALYSIS: Analyzing {len(conflicts_with_docs)} conflicts with document citations")
+            for idx, conflict in enumerate(conflicts_with_docs[:10]):  # Log first 10 with citations
+                conflict_id = conflict.clarification_id
+                conflict_type = conflict.conflict_type
+                source_doc = conflict.source_doc
+                summary = conflict.summary
+                
+                logger.info(f"CONFLICT_DOC_DETAIL: conflict_id={conflict_id}, type={conflict_type}, source_doc='{source_doc}', summary='{summary}'")
+                
+                # Verify the cited document was actually in KB results
+                doc_found_in_kb = False
+                for kb_result in kb_results:
+                    if isinstance(kb_result, dict):
+                        for result in kb_result.get('results', []):
+                            if isinstance(result, dict):
+                                result_source = result.get('source') or result.get('metadata', {}).get('source', '')
+                                if source_doc in result_source or result_source in source_doc:
+                                    doc_found_in_kb = True
+                                    logger.info(f"CONFLICT_DOC_VERIFIED: conflict_id={conflict_id}, source_doc='{source_doc}' found in KB query {kb_result.get('query_id')} results")
+                                    break
+                        if doc_found_in_kb:
+                            break
+                
+                if not doc_found_in_kb:
+                    logger.warning(f"CONFLICT_DOC_NOT_FOUND: conflict_id={conflict_id}, source_doc='{source_doc}' not found in any KB query results - citation may be incorrect")
+            
         except ValidationError as e:
-            logger.error(f"Pydantic validation failed: {e.errors()}")
+            logger.error(f"CONFLICT_DETECTION_VALIDATION_ERROR: Pydantic validation failed: {e.errors()}")
             # Log the problematic JSON for debugging
-            logger.error(f"Problematic JSON (first 1000 chars): {response_json[:1000]}")
+            logger.error(f"CONFLICT_DETECTION_JSON_ERROR: Problematic JSON (first 1000 chars): {response_json[:1000]}")
             raise ValueError(f"Invalid response structure: {e}")
         
         # Update progress

@@ -51,7 +51,9 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
     max_results = int(max_results_raw) if max_results_raw is not None and str(max_results_raw).strip() else 50
     
     try:
-        logger.info(f"Executing KB query {query_id}: {query[:50]}...")
+        section = query_data.get('section')
+        logger.info(f"KB_QUERY_START: query_id={query_id}, section='{section}', query_length={len(query)}, max_results={max_results}, query_preview='{query[:80]}...'")
+        
         result = retrieve_from_knowledge_base(
             query=query,
             max_results=max_results,
@@ -68,6 +70,7 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
             if 'error' in result:
                 success = False
                 error = result.get('error')
+                logger.warning(f"KB_QUERY_ERROR: query_id={query_id}, section='{section}', error='{error}'")
             else:
                 results = result.get('results', [])
                 if not results and 'retrievalResults' in result:
@@ -75,8 +78,40 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
         elif isinstance(result, list):
             results = result
         
-        # Preserve section field from query_data for downstream conflict detection
-        section = query_data.get('section')
+        results_count = len(results) if results else 0
+        
+        # Log detailed KB query results for consistency tracking
+        if results_count > 0:
+            # Extract unique document sources
+            document_sources = set()
+            for r in results:
+                if isinstance(r, dict):
+                    source = r.get('source') or r.get('metadata', {}).get('source') or 'unknown'
+                    document_sources.add(source)
+            
+            logger.info(f"KB_QUERY_SUCCESS: query_id={query_id}, section='{section}', results_count={results_count}, documents_found={len(document_sources)}, documents={list(document_sources)[:5]}{'...' if len(document_sources) > 5 else ''}")
+            
+            # Log document types found
+            doc_types = {}
+            for source in document_sources:
+                if 'IT Terms' in source or 'Updated' in source:
+                    doc_types['IT_Terms'] = doc_types.get('IT_Terms', 0) + 1
+                elif 'Standard_Contract' in source or 'Standard Contract' in source:
+                    doc_types['Standard_Contract'] = doc_types.get('Standard_Contract', 0) + 1
+                elif 'RFR' in source:
+                    doc_types['RFR'] = doc_types.get('RFR', 0) + 1
+                elif source.startswith('IS.'):
+                    doc_types['IS_Standards'] = doc_types.get('IS_Standards', 0) + 1
+                elif source.startswith('ISP.'):
+                    doc_types['ISP_Policies'] = doc_types.get('ISP_Policies', 0) + 1
+                elif 'Exhibit' in source:
+                    doc_types['Exhibits'] = doc_types.get('Exhibits', 0) + 1
+                else:
+                    doc_types['Other'] = doc_types.get('Other', 0) + 1
+            
+            logger.info(f"KB_QUERY_DOC_TYPES: query_id={query_id}, section='{section}', doc_types={doc_types}")
+        else:
+            logger.warning(f"KB_QUERY_NO_RESULTS: query_id={query_id}, section='{section}', query='{query[:100]}...', reason='No KB results found for this query'")
         
         return {
             'query_id': query_id,
@@ -85,7 +120,7 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
             'results': results,
             'success': success,
             'error': error,
-            'results_count': len(results) if results else 0
+            'results_count': results_count
         }
         
     except Exception as e:
@@ -195,8 +230,36 @@ def lambda_handler(event, context):
         # Sort results by query_id to maintain order
         all_results.sort(key=lambda x: x.get('query_id', 0))
         
-        # Calculate total results count
+        # Calculate total results count and analyze query effectiveness
         total_results_count = sum(r.get('results_count', 0) for r in all_results)
+        queries_with_results = [r for r in all_results if r.get('results_count', 0) > 0]
+        queries_without_results = [r for r in all_results if r.get('results_count', 0) == 0]
+        
+        # Log comprehensive KB retrieval summary
+        query_success_rate = len(queries_with_results) / len(all_results) * 100 if all_results else 0
+        logger.info(f"KB_RETRIEVAL_SUMMARY: total_queries={len(all_results)}, queries_with_results={len(queries_with_results)}, queries_without_results={len(queries_without_results)}, success_rate={query_success_rate:.1f}%, total_kb_results={total_results_count}")
+        
+        # Log all document types found across all queries
+        all_document_sources = set()
+        for r in queries_with_results:
+            for result in r.get('results', []):
+                if isinstance(result, dict):
+                    source = result.get('source') or result.get('metadata', {}).get('source') or 'unknown'
+                    all_document_sources.add(source)
+        
+        logger.info(f"KB_RETRIEVAL_DOCUMENTS: total_unique_documents={len(all_document_sources)}, documents={sorted(list(all_document_sources))[:10]}{'...' if len(all_document_sources) > 10 else ''}")
+        
+        # Log queries with no results for debugging
+        if queries_without_results:
+            logger.warning(f"KB_RETRIEVAL_NO_RESULTS: {len(queries_without_results)} queries returned no results:")
+            for q in queries_without_results[:10]:  # Log first 10 for brevity
+                logger.warning(f"KB_QUERY_NO_RESULTS_DETAIL: query_id={q.get('query_id')}, section='{q.get('section', 'N/A')}', query='{q.get('query', '')[:100]}...'")
+            if len(queries_without_results) > 10:
+                logger.warning(f"KB_QUERY_NO_RESULTS_DETAIL: ... and {len(queries_without_results) - 10} more queries with no results")
+        
+        # Warn if success rate is low
+        if query_success_rate < 50:
+            logger.warning(f"KB_RETRIEVAL_WARNING: Low success rate ({query_success_rate:.1f}%). Consider improving query generation to include more Massachusetts-specific terminology.")
         
         # Store all results in S3 - include chunk_num to avoid overwrites when chunks run in parallel
         s3_key = f"{session_id}/kb_results/{job_id}_chunk_{chunk_num}_all_queries.json"
