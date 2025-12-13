@@ -123,7 +123,11 @@ Use these exact values in the conflict_type field:
    - Cite the EXACT document name from that query's results in source_doc field
    - Do NOT use "N/A" if a query result contains a relevant document
 
-5. After checking all queries, identify conflicts based on general MA requirements and red flag language patterns (use "N/A – Not tied to a specific Massachusetts clause" for these)
+5. **After checking all queries, scan remaining vendor text for red flag patterns NOT already identified**
+   - Scan CHARACTER-BY-CHARACTER for red flag patterns in <red_flags> section
+   - Focus on patterns missed by KB queries
+   - Use "N/A – Not tied to a specific Massachusetts clause" for source_doc
+   - Prioritize: external references, auto-renewal, non-MA governing law, effort standards, discretionary language
 
 6. Prioritize major IT Term and Conditions sections (these are covered in the pre-generated queries)
 
