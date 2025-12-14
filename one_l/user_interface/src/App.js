@@ -2505,33 +2505,95 @@ const SessionWorkspace = ({ session }) => {
 
 
       {/* Document Review Workflow */}
-      <div className="card">
-          <h2>Review Settings</h2>
-          <p style={{ marginBottom: '16px' }}>Select contract standards and generate analysis.</p>
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+      <div className="card" style={{
+        background: 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
+        border: '1px solid #e2e8f0',
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        borderRadius: '16px',
+        overflow: 'hidden'
+      }}>
+        <div style={{ 
+          paddingBottom: '8px',
+          borderBottom: '2px solid #e2e8f0',
+          marginBottom: '24px'
+        }}>
+          <h2 style={{ 
+            margin: '0 0 8px 0',
+            fontSize: '28px',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}>Review Settings</h2>
+          <p style={{ 
+            margin: 0,
+            fontSize: '15px',
+            color: '#64748b',
+            fontWeight: 400
+          }}>Select contract standards and generate analysis.</p>
+        </div>
         <div
           style={{
-            margin: '16px 0',
-            padding: '18px 20px',
-            background: '#eef2f7',
+            margin: '0',
+            padding: '24px',
+            background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
             borderRadius: '12px',
-            border: '1px solid #d1dae7',
-            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
+            border: '2px solid #bae6fd',
+            boxShadow: '0 2px 8px rgba(37, 99, 235, 0.08)',
+            position: 'relative',
+            overflow: 'hidden'
           }}
         >
-          <div style={{ marginBottom: '16px' }}>
+          {/* Decorative accent */}
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '4px',
+            background: 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #93c5fd 100%)'
+          }} />
+          
+          <div>
             <label
               htmlFor="terms-profile-select"
               style={{
-                display: 'block',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
                 fontWeight: 600,
-                fontSize: '16px',
-                color: '#0b1f33',
-                marginBottom: '8px'
+                fontSize: '17px',
+                color: '#1e3a8a',
+                marginBottom: '10px'
               }}
             >
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '24px',
+                height: '24px',
+                borderRadius: '6px',
+                background: 'linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%)',
+                color: 'white',
+                fontSize: '14px',
+                fontWeight: 700
+              }}>📋</span>
               Select Terms &amp; Conditions Profile
             </label>
-            <div style={{ fontSize: '13px', color: '#4b5a6b', marginBottom: '12px', lineHeight: 1.5 }}>
+            <div style={{ 
+              fontSize: '14px', 
+              color: '#475569', 
+              marginBottom: '16px', 
+              lineHeight: 1.6,
+              paddingLeft: '32px'
+            }}>
               Choose the contract standard the AI should follow before generating redlines.
             </div>
             <select
@@ -2542,31 +2604,46 @@ const SessionWorkspace = ({ session }) => {
               style={{
                 width: '100%',
                 maxWidth: '500px',
-                padding: '10px 14px',
+                padding: '14px 16px',
                 fontSize: '15px',
                 fontWeight: 500,
-                color: '#1a2c44',
+                color: '#1e293b',
                 backgroundColor: '#ffffff',
-                border: '1px solid #ccd6e3',
-                borderRadius: '8px',
+                border: '2px solid #cbd5e1',
+                borderRadius: '10px',
                 cursor: generating ? 'not-allowed' : 'pointer',
                 outline: 'none',
-                transition: 'all 0.2s ease',
-                opacity: generating ? 0.72 : 1,
-                boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
+                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                opacity: generating ? 0.6 : 1,
+                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
                 appearance: 'none',
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%234b5a6b' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath fill='%233b82f6' d='M7 10L2 5h10z'/%3E%3C/svg%3E")`,
                 backgroundRepeat: 'no-repeat',
-                backgroundPosition: 'right 14px center',
-                paddingRight: '40px'
+                backgroundPosition: 'right 16px center',
+                paddingRight: '44px',
+                fontFamily: 'inherit'
               }}
               onFocus={(e) => {
-                e.target.style.borderColor = '#2563eb';
-                e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                e.target.style.borderColor = '#3b82f6';
+                e.target.style.boxShadow = '0 0 0 4px rgba(59, 130, 246, 0.12), 0 4px 6px rgba(0, 0, 0, 0.1)';
+                e.target.style.transform = 'translateY(-1px)';
               }}
               onBlur={(e) => {
-                e.target.style.borderColor = '#ccd6e3';
-                e.target.style.boxShadow = '0 1px 3px rgba(15, 23, 42, 0.08)';
+                e.target.style.borderColor = '#cbd5e1';
+                e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
+                e.target.style.transform = 'translateY(0)';
+              }}
+              onMouseEnter={(e) => {
+                if (!generating) {
+                  e.target.style.borderColor = '#93c5fd';
+                  e.target.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.08)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!e.target.matches(':focus')) {
+                  e.target.style.borderColor = '#cbd5e1';
+                  e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
+                }
               }}
             >
               {termsProfileOptions.map(option => (
@@ -2578,20 +2655,40 @@ const SessionWorkspace = ({ session }) => {
             {activeTermsProfileOption && (
               <div
                 style={{
-                  fontSize: '13px',
-                  color: '#4b5a6b',
-                  marginTop: '8px',
-                  padding: '8px 12px',
-                  backgroundColor: '#f8fafc',
-                  borderRadius: '6px',
-                  border: '1px solid #e2e8f0',
-                  display: 'inline-block'
+                  fontSize: '14px',
+                  color: '#1e293b',
+                  marginTop: '12px',
+                  padding: '12px 16px',
+                  backgroundColor: '#ffffff',
+                  borderRadius: '10px',
+                  border: '2px solid #dbeafe',
+                  display: 'inline-block',
+                  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.04)',
+                  maxWidth: '500px',
+                  width: '100%'
                 }}
               >
-                <span style={{ fontWeight: 500 }}>Selected: </span>
-                {activeTermsProfileOption.label}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <span style={{ 
+                    display: 'inline-flex',
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #10b981 0%, #34d399 100%)',
+                    boxShadow: '0 0 0 2px rgba(16, 185, 129, 0.2)'
+                  }} />
+                  <span style={{ fontWeight: 600, color: '#059669' }}>Selected: </span>
+                  <span style={{ fontWeight: 600, color: '#1e3a8a' }}>{activeTermsProfileOption.label}</span>
+                </div>
                 {activeTermsProfileOption.description && (
-                  <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
+                  <span style={{ 
+                    display: 'block', 
+                    marginTop: '6px', 
+                    fontSize: '13px', 
+                    color: '#64748b',
+                    lineHeight: 1.5,
+                    paddingLeft: '16px'
+                  }}>
                     {activeTermsProfileOption.description}
                   </span>
                 )}
@@ -2599,36 +2696,88 @@ const SessionWorkspace = ({ session }) => {
             )}
           </div>
           {termsProfileError && (
-            <div className="alert alert-error" style={{ marginTop: '14px' }}>
+            <div className="alert alert-error" style={{ marginTop: '16px', borderRadius: '10px' }}>
               {termsProfileError}
             </div>
           )}
         </div>
         
-
-        
         {/* Generate Button */}
-        <div style={{ marginTop: '20px' }}>
+        <div style={{ marginTop: '28px' }}>
           <button
             onClick={handleGenerateRedline}
             disabled={!canGenerateRedline || generating}
             className="btn"
             style={{
               width: '100%',
-              padding: '12px 24px',
-              fontSize: '14px',
-              opacity: (!canGenerateRedline || generating) ? 0.6 : 1
+              padding: '16px 32px',
+              fontSize: '16px',
+              fontWeight: 600,
+              background: (!canGenerateRedline || generating) 
+                ? 'linear-gradient(135deg, #94a3b8 0%, #cbd5e1 100%)'
+                : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '12px',
+              cursor: (!canGenerateRedline || generating) ? 'not-allowed' : 'pointer',
+              boxShadow: (!canGenerateRedline || generating)
+                ? '0 2px 4px rgba(0, 0, 0, 0.1)'
+                : '0 4px 12px rgba(59, 130, 246, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1)',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              opacity: (!canGenerateRedline || generating) ? 0.7 : 1,
+              position: 'relative',
+              overflow: 'hidden'
+            }}
+            onMouseEnter={(e) => {
+              if (canGenerateRedline && !generating) {
+                e.target.style.transform = 'translateY(-2px)';
+                e.target.style.boxShadow = '0 6px 16px rgba(59, 130, 246, 0.5), 0 4px 6px rgba(0, 0, 0, 0.1)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (canGenerateRedline && !generating) {
+                e.target.style.transform = 'translateY(0)';
+                e.target.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1)';
+              }
+            }}
+            onMouseDown={(e) => {
+              if (canGenerateRedline && !generating) {
+                e.target.style.transform = 'translateY(0)';
+              }
             }}
           >
-            {generating ? 'Processing...' : 'Generate Redlined Document'}
+            {generating ? (
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <span style={{
+                  width: '16px',
+                  height: '16px',
+                  border: '2px solid rgba(255, 255, 255, 0.3)',
+                  borderTopColor: '#ffffff',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                  display: 'inline-block'
+                }} />
+                Processing...
+              </span>
+            ) : (
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '18px' }}>✨</span>
+                Generate Redlined Document
+              </span>
+            )}
           </button>
           {!canGenerateRedline && !generating && (
             <p style={{ 
-              marginTop: '8px', 
-              fontSize: '12px', 
+              marginTop: '12px', 
+              fontSize: '13px', 
               color: '#64748b',
-              textAlign: 'center'
+              textAlign: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
             }}>
+              <span>📄</span>
               Upload both vendor submission and reference documents to enable analysis
             </p>
           )}
