@@ -2564,136 +2564,111 @@ const SessionWorkspace = ({ session }) => {
             <label
               htmlFor="terms-profile-select"
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
+                display: 'block',
                 fontWeight: 600,
-                fontSize: '17px',
-                color: '#1e3a8a',
-                marginBottom: '10px'
+                fontSize: '16px',
+                color: '#1e293b',
+                marginBottom: '8px'
               }}
             >
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '24px',
-                height: '24px',
-                borderRadius: '6px',
-                background: 'linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%)',
-                color: 'white',
-                fontSize: '14px',
-                fontWeight: 700
-              }}>📋</span>
               Select Terms &amp; Conditions Profile
             </label>
             <div style={{ 
               fontSize: '14px', 
               color: '#475569', 
               marginBottom: '16px', 
-              lineHeight: 1.6,
-              paddingLeft: '32px'
+              lineHeight: 1.6
             }}>
               Choose the contract standard the AI should follow before generating redlines.
             </div>
-            <select
-              id="terms-profile-select"
-              value={normalizedTermsProfile}
-              onChange={(e) => handleTermsProfileSelection(e.target.value)}
-              disabled={generating}
-              style={{
-                width: '100%',
-                maxWidth: '500px',
-                padding: '14px 16px',
-                fontSize: '15px',
-                fontWeight: 500,
-                color: '#1e293b',
-                backgroundColor: '#ffffff',
-                border: '2px solid #cbd5e1',
-                borderRadius: '10px',
-                cursor: generating ? 'not-allowed' : 'pointer',
-                outline: 'none',
-                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                opacity: generating ? 0.6 : 1,
-                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                appearance: 'none',
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath fill='%233b82f6' d='M7 10L2 5h10z'/%3E%3C/svg%3E")`,
-                backgroundRepeat: 'no-repeat',
-                backgroundPosition: 'right 16px center',
-                paddingRight: '44px',
-                fontFamily: 'inherit'
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = '#3b82f6';
-                e.target.style.boxShadow = '0 0 0 4px rgba(59, 130, 246, 0.12), 0 4px 6px rgba(0, 0, 0, 0.1)';
-                e.target.style.transform = 'translateY(-1px)';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = '#cbd5e1';
-                e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
-                e.target.style.transform = 'translateY(0)';
-              }}
-              onMouseEnter={(e) => {
-                if (!generating) {
-                  e.target.style.borderColor = '#93c5fd';
-                  e.target.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.08)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!e.target.matches(':focus')) {
-                  e.target.style.borderColor = '#cbd5e1';
-                  e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.05)';
-                }
-              }}
-            >
-              {termsProfileOptions.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            {activeTermsProfileOption && (
-              <div
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+              <select
+                id="terms-profile-select"
+                value={normalizedTermsProfile}
+                onChange={(e) => handleTermsProfileSelection(e.target.value)}
+                disabled={generating}
                 style={{
-                  fontSize: '14px',
+                  flex: '1',
+                  minWidth: '280px',
+                  maxWidth: '400px',
+                  padding: '14px 16px',
+                  fontSize: '15px',
+                  fontWeight: 500,
                   color: '#1e293b',
-                  marginTop: '12px',
-                  padding: '12px 16px',
                   backgroundColor: '#ffffff',
-                  borderRadius: '10px',
-                  border: '2px solid #dbeafe',
-                  display: 'inline-block',
-                  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.04)',
-                  maxWidth: '500px',
-                  width: '100%'
+                  border: '2px solid #cbd5e1',
+                  borderRadius: '8px',
+                  cursor: generating ? 'not-allowed' : 'pointer',
+                  outline: 'none',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  opacity: generating ? 0.6 : 1,
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+                  appearance: 'none',
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath fill='%23475569' d='M7 10L2 5h10z'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'right 16px center',
+                  paddingRight: '44px',
+                  fontFamily: 'inherit'
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = '#3b82f6';
+                  e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1), 0 2px 4px rgba(0, 0, 0, 0.08)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#cbd5e1';
+                  e.target.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.08)';
+                }}
+                onMouseEnter={(e) => {
+                  if (!generating) {
+                    e.target.style.borderColor = '#94a3b8';
+                    e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!e.target.matches(':focus')) {
+                    e.target.style.borderColor = '#cbd5e1';
+                    e.target.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.08)';
+                  }
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                  <span style={{ 
-                    display: 'inline-flex',
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #10b981 0%, #34d399 100%)',
-                    boxShadow: '0 0 0 2px rgba(16, 185, 129, 0.2)'
-                  }} />
-                  <span style={{ fontWeight: 600, color: '#059669' }}>Selected: </span>
-                  <span style={{ fontWeight: 600, color: '#1e3a8a' }}>{activeTermsProfileOption.label}</span>
+                {termsProfileOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {activeTermsProfileOption && (
+                <div
+                  style={{
+                    flex: '1',
+                    minWidth: '280px',
+                    maxWidth: '400px',
+                    fontSize: '14px',
+                    color: '#1e293b',
+                    padding: '14px 16px',
+                    backgroundColor: '#f8fafc',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 600, color: '#475569', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Selected: </span>
+                    <span style={{ fontWeight: 600, color: '#1e293b', marginLeft: '6px' }}>{activeTermsProfileOption.label}</span>
+                  </div>
+                  {activeTermsProfileOption.description && (
+                    <div style={{ 
+                      marginTop: '6px', 
+                      fontSize: '13px', 
+                      color: '#64748b',
+                      lineHeight: 1.5
+                    }}>
+                      {activeTermsProfileOption.description}
+                    </div>
+                  )}
                 </div>
-                {activeTermsProfileOption.description && (
-                  <span style={{ 
-                    display: 'block', 
-                    marginTop: '6px', 
-                    fontSize: '13px', 
-                    color: '#64748b',
-                    lineHeight: 1.5,
-                    paddingLeft: '16px'
-                  }}>
-                    {activeTermsProfileOption.description}
-                  </span>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </div>
           {termsProfileError && (
             <div className="alert alert-error" style={{ marginTop: '16px', borderRadius: '10px' }}>
@@ -2760,10 +2735,7 @@ const SessionWorkspace = ({ session }) => {
                 Processing...
               </span>
             ) : (
-              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '18px' }}>✨</span>
-                Generate Redlined Document
-              </span>
+              <span>Generate Redlined Document</span>
             )}
           </button>
           {!canGenerateRedline && !generating && (
