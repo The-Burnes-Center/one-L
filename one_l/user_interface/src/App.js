@@ -2006,7 +2006,6 @@ const SessionWorkspace = ({ session }) => {
         window.progressInterval = null;
       }
       // Error handling - log errors but don't block processing based on terms profile
-      const errorMessage = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
       setTermsProfileError(error.message);
       if (isCurrentSession()) {
         setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
