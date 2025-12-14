@@ -45,7 +45,7 @@ def lambda_handler(event, context):
         bucket_type = body.get('bucket_type', 'agent_processing')
         session_id = body.get('session_id')
         user_id = body.get('user_id')
-        terms_profile = body.get('terms_profile', 'it')
+        terms_profile = body.get('terms_profile', 'it_terms_updated')
         
         # Validate required fields
         if not document_s3_key:

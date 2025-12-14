@@ -91,6 +91,9 @@ class AgentApiConstruct(Construct):
             agent_processing_bucket=self.storage.agent_processing_bucket,  # Pass agent processing bucket directly
             knowledge_base_id="placeholder",  # Will be updated after knowledge base creation
             opensearch_collection=self.opensearch.collection,
+            general_terms_bucket=self.storage.general_terms_bucket,
+            it_terms_updated_bucket=self.storage.it_terms_updated_bucket,
+            it_terms_old_bucket=self.storage.it_terms_old_bucket,
             authorization=self.authorization  # Pass authorization construct for Cognito access
         )
         
@@ -105,6 +108,9 @@ class AgentApiConstruct(Construct):
             knowledge_bucket=self.storage.knowledge_bucket,
             user_documents_bucket=self.storage.user_documents_bucket,
             knowledge_base_role=self.knowledge_base_role,
+            general_terms_bucket=self.storage.general_terms_bucket,
+            it_terms_updated_bucket=self.storage.it_terms_updated_bucket,
+            it_terms_old_bucket=self.storage.it_terms_old_bucket,
             vector_index_dependency=self.functions.knowledge_management.get_create_index_dependency()
         )
         

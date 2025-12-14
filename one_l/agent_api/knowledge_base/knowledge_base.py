@@ -29,6 +29,9 @@ class KnowledgeBaseConstruct(Construct):
         knowledge_bucket: s3.Bucket,
         user_documents_bucket: s3.Bucket,
         knowledge_base_role: iam.Role,
+        general_terms_bucket: s3.Bucket = None,
+        it_terms_updated_bucket: s3.Bucket = None,
+        it_terms_old_bucket: s3.Bucket = None,
         vector_index_dependency=None,
         **kwargs
     ) -> None:
@@ -38,6 +41,9 @@ class KnowledgeBaseConstruct(Construct):
         self.opensearch_collection = opensearch_collection
         self.knowledge_bucket = knowledge_bucket
         self.user_documents_bucket = user_documents_bucket
+        self.general_terms_bucket = general_terms_bucket
+        self.it_terms_updated_bucket = it_terms_updated_bucket
+        self.it_terms_old_bucket = it_terms_old_bucket
         self.knowledge_base_role = knowledge_base_role
         self.vector_index_dependency = vector_index_dependency
         
@@ -49,6 +55,9 @@ class KnowledgeBaseConstruct(Construct):
         self.knowledge_base = None
         self.knowledge_data_source = None
         self.user_documents_data_source = None
+        self.general_terms_data_source = None
+        self.it_terms_updated_data_source = None
+        self.it_terms_old_data_source = None
         
         # Create knowledge base infrastructure
         self.configure_knowledge_base_role()
@@ -62,6 +71,14 @@ class KnowledgeBaseConstruct(Construct):
         # Grant access to S3 buckets
         self.knowledge_bucket.grant_read(self.knowledge_base_role)
         self.user_documents_bucket.grant_read(self.knowledge_base_role)
+        
+        # Grant access to terms buckets if they exist
+        if self.general_terms_bucket:
+            self.general_terms_bucket.grant_read(self.knowledge_base_role)
+        if self.it_terms_updated_bucket:
+            self.it_terms_updated_bucket.grant_read(self.knowledge_base_role)
+        if self.it_terms_old_bucket:
+            self.it_terms_old_bucket.grant_read(self.knowledge_base_role)
         
         # Grant access to OpenSearch Serverless collection
         self.knowledge_base_role.add_to_policy(
@@ -198,9 +215,100 @@ class KnowledgeBaseConstruct(Construct):
             )
         )
         
+        # Data sources for terms and conditions buckets
+        if self.general_terms_bucket:
+            self.general_terms_data_source = bedrock.CfnDataSource(
+                self, "GeneralTermsDataSource",
+                name=f"{self._stack_name}-general-terms-data-source",
+                description="General Terms and Conditions bucket data source",
+                knowledge_base_id=self.knowledge_base.attr_knowledge_base_id,
+                
+                # Data source configuration for general terms bucket
+                data_source_configuration=bedrock.CfnDataSource.DataSourceConfigurationProperty(
+                    type="S3",
+                    s3_configuration=bedrock.CfnDataSource.S3DataSourceConfigurationProperty(
+                        bucket_arn=self.general_terms_bucket.bucket_arn,
+                        bucket_owner_account_id=Stack.of(self).account
+                    )
+                ),
+                
+                # Vector ingestion configuration
+                vector_ingestion_configuration=bedrock.CfnDataSource.VectorIngestionConfigurationProperty(
+                    chunking_configuration=bedrock.CfnDataSource.ChunkingConfigurationProperty(
+                        chunking_strategy="FIXED_SIZE",
+                        fixed_size_chunking_configuration=bedrock.CfnDataSource.FixedSizeChunkingConfigurationProperty(
+                            max_tokens=300,
+                            overlap_percentage=20
+                        )
+                    )
+                )
+            )
+        
+        if self.it_terms_updated_bucket:
+            self.it_terms_updated_data_source = bedrock.CfnDataSource(
+                self, "ITTermsUpdatedDataSource",
+                name=f"{self._stack_name}-it-terms-updated-data-source",
+                description="IT Terms and Conditions Updated bucket data source",
+                knowledge_base_id=self.knowledge_base.attr_knowledge_base_id,
+                
+                # Data source configuration for IT terms updated bucket
+                data_source_configuration=bedrock.CfnDataSource.DataSourceConfigurationProperty(
+                    type="S3",
+                    s3_configuration=bedrock.CfnDataSource.S3DataSourceConfigurationProperty(
+                        bucket_arn=self.it_terms_updated_bucket.bucket_arn,
+                        bucket_owner_account_id=Stack.of(self).account
+                    )
+                ),
+                
+                # Vector ingestion configuration
+                vector_ingestion_configuration=bedrock.CfnDataSource.VectorIngestionConfigurationProperty(
+                    chunking_configuration=bedrock.CfnDataSource.ChunkingConfigurationProperty(
+                        chunking_strategy="FIXED_SIZE",
+                        fixed_size_chunking_configuration=bedrock.CfnDataSource.FixedSizeChunkingConfigurationProperty(
+                            max_tokens=300,
+                            overlap_percentage=20
+                        )
+                    )
+                )
+            )
+        
+        if self.it_terms_old_bucket:
+            self.it_terms_old_data_source = bedrock.CfnDataSource(
+                self, "ITTermsOldDataSource",
+                name=f"{self._stack_name}-it-terms-old-data-source",
+                description="IT Terms and Conditions Old bucket data source",
+                knowledge_base_id=self.knowledge_base.attr_knowledge_base_id,
+                
+                # Data source configuration for IT terms old bucket
+                data_source_configuration=bedrock.CfnDataSource.DataSourceConfigurationProperty(
+                    type="S3",
+                    s3_configuration=bedrock.CfnDataSource.S3DataSourceConfigurationProperty(
+                        bucket_arn=self.it_terms_old_bucket.bucket_arn,
+                        bucket_owner_account_id=Stack.of(self).account
+                    )
+                ),
+                
+                # Vector ingestion configuration
+                vector_ingestion_configuration=bedrock.CfnDataSource.VectorIngestionConfigurationProperty(
+                    chunking_configuration=bedrock.CfnDataSource.ChunkingConfigurationProperty(
+                        chunking_strategy="FIXED_SIZE",
+                        fixed_size_chunking_configuration=bedrock.CfnDataSource.FixedSizeChunkingConfigurationProperty(
+                            max_tokens=300,
+                            overlap_percentage=20
+                        )
+                    )
+                )
+            )
+        
         # Ensure data sources are created after Knowledge Base
         self.knowledge_data_source.add_dependency(self.knowledge_base)
         self.user_documents_data_source.add_dependency(self.knowledge_base)
+        if self.general_terms_data_source:
+            self.general_terms_data_source.add_dependency(self.knowledge_base)
+        if self.it_terms_updated_data_source:
+            self.it_terms_updated_data_source.add_dependency(self.knowledge_base)
+        if self.it_terms_old_data_source:
+            self.it_terms_old_data_source.add_dependency(self.knowledge_base)
     
     def create_outputs(self):
         """Create CloudFormation outputs."""
@@ -220,4 +328,16 @@ class KnowledgeBaseConstruct(Construct):
     
     def get_user_documents_data_source_id(self) -> str:
         """Get the User Documents Bucket Data Source ID."""
-        return self.user_documents_data_source.attr_data_source_id 
+        return self.user_documents_data_source.attr_data_source_id
+    
+    def get_general_terms_data_source_id(self) -> str:
+        """Get the General Terms Bucket Data Source ID."""
+        return self.general_terms_data_source.attr_data_source_id if self.general_terms_data_source else None
+    
+    def get_it_terms_updated_data_source_id(self) -> str:
+        """Get the IT Terms Updated Bucket Data Source ID."""
+        return self.it_terms_updated_data_source.attr_data_source_id if self.it_terms_updated_data_source else None
+    
+    def get_it_terms_old_data_source_id(self) -> str:
+        """Get the IT Terms Old Bucket Data Source ID."""
+        return self.it_terms_old_data_source.attr_data_source_id if self.it_terms_old_data_source else None 

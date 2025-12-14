@@ -23,6 +23,8 @@ const KnowledgeUpload = () => {
   });
   const [hasMore, setHasMore] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState(null);
+  const [selectedTermsBucket, setSelectedTermsBucket] = useState(null); // null, 'general_terms', 'it_terms_updated', or 'it_terms_old'
+  const [syncingTermsBucket, setSyncingTermsBucket] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (event) => {
@@ -292,6 +294,81 @@ const KnowledgeUpload = () => {
           {message}
         </div>
       )}
+
+      {/* Terms & Conditions Bucket Management */}
+      <div className="card" style={{ marginTop: '2rem' }}>
+        <h2>Terms & Conditions Bucket Management</h2>
+        <p>Select which Terms & Conditions bucket to sync to the knowledge base. Each bucket can contain different versions of terms and conditions documents.</p>
+        
+        <div className="form-group">
+          <label className="form-label">
+            Select Terms & Conditions Bucket
+          </label>
+          <select
+            className="form-control"
+            value={selectedTermsBucket || ''}
+            onChange={(e) => setSelectedTermsBucket(e.target.value || null)}
+            disabled={syncingTermsBucket}
+          >
+            <option value="">-- Select a bucket --</option>
+            <option value="general_terms">General Terms & Conditions</option>
+            <option value="it_terms_updated">IT Terms & Conditions (Updated)</option>
+            <option value="it_terms_old">IT Terms & Conditions (Old)</option>
+          </select>
+        </div>
+
+        <div className="form-group">
+          <button
+            onClick={async () => {
+              if (!selectedTermsBucket) {
+                setMessage('Please select a Terms & Conditions bucket first.');
+                setMessageType('error');
+                return;
+              }
+
+              setSyncingTermsBucket(true);
+              const bucketDisplayName = {
+                'general_terms': 'General Terms & Conditions',
+                'it_terms_updated': 'IT Terms & Conditions (Updated)',
+                'it_terms_old': 'IT Terms & Conditions (Old)'
+              }[selectedTermsBucket] || selectedTermsBucket;
+              
+              setMessage(`Syncing ${bucketDisplayName} to knowledge base...`);
+              setMessageType('');
+
+              try {
+                const syncResponse = await knowledgeManagementAPI.syncKnowledgeBase('terms', 'start_sync', selectedTermsBucket);
+                
+                const syncResponseData = typeof syncResponse.body === 'string' 
+                  ? JSON.parse(syncResponse.body) 
+                  : syncResponse.body || syncResponse;
+                
+                if (syncResponseData.successful_count > 0) {
+                  setMessage(`Successfully started sync for ${bucketDisplayName}!`);
+                  setMessageType('success');
+                } else {
+                  setMessage(`Failed to start sync for ${bucketDisplayName}. Please check the logs.`);
+                  setMessageType('error');
+                }
+              } catch (syncError) {
+                console.error('Terms bucket sync error:', syncError);
+                setMessage(`Failed to sync ${bucketDisplayName}: ${syncError.message}`);
+                setMessageType('error');
+              } finally {
+                setSyncingTermsBucket(false);
+              }
+            }}
+            disabled={syncingTermsBucket || !selectedTermsBucket}
+            className="btn btn-primary"
+          >
+            {syncingTermsBucket ? 'Syncing...' : `Sync ${selectedTermsBucket ? {
+              'general_terms': 'General Terms',
+              'it_terms_updated': 'IT Terms (Updated)',
+              'it_terms_old': 'IT Terms (Old)'
+            }[selectedTermsBucket] || selectedTermsBucket : 'Selected Bucket'} to Knowledge Base`}
+          </button>
+        </div>
+      </div>
 
       <div className="knowledge-list-section">
         <div className="section-header">

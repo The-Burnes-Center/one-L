@@ -296,12 +296,19 @@ const knowledgeManagementAPI = {
   
   /**
    * Sync Knowledge Base (trigger manual ingestion)
+   * @param {string} dataSource - Data source to sync: 'all', 'knowledge', 'user_documents', or 'terms'
+   * @param {string} action - Action to perform: 'start_sync', 'get_sync_status', 'list_sync_jobs'
+   * @param {string} termsBucket - Optional: '1', '2', or '3' to specify which terms bucket to sync
    */
-  syncKnowledgeBase: async (dataSource = 'all', action = 'start_sync') => {
+  syncKnowledgeBase: async (dataSource = 'all', action = 'start_sync', termsBucket = null) => {
     const payload = {
       action: action,
       data_source: dataSource
     };
+    
+    if (termsBucket) {
+      payload.terms_bucket = termsBucket;
+    }
     
     return await apiCall('/knowledge_management/sync', {
       method: 'POST',

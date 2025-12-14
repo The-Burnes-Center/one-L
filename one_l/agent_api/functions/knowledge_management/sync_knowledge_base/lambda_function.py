@@ -83,9 +83,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         # Extract parameters from parsed body
         action = body_data.get('action', 'start_sync')
-        data_source = body_data.get('data_source', 'all')  # all, knowledge, or user_documents
+        data_source = body_data.get('data_source', 'all')  # all, knowledge, user_documents, or terms
+        terms_bucket = body_data.get('terms_bucket')  # Optional: 'general_terms', 'it_terms_updated', or 'it_terms_old'
         
-        logger.info(f"Parsed parameters - action: {action}, data_source: {data_source}")
+        logger.info(f"Parsed parameters - action: {action}, data_source: {data_source}, terms_bucket: {terms_bucket}")
         
         # Get Knowledge Base ID from environment
         knowledge_base_id = os.environ.get('KNOWLEDGE_BASE_ID')
@@ -101,7 +102,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         # Process based on action
         if action == "start_sync":
-            return start_sync_job(knowledge_base_id, data_source)
+            return start_sync_job(knowledge_base_id, data_source, terms_bucket)
         elif action == "get_sync_status":
             job_id = body_data.get('job_id')
             if not job_id:
@@ -154,6 +155,7 @@ def handle_s3_event(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Determine data source based on bucket and object key
         data_source = "user_documents"  # Default
+        terms_bucket = None
         for record in event.get('Records', []):
             if record.get('eventName', '').startswith('ObjectCreated:'):
                 bucket_name = record['s3']['bucket']['name']
@@ -164,11 +166,20 @@ def handle_s3_event(event: Dict[str, Any]) -> Dict[str, Any]:
                     data_source = "knowledge"
                 elif 'user-documents' in bucket_name.lower() or object_key.startswith('uploads/'):
                     data_source = "user_documents"
+                elif 'general-terms' in bucket_name.lower():
+                    data_source = "terms"
+                    terms_bucket = "general_terms"
+                elif 'it-terms-updated' in bucket_name.lower():
+                    data_source = "terms"
+                    terms_bucket = "it_terms_updated"
+                elif 'it-terms-old' in bucket_name.lower():
+                    data_source = "terms"
+                    terms_bucket = "it_terms_old"
                 
                 break  # Use the first record to determine the data source
         
         # Start sync job for the determined data source
-        sync_result = start_sync_job(knowledge_base_id, data_source)
+        sync_result = start_sync_job(knowledge_base_id, data_source, terms_bucket)
         
         # Add S3 event context to response
         if sync_result['statusCode'] == 200:
@@ -185,7 +196,121 @@ def handle_s3_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return create_error_response(500, f"Error handling S3 event: {str(e)}")
 
 
-def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all") -> Dict[str, Any]:
+def delete_documents_from_data_source(knowledge_base_id: str, data_source_id: str, data_source_name: str) -> Dict[str, Any]:
+    """Delete all documents from a specific data source in the knowledge base."""
+    try:
+        logger.info(f"Listing documents from data source: {data_source_name} ({data_source_id})")
+        
+        # List all documents from this data source
+        document_identifiers = []
+        try:
+            paginator = bedrock_client.get_paginator('list_knowledge_base_documents')
+            
+            for page in paginator.paginate(
+                knowledgeBaseId=knowledge_base_id,
+                dataSourceId=data_source_id,
+                maxResults=100
+            ):
+                for doc in page.get('documentDetails', []):
+                    # Extract document identifier - for S3 data sources, documentId is the S3 URI
+                    doc_id = doc.get('documentId', '')
+                    doc_name = doc.get('name', '')
+                    
+                    if doc_id:
+                        # For S3 data sources, documentId is typically the S3 URI (s3://bucket/key)
+                        # If it's not already a URI, we'll try using it as-is since Bedrock may handle it
+                        if doc_id.startswith('s3://'):
+                            s3_uri = doc_id
+                        else:
+                            # If documentId is not a URI, construct it from the document name or use as-is
+                            # Bedrock may accept documentId directly
+                            s3_uri = doc_id
+                        
+                        document_identifiers.append({
+                            'dataSourceType': 'S3',
+                            's3': {
+                                'uri': s3_uri
+                            }
+                        })
+        except Exception as list_error:
+            # If listing fails, log and return - might be no documents or API issue
+            logger.warning(f"Could not list documents from {data_source_name}: {str(list_error)}")
+            # Check if it's because there are no documents
+            if "not found" in str(list_error).lower() or "empty" in str(list_error).lower():
+                return {
+                    'success': True,
+                    'deleted_count': 0,
+                    'message': f'No documents found in {data_source_name}'
+                }
+            # Otherwise, return error
+            return {
+                'success': False,
+                'error': f'Failed to list documents: {str(list_error)}',
+                'deleted_count': 0
+            }
+        
+        if not document_identifiers:
+            logger.info(f"No documents found in data source {data_source_name} to delete")
+            return {
+                'success': True,
+                'deleted_count': 0,
+                'message': f'No documents found in {data_source_name}'
+            }
+        
+        logger.info(f"Found {len(document_identifiers)} documents to delete from {data_source_name}")
+        
+        # Delete documents in batches (Bedrock may have limits on batch size)
+        batch_size = 100
+        total_deleted = 0
+        failed_deletions = []
+        
+        for i in range(0, len(document_identifiers), batch_size):
+            batch = document_identifiers[i:i + batch_size]
+            try:
+                delete_response = bedrock_client.delete_knowledge_base_documents(
+                    knowledgeBaseId=knowledge_base_id,
+                    dataSourceId=data_source_id,
+                    documentIdentifiers=batch
+                )
+                
+                # Check for failed documents
+                failed_docs = delete_response.get('failedDocuments', [])
+                successful_deletions = len(batch) - len(failed_docs)
+                total_deleted += successful_deletions
+                
+                if failed_docs:
+                    failed_deletions.extend(failed_docs)
+                    logger.warning(f"Batch {i//batch_size + 1}: {len(failed_docs)} documents failed to delete")
+                
+                logger.info(f"Deleted batch {i//batch_size + 1}: {successful_deletions} successful, {len(failed_docs)} failed")
+                
+            except Exception as e:
+                logger.error(f"Error deleting batch from {data_source_name}: {str(e)}")
+                # Continue with other batches even if one fails
+                failed_deletions.extend(batch)
+        
+        if failed_deletions:
+            logger.warning(f"Some deletions failed: {len(failed_deletions)} documents could not be deleted")
+        
+        logger.info(f"Successfully deleted {total_deleted} documents from {data_source_name}")
+        return {
+            'success': True,
+            'deleted_count': total_deleted,
+            'failed_count': len(failed_deletions),
+            'message': f'Deleted {total_deleted} documents from {data_source_name}',
+            'failed_documents': failed_deletions if failed_deletions else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting documents from {data_source_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'deleted_count': 0
+        }
+
+
+def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all", terms_bucket: str = None) -> Dict[str, Any]:
     """Start new ingestion jobs for the specified data sources."""
     try:
         # Get all data sources
@@ -196,16 +321,77 @@ def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all") -> D
         if not data_sources_response['dataSourceSummaries']:
             return create_error_response(404, "No data sources found for Knowledge Base")
         
+        # Map terms bucket names to data source name patterns
+        terms_bucket_patterns = {
+            'general_terms': ['general-terms', 'general_terms'],
+            'it_terms_updated': ['it-terms-updated', 'it_terms_updated'],
+            'it_terms_old': ['it-terms-old', 'it_terms_old']
+        }
+        
+        # If syncing a specific terms bucket, first remove documents from other terms buckets
+        cleanup_results = []
+        if terms_bucket and data_source_filter == "terms":
+            logger.info(f"Syncing terms bucket {terms_bucket} - cleaning up other terms buckets first")
+            
+            # Find all terms bucket data sources
+            for ds in data_sources_response['dataSourceSummaries']:
+                ds_name = ds['name'].lower()
+                # Check if this is a terms bucket data source
+                is_terms_source = any(
+                    pattern in ds_name 
+                    for patterns in terms_bucket_patterns.values() 
+                    for pattern in patterns
+                )
+                
+                if is_terms_source:
+                    # Check if this is NOT the bucket we're syncing
+                    selected_patterns = terms_bucket_patterns.get(terms_bucket, [])
+                    is_selected_bucket = any(pattern in ds_name for pattern in selected_patterns)
+                    
+                    if not is_selected_bucket:
+                        # This is another terms bucket - delete its documents
+                        logger.info(f"Removing documents from other terms bucket: {ds['name']}")
+                        cleanup_result = delete_documents_from_data_source(
+                            knowledge_base_id,
+                            ds['dataSourceId'],
+                            ds['name']
+                        )
+                        cleanup_results.append({
+                            'data_source_name': ds['name'],
+                            'data_source_id': ds['dataSourceId'],
+                            'cleanup_result': cleanup_result
+                        })
+        
         # Filter data sources based on request
         data_sources_to_sync = []
         for ds in data_sources_response['dataSourceSummaries']:
             ds_name = ds['name'].lower()
             if data_source_filter == "all":
-                data_sources_to_sync.append(ds)
+                # If terms_bucket is specified, only sync that specific terms bucket
+                if terms_bucket:
+                    patterns = terms_bucket_patterns.get(terms_bucket, [])
+                    if any(pattern in ds_name for pattern in patterns):
+                        data_sources_to_sync.append(ds)
+                    elif "knowledge" in ds_name or "user-documents" in ds_name:
+                        # Don't sync other buckets when a specific terms bucket is selected
+                        continue
+                else:
+                    data_sources_to_sync.append(ds)
             elif data_source_filter == "knowledge" and "knowledge" in ds_name:
                 data_sources_to_sync.append(ds)
             elif data_source_filter == "user_documents" and "user-documents" in ds_name:
                 data_sources_to_sync.append(ds)
+            elif data_source_filter.startswith("terms"):
+                # Handle terms bucket selection
+                if terms_bucket:
+                    # Specific terms bucket requested
+                    patterns = terms_bucket_patterns.get(terms_bucket, [])
+                    if any(pattern in ds_name for pattern in patterns):
+                        data_sources_to_sync.append(ds)
+                else:
+                    # All terms buckets if terms is specified but no specific bucket
+                    if any(pattern in ds_name for patterns in terms_bucket_patterns.values() for pattern in patterns):
+                        data_sources_to_sync.append(ds)
         
         if not data_sources_to_sync:
             return create_error_response(404, f"No data sources found matching filter: {data_source_filter}")
@@ -242,14 +428,29 @@ def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all") -> D
         successful_jobs = [job for job in sync_jobs if job.get('success', False)]
         failed_jobs = [job for job in sync_jobs if not job.get('success', False)]
         
-        return create_success_response({
+        response_data = {
             "message": f"Sync jobs processed for {len(data_sources_to_sync)} data source(s)",
             "sync_jobs": sync_jobs,
             "successful_count": len(successful_jobs),
             "failed_count": len(failed_jobs),
             "knowledge_base_id": knowledge_base_id,
             "data_source_filter": data_source_filter
-        })
+        }
+        
+        # Include cleanup results if we cleaned up other terms buckets
+        if cleanup_results:
+            response_data["cleanup_performed"] = True
+            response_data["cleanup_results"] = cleanup_results
+            total_cleaned = sum(
+                r['cleanup_result'].get('deleted_count', 0) 
+                for r in cleanup_results 
+                if r['cleanup_result'].get('success', False)
+            )
+            response_data["cleanup_message"] = f"Removed {total_cleaned} documents from other terms buckets before syncing"
+        else:
+            response_data["cleanup_performed"] = False
+        
+        return create_success_response(response_data)
         
     except Exception as e:
         logger.error(f"Error starting sync jobs: {str(e)}")

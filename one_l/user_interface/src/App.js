@@ -11,7 +11,7 @@ import AdminDashboard from './components/AdminDashboard';
 import MetricsDashboard from './components/MetricsDashboard';
 import UserHeader from './components/UserHeader';
 import { isConfigValid, loadConfig } from './utils/config';
-import { agentAPI, sessionAPI } from './services/api';
+import { agentAPI, sessionAPI, knowledgeManagementAPI } from './services/api';
 import authService from './services/auth';
 import webSocketService from './services/websocket';
 import jobPollingService from './services/jobPolling';
@@ -276,7 +276,7 @@ const SessionWorkspace = ({ session }) => {
         completedStages: [],
         workflowMessage: '',
         workflowMessageType: '',
-        termsProfile: 'it'
+        termsProfile: 'it_terms_updated'
       };
     }
 
@@ -347,7 +347,7 @@ const SessionWorkspace = ({ session }) => {
   const [redlinedDocuments, setRedlinedDocuments] = useState([]);
   const [sessionResults, setSessionResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
-  const [termsProfile, setTermsProfile] = useState('it');
+  const [termsProfile, setTermsProfile] = useState('it_terms_updated');
   const [termsProfileError, setTermsProfileError] = useState('');
   
   // ← NEW KB SYNC STATE
@@ -372,17 +372,36 @@ const SessionWorkspace = ({ session }) => {
   // Determine if this is a new session (came from navigation state) or existing session (clicked from sidebar)
   // Use ref to persist the initial state, as location.state can be cleared
   const isNewSession = initialIsNewSessionRef.current ?? false;
-  const normalizedTermsProfile = (termsProfile || 'it').toLowerCase();
+  const normalizedTermsProfile = (termsProfile || 'it_terms_updated').toLowerCase();
+  
+  // Map terms profile values to bucket names
+  const getTermsBucketName = (profile) => {
+    const normalized = (profile || '').toLowerCase();
+    const mapping = {
+      'general': 'general_terms',
+      'general_terms': 'general_terms',
+      'it': 'it_terms_updated',
+      'it_terms_updated': 'it_terms_updated',
+      'it_terms_old': 'it_terms_old'
+    };
+    return mapping[normalized] || 'it_terms_updated';
+  };
+  
   const termsProfileOptions = [
     {
-      value: 'general',
-      label: 'General Terms & Conditions',
-      description: 'Statewide contract standards for broad procurement needs.',
+      value: 'it_terms_updated',
+      label: 'New IT T&C',
+      description: 'Current technology-focused standards for software and systems.',
     },
     {
-      value: 'it',
-      label: 'IT Terms & Conditions',
-      description: 'Technology-focused standards for software and systems.',
+      value: 'it_terms_old',
+      label: 'Old IT T&C',
+      description: 'Previous version of IT terms and conditions.',
+    },
+    {
+      value: 'general_terms',
+      label: 'General T&C',
+      description: 'Statewide contract standards for broad procurement needs.',
     }
   ];
   const activeTermsProfileOption = termsProfileOptions.find(option => option.value === normalizedTermsProfile) || termsProfileOptions[0];
@@ -392,7 +411,13 @@ const SessionWorkspace = ({ session }) => {
     if (normalized === normalizedTermsProfile) {
       return;
     }
-    setTermsProfile(normalized === 'general' ? 'general' : 'it');
+    // Map legacy values to new values for backward compatibility
+    const valueMapping = {
+      'general': 'general_terms',
+      'it': 'it_terms_updated'
+    };
+    const mappedValue = valueMapping[normalized] || normalized;
+    setTermsProfile(mappedValue);
     setTermsProfileError('');
   };
 
@@ -459,7 +484,7 @@ const SessionWorkspace = ({ session }) => {
         completedStages: [],
         workflowMessage: '',
         workflowMessageType: '',
-        termsProfile: 'it'
+        termsProfile: 'it_terms_updated'
       };
       
       // If this is a new session, explicitly initialize it as empty in the ref and set state to empty FIRST
@@ -473,7 +498,7 @@ const SessionWorkspace = ({ session }) => {
           completedStages: [],
           workflowMessage: '',
           workflowMessageType: '',
-          termsProfile: 'it'
+          termsProfile: 'it_terms_updated'
         };
         // Save to localStorage for new session initialization
         saveSessionDataToStorage(sessionDataRef.current);
@@ -485,7 +510,7 @@ const SessionWorkspace = ({ session }) => {
         setCompletedStages([]);
         setWorkflowMessage('');
         setWorkflowMessageType('');
-        setTermsProfile('it');
+        setTermsProfile('it_terms_updated');
         setTermsProfileError('');
         // Update ref AFTER clearing state to prevent sync from running with old data
         previousSessionIdRef.current = currentSessionId;
@@ -552,7 +577,7 @@ const SessionWorkspace = ({ session }) => {
         setCompletedStages(restoredCompletedStages);
         setWorkflowMessage(restoredMessage || '');
         setWorkflowMessageType(restoredMessageType || '');
-        setTermsProfile(sessionData.termsProfile || 'it');
+        setTermsProfile(sessionData.termsProfile || 'it_terms_updated');
         setTermsProfileError('');
         // Update ref AFTER restoring state for existing sessions
         previousSessionIdRef.current = currentSessionId;
@@ -1514,14 +1539,6 @@ const SessionWorkspace = ({ session }) => {
       return;
     }
     
-    // Check if General Terms & Conditions is selected (not supported yet)
-    if (normalizedTermsProfile === 'general') {
-      setWorkflowMessage('Support for General Terms & Conditions is coming soon. Please select IT Terms & Conditions to generate redlined documents.');
-      setWorkflowMessageType('error');
-      setTermsProfileError('Support for General Terms & Conditions is coming soon.');
-      return;
-    }
-    
     setTermsProfileError('');
     setGenerating(true);
     resetProcessingStages({ keepGeneratingState: true, skipWorkflowReset: true });
@@ -1538,6 +1555,93 @@ const SessionWorkspace = ({ session }) => {
     updateGlobalProcessingFlag(sessionIdAtStart, true);
     let hasProcessingResults = false;
     try {
+      // Sync the selected terms bucket to knowledge base before processing
+      const termsBucketName = getTermsBucketName(termsProfileForRun);
+      if (isCurrentSession()) {
+        setProcessingPhase('kb_sync', `Syncing ${termsBucketName.replace(/_/g, ' ')} to knowledge base...`);
+      }
+      
+      try {
+        const syncResponse = await knowledgeManagementAPI.syncKnowledgeBase('terms', 'start_sync', termsBucketName);
+        const syncResponseData = typeof syncResponse.body === 'string' 
+          ? JSON.parse(syncResponse.body) 
+          : syncResponse.body || syncResponse;
+        
+        if (syncResponseData.successful_count > 0) {
+          const jobIds = syncResponseData.sync_jobs
+            ?.filter(job => job.success)
+            ?.map(job => job.job_id) || [];
+          
+          if (jobIds.length > 0) {
+            // Poll for sync completion
+            let syncCompleted = false;
+            let attempts = 0;
+            const maxAttempts = 60;
+            const pollInterval = 5000; // 5 seconds
+            
+            while (!syncCompleted && attempts < maxAttempts && isCurrentSession()) {
+              await new Promise(resolve => setTimeout(resolve, pollInterval));
+              attempts++;
+              
+              try {
+                const statusResponses = await Promise.all(
+                  jobIds.map(jobId => knowledgeManagementAPI.getSyncJobStatus(jobId))
+                );
+                
+                const allCompleted = statusResponses.every(response => {
+                  const statusData = typeof response.body === 'string' 
+                    ? JSON.parse(response.body) 
+                    : response.body || response;
+                  return statusData.status === 'COMPLETE' || statusData.status === 'COMPLETED';
+                });
+                
+                if (allCompleted) {
+                  syncCompleted = true;
+                  if (isCurrentSession()) {
+                    setProcessingPhase('kb_sync', 'Knowledge base sync completed. Starting document review...');
+                  }
+                } else {
+                  // Check for failures
+                  const anyFailed = statusResponses.some(response => {
+                    const statusData = typeof response.body === 'string' 
+                      ? JSON.parse(response.body) 
+                      : response.body || response;
+                    return statusData.status === 'FAILED' || statusData.status === 'STOPPED';
+                  });
+                  
+                  if (anyFailed && isCurrentSession()) {
+                    setProcessingPhase('kb_sync', 'Knowledge base sync had issues, but continuing with document review...');
+                    syncCompleted = true; // Continue anyway
+                  }
+                }
+              } catch (statusError) {
+                console.error('Error checking sync status:', statusError);
+                // Continue after a few attempts even if status check fails
+                if (attempts >= 10) {
+                  syncCompleted = true;
+                }
+              }
+            }
+            
+            if (!syncCompleted && isCurrentSession()) {
+              setWorkflowMessage('Knowledge base sync is taking longer than expected. Continuing with document review...');
+              setWorkflowMessageType('warning');
+            }
+          }
+        } else {
+          if (isCurrentSession()) {
+            setWorkflowMessage('Could not start knowledge base sync, but continuing with document review...');
+            setWorkflowMessageType('warning');
+          }
+        }
+      } catch (syncError) {
+        console.error('Error syncing terms bucket:', syncError);
+        if (isCurrentSession()) {
+          setWorkflowMessage('Error syncing terms bucket to knowledge base, but continuing with document review...');
+          setWorkflowMessageType('warning');
+        }
+      }
+      
       const redlineResults = [];
       
       // Process each vendor file
@@ -1901,43 +2005,10 @@ const SessionWorkspace = ({ session }) => {
         clearInterval(window.progressInterval);
         window.progressInterval = null;
       }
+      // Error handling - log errors but don't block processing based on terms profile
       const errorMessage = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
-      if (errorMessage.includes('knowledge base') || errorMessage.includes('general terms')) {
-        if (errorMessage.includes('general')) {
-          setTermsProfileError('Support for General Terms & Conditions is coming soon.');
-          const generalTermsMessage = 'Support for General Terms & Conditions is coming soon. Please select IT Terms & Conditions to generate redlined documents.';
-          if (isCurrentSession()) {
-            setWorkflowMessage(generalTermsMessage);
-            setWorkflowMessageType('error');
-            resetProcessingStages();
-          } else {
-            persistSessionState(sessionIdAtStart, {
-              workflowMessage: generalTermsMessage,
-              workflowMessageType: 'error',
-              processingStage: '',
-              completedStages: [],
-              generating: false,
-              termsProfile: termsProfileForRun
-            });
-          }
-        } else {
-          setTermsProfileError(error.message);
-          if (isCurrentSession()) {
-            setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
-            setWorkflowMessageType('error');
-            resetProcessingStages();
-          } else {
-            persistSessionState(sessionIdAtStart, {
-              workflowMessage: `Failed to generate redlined documents: ${error.message}`,
-              workflowMessageType: 'error',
-              processingStage: '',
-              completedStages: [],
-              generating: false,
-              termsProfile: termsProfileForRun
-            });
-          }
-        }
-      } else if (isCurrentSession()) {
+      setTermsProfileError(error.message);
+      if (isCurrentSession()) {
         setWorkflowMessage(`Failed to generate redlined documents: ${error.message}`);
         setWorkflowMessageType('error');
         resetProcessingStages();
@@ -1950,8 +2021,8 @@ const SessionWorkspace = ({ session }) => {
           generating: false,
           termsProfile: termsProfileForRun
         });
-        updateGlobalProcessingFlag(sessionIdAtStart, false);
       }
+      updateGlobalProcessingFlag(sessionIdAtStart, false);
       hasProcessingResults = false;
     } finally {
       const sessionEntry = sessionDataRef.current[sessionIdAtStart];
@@ -2448,114 +2519,85 @@ const SessionWorkspace = ({ session }) => {
             boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)'
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              gap: '12px',
-              marginBottom: '16px'
-            }}
-          >
-            <div style={{ maxWidth: '520px' }}>
-              <div style={{ fontWeight: 600, fontSize: '16px', color: '#0b1f33' }}>
-                Select Terms &amp; Conditions Profile
-              </div>
-              <div style={{ fontSize: '13px', color: '#4b5a6b', marginTop: '4px', lineHeight: 1.5 }}>
-                Choose the contract standard the AI should follow before generating redlines.
-              </div>
-            </div>
-            <div
+          <div style={{ marginBottom: '16px' }}>
+            <label
+              htmlFor="terms-profile-select"
               style={{
-                fontSize: '12px',
-                color: '#37518f',
-                background: '#dce7ff',
-                padding: '6px 10px',
-                borderRadius: '20px',
+                display: 'block',
                 fontWeight: 600,
-                alignSelf: 'flex-start'
+                fontSize: '16px',
+                color: '#0b1f33',
+                marginBottom: '8px'
               }}
             >
-              Current selection: {activeTermsProfileOption.label}
+              Select Terms &amp; Conditions Profile
+            </label>
+            <div style={{ fontSize: '13px', color: '#4b5a6b', marginBottom: '12px', lineHeight: 1.5 }}>
+              Choose the contract standard the AI should follow before generating redlines.
             </div>
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gap: '12px',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))'
-            }}
-          >
-            {termsProfileOptions.map(option => {
-              const isActive = normalizedTermsProfile === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => handleTermsProfileSelection(option.value)}
-                  disabled={generating}
-                  aria-pressed={isActive}
-                  style={{
-                    position: 'relative',
-                    padding: '16px 18px',
-                    borderRadius: '10px',
-                    border: isActive ? '2px solid #2563eb' : '1px solid #ccd6e3',
-                    background: isActive ? '#2563eb' : '#ffffff',
-                    color: isActive ? '#f8fafc' : '#1a2c44',
-                    textAlign: 'left',
-                    cursor: generating ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    boxShadow: isActive
-                      ? '0 10px 25px -12px rgba(37, 99, 235, 0.65)'
-                      : '0 1px 3px rgba(15, 23, 42, 0.08)',
-                    opacity: generating ? 0.72 : 1
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      gap: '12px'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: 600, lineHeight: 1.3 }}>
-                        {option.label}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '13px',
-                          marginTop: '6px',
-                          color: isActive ? 'rgba(241,245,249,0.9)' : '#4b5a6b',
-                          lineHeight: 1.5
-                        }}
-                      >
-                        {option.description}
-                      </div>
-                    </div>
-                    {isActive && (
-                      <div
-                        style={{
-                          flexShrink: 0,
-                          background: '#1d4ed8',
-                          color: '#f1f5f9',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          padding: '4px 8px',
-                          borderRadius: '999px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.08em',
-                          boxShadow: '0 2px 0 rgba(15,23,42,0.18)'
-                        }}
-                      >
-                        Selected
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+            <select
+              id="terms-profile-select"
+              value={normalizedTermsProfile}
+              onChange={(e) => handleTermsProfileSelection(e.target.value)}
+              disabled={generating}
+              style={{
+                width: '100%',
+                maxWidth: '500px',
+                padding: '10px 14px',
+                fontSize: '15px',
+                fontWeight: 500,
+                color: '#1a2c44',
+                backgroundColor: '#ffffff',
+                border: '1px solid #ccd6e3',
+                borderRadius: '8px',
+                cursor: generating ? 'not-allowed' : 'pointer',
+                outline: 'none',
+                transition: 'all 0.2s ease',
+                opacity: generating ? 0.72 : 1,
+                boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)',
+                appearance: 'none',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%234b5a6b' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'right 14px center',
+                paddingRight: '40px'
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = '#2563eb';
+                e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#ccd6e3';
+                e.target.style.boxShadow = '0 1px 3px rgba(15, 23, 42, 0.08)';
+              }}
+            >
+              {termsProfileOptions.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {activeTermsProfileOption && (
+              <div
+                style={{
+                  fontSize: '13px',
+                  color: '#4b5a6b',
+                  marginTop: '8px',
+                  padding: '8px 12px',
+                  backgroundColor: '#f8fafc',
+                  borderRadius: '6px',
+                  border: '1px solid #e2e8f0',
+                  display: 'inline-block'
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>Selected: </span>
+                {activeTermsProfileOption.label}
+                {activeTermsProfileOption.description && (
+                  <span style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: '#64748b' }}>
+                    {activeTermsProfileOption.description}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           {termsProfileError && (
             <div className="alert alert-error" style={{ marginTop: '14px' }}>

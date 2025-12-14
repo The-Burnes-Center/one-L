@@ -121,6 +121,12 @@ def get_bucket_name(bucket_type: str) -> str:
         return os.environ.get("USER_DOCUMENTS_BUCKET")
     elif bucket_type == "agent_processing":
         return os.environ.get("AGENT_PROCESSING_BUCKET")
+    elif bucket_type == "general_terms":
+        return os.environ.get("GENERAL_TERMS_BUCKET")
+    elif bucket_type == "it_terms_updated":
+        return os.environ.get("IT_TERMS_UPDATED_BUCKET")
+    elif bucket_type == "it_terms_old":
+        return os.environ.get("IT_TERMS_OLD_BUCKET")
     else:
         raise ValueError(f"Invalid bucket_type: {bucket_type}")
 

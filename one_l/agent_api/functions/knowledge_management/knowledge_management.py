@@ -34,6 +34,9 @@ class KnowledgeManagementConstruct(Construct):
         knowledge_base_id: str,
         opensearch_collection: aoss.CfnCollection,
         iam_roles,
+        general_terms_bucket: s3.Bucket = None,
+        it_terms_updated_bucket: s3.Bucket = None,
+        it_terms_old_bucket: s3.Bucket = None,
         authorization=None,  # Optional: Authorization construct for Cognito User Pool ID
         **kwargs
     ) -> None:
@@ -43,12 +46,22 @@ class KnowledgeManagementConstruct(Construct):
         self.knowledge_bucket = knowledge_bucket
         self.user_documents_bucket = user_documents_bucket
         self.agent_processing_bucket = agent_processing_bucket
+        self.general_terms_bucket = general_terms_bucket
+        self.it_terms_updated_bucket = it_terms_updated_bucket
+        self.it_terms_old_bucket = it_terms_old_bucket
         self.knowledge_base_id = knowledge_base_id
         self.opensearch_collection = opensearch_collection
         self.authorization = authorization  # Store authorization construct for Cognito access
         
         # Create buckets list for IAM permissions (include all buckets)
-        self.buckets = [knowledge_bucket, user_documents_bucket, agent_processing_bucket]
+        buckets_list = [knowledge_bucket, user_documents_bucket, agent_processing_bucket]
+        if general_terms_bucket:
+            buckets_list.append(general_terms_bucket)
+        if it_terms_updated_bucket:
+            buckets_list.append(it_terms_updated_bucket)
+        if it_terms_old_bucket:
+            buckets_list.append(it_terms_old_bucket)
+        self.buckets = buckets_list
             
         self.iam_roles = iam_roles
         
@@ -93,6 +106,12 @@ class KnowledgeManagementConstruct(Construct):
         }
         if self.agent_processing_bucket:
             env_vars["AGENT_PROCESSING_BUCKET"] = self.agent_processing_bucket.bucket_name
+        if self.general_terms_bucket:
+            env_vars["GENERAL_TERMS_BUCKET"] = self.general_terms_bucket.bucket_name
+        if self.it_terms_updated_bucket:
+            env_vars["IT_TERMS_UPDATED_BUCKET"] = self.it_terms_updated_bucket.bucket_name
+        if self.it_terms_old_bucket:
+            env_vars["IT_TERMS_OLD_BUCKET"] = self.it_terms_old_bucket.bucket_name
         
         # Create Lambda function
         self.upload_to_s3_function = _lambda.Function(
@@ -172,7 +191,7 @@ class KnowledgeManagementConstruct(Construct):
         # Create role with Bedrock and S3 permissions
         role = self.iam_roles.create_s3_read_role("SyncKnowledgeBase", self.buckets)
         
-        # Add Bedrock permissions for Knowledge Base sync
+        # Add Bedrock permissions for Knowledge Base sync and document management
         # Use broader permissions since knowledge base ID may not be available at creation time
         role.add_to_policy(
             iam.PolicyStatement(
@@ -183,7 +202,9 @@ class KnowledgeManagementConstruct(Construct):
                     "bedrock:ListIngestionJobs",
                     "bedrock:ListDataSources",
                     "bedrock:GetKnowledgeBase",
-                    "bedrock:ListKnowledgeBases"
+                    "bedrock:ListKnowledgeBases",
+                    "bedrock:ListKnowledgeBaseDocuments",
+                    "bedrock:DeleteKnowledgeBaseDocuments"
                 ],
                 resources=[
                     f"arn:aws:bedrock:{Stack.of(self).region}:{Stack.of(self).account}:knowledge-base/*",

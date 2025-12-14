@@ -34,6 +34,9 @@ class StorageConstruct(Construct):
         self.knowledge_bucket = None
         self.user_documents_bucket = None
         self.agent_processing_bucket = None
+        self.general_terms_bucket = None
+        self.it_terms_updated_bucket = None
+        self.it_terms_old_bucket = None
         self.analysis_table = None
         
         # Configuration - ensure all names start with stack name
@@ -41,6 +44,9 @@ class StorageConstruct(Construct):
         self._knowledge_bucket_name = knowledge_bucket_name or f"{self._stack_name.lower()}-knowledge-source"
         self._user_documents_bucket_name = user_documents_bucket_name or f"{self._stack_name.lower()}-user-documents"
         self._agent_processing_bucket_name = f"{self._stack_name.lower()}-agent-processing"
+        self._general_terms_bucket_name = f"{self._stack_name.lower()}-general-terms"
+        self._it_terms_updated_bucket_name = f"{self._stack_name.lower()}-it-terms-updated"
+        self._it_terms_old_bucket_name = f"{self._stack_name.lower()}-it-terms-old"
         self._analysis_table_name = f"{self._stack_name}-analysis-results"
         self._additional_cors_origins = additional_cors_origins or []
         
@@ -48,6 +54,7 @@ class StorageConstruct(Construct):
         self.create_knowledge_bucket()
         self.create_user_documents_bucket()
         self.create_agent_processing_bucket()
+        self.create_terms_buckets()
         self.create_analysis_table()
         self.create_outputs()
     
@@ -168,6 +175,92 @@ class StorageConstruct(Construct):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
     
+    def create_terms_buckets(self):
+        """Create 3 S3 buckets for terms and conditions documents."""
+        
+        # Build CORS allowed origins list
+        cors_origins = [
+            "http://localhost:3000",    # Local development
+            "https://localhost:3000",   # Local development with HTTPS
+        ]
+        cors_origins.extend(self._additional_cors_origins)
+        
+        # If no additional origins provided, allow all origins for CloudFront compatibility
+        if not self._additional_cors_origins:
+            cors_origins = ["*"]
+        
+        # General Terms bucket
+        self.general_terms_bucket = s3.Bucket(
+            self, "GeneralTermsBucket",
+            bucket_name=self._general_terms_bucket_name,
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            cors=[
+                s3.CorsRule(
+                    allowed_methods=[
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.POST,
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.DELETE,
+                    ],
+                    allowed_origins=cors_origins,
+                    allowed_headers=["*"],
+                )
+            ],
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        )
+        
+        # IT Terms Updated bucket
+        self.it_terms_updated_bucket = s3.Bucket(
+            self, "ITTermsUpdatedBucket",
+            bucket_name=self._it_terms_updated_bucket_name,
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            cors=[
+                s3.CorsRule(
+                    allowed_methods=[
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.POST,
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.DELETE,
+                    ],
+                    allowed_origins=cors_origins,
+                    allowed_headers=["*"],
+                )
+            ],
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        )
+        
+        # IT Terms Old bucket
+        self.it_terms_old_bucket = s3.Bucket(
+            self, "ITTermsOldBucket",
+            bucket_name=self._it_terms_old_bucket_name,
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            cors=[
+                s3.CorsRule(
+                    allowed_methods=[
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.POST,
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.DELETE,
+                    ],
+                    allowed_origins=cors_origins,
+                    allowed_headers=["*"],
+                )
+            ],
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        )
+    
     def create_analysis_table(self):
         """Create DynamoDB table for storing analysis results."""
         
@@ -228,6 +321,15 @@ class StorageConstruct(Construct):
         
         if bucket_name in ["agent_processing", "all"]:
             self.agent_processing_bucket.grant_read(principal)
+        
+        if bucket_name in ["general_terms", "terms", "all"]:
+            self.general_terms_bucket.grant_read(principal)
+        
+        if bucket_name in ["it_terms_updated", "terms", "all"]:
+            self.it_terms_updated_bucket.grant_read(principal)
+        
+        if bucket_name in ["it_terms_old", "terms", "all"]:
+            self.it_terms_old_bucket.grant_read(principal)
     
     def grant_write_access(self, principal, bucket_name: str = "all"):
         """Grant write access to specified bucket(s)."""
@@ -239,6 +341,15 @@ class StorageConstruct(Construct):
         
         if bucket_name in ["agent_processing", "all"]:
             self.agent_processing_bucket.grant_write(principal)
+        
+        if bucket_name in ["general_terms", "terms", "all"]:
+            self.general_terms_bucket.grant_write(principal)
+        
+        if bucket_name in ["it_terms_updated", "terms", "all"]:
+            self.it_terms_updated_bucket.grant_write(principal)
+        
+        if bucket_name in ["it_terms_old", "terms", "all"]:
+            self.it_terms_old_bucket.grant_write(principal)
     
     def grant_read_write_access(self, principal, bucket_name: str = "all"):
         """Grant read/write access to specified bucket(s)."""
@@ -250,6 +361,15 @@ class StorageConstruct(Construct):
         
         if bucket_name in ["agent_processing", "all"]:
             self.agent_processing_bucket.grant_read_write(principal)
+        
+        if bucket_name in ["general_terms", "terms", "all"]:
+            self.general_terms_bucket.grant_read_write(principal)
+        
+        if bucket_name in ["it_terms_updated", "terms", "all"]:
+            self.it_terms_updated_bucket.grant_read_write(principal)
+        
+        if bucket_name in ["it_terms_old", "terms", "all"]:
+            self.it_terms_old_bucket.grant_read_write(principal)
     
     def grant_dynamodb_access(self, principal, table_name: str = "analysis"):
         """Grant DynamoDB access to specified table(s)."""

@@ -46,7 +46,7 @@ def lambda_handler(event, context):
         user_id = event.get('user_id')
         document_s3_key = event.get('document_s3_key')
         bucket_type = event.get('bucket_type', 'agent_processing')
-        terms_profile = event.get('terms_profile', 'general')
+        terms_profile = event.get('terms_profile', 'it_terms_updated')
         
         if not job_id or not session_id or not user_id:
             raise ValueError("job_id, session_id, and user_id are required")

@@ -28,6 +28,9 @@ class FunctionsConstruct(Construct):
         agent_processing_bucket: s3.Bucket,  # Add agent_processing_bucket parameter
         knowledge_base_id: str,
         opensearch_collection: aoss.CfnCollection,
+        general_terms_bucket: s3.Bucket = None,
+        it_terms_updated_bucket: s3.Bucket = None,
+        it_terms_old_bucket: s3.Bucket = None,
         authorization=None,  # Optional: Authorization construct for Cognito access
         **kwargs
     ) -> None:
@@ -37,6 +40,9 @@ class FunctionsConstruct(Construct):
         self.knowledge_bucket = knowledge_bucket
         self.user_documents_bucket = user_documents_bucket
         self.agent_processing_bucket = agent_processing_bucket  # Store agent processing bucket
+        self.general_terms_bucket = general_terms_bucket
+        self.it_terms_updated_bucket = it_terms_updated_bucket
+        self.it_terms_old_bucket = it_terms_old_bucket
         self.knowledge_base_id = knowledge_base_id
         self.opensearch_collection = opensearch_collection
         
@@ -58,6 +64,9 @@ class FunctionsConstruct(Construct):
             knowledge_base_id=knowledge_base_id,
             opensearch_collection=opensearch_collection,
             iam_roles=self.iam_roles,
+            general_terms_bucket=general_terms_bucket,
+            it_terms_updated_bucket=it_terms_updated_bucket,
+            it_terms_old_bucket=it_terms_old_bucket,
             authorization=authorization  # Pass authorization construct for Cognito access
         )
         
