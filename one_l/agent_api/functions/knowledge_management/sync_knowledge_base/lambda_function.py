@@ -212,26 +212,27 @@ def delete_documents_from_data_source(knowledge_base_id: str, data_source_id: st
                 maxResults=100
             ):
                 for doc in page.get('documentDetails', []):
-                    # Extract document identifier - for S3 data sources, documentId is the S3 URI
-                    doc_id = doc.get('documentId', '')
+                    # Extract document identifier - Bedrock API returns identifier in identifier.s3.uri
+                    identifier = doc.get('identifier', {})
+                    s3_location = identifier.get('s3', {}) if identifier.get('dataSourceType') == 'S3' else {}
+                    s3_uri = s3_location.get('uri', '')
                     doc_name = doc.get('name', '')
                     
-                    if doc_id:
-                        # For S3 data sources, documentId is typically the S3 URI (s3://bucket/key)
-                        # If it's not already a URI, we'll try using it as-is since Bedrock may handle it
-                        if doc_id.startswith('s3://'):
+                    # Fallback: try documentId field if identifier.s3.uri is not available
+                    if not s3_uri:
+                        doc_id = doc.get('documentId', '')
+                        if doc_id and doc_id.startswith('s3://'):
                             s3_uri = doc_id
-                        else:
-                            # If documentId is not a URI, construct it from the document name or use as-is
-                            # Bedrock may accept documentId directly
-                            s3_uri = doc_id
-                        
+                    
+                    if s3_uri:
                         document_identifiers.append({
                             'dataSourceType': 'S3',
                             's3': {
                                 'uri': s3_uri
                             }
                         })
+                    else:
+                        logger.warning(f"Could not extract S3 URI from document: {doc}")
         except Exception as list_error:
             # If listing fails, log and return - might be no documents or API issue
             logger.warning(f"Could not list documents from {data_source_name}: {str(list_error)}")
