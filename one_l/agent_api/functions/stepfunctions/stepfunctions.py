@@ -342,7 +342,8 @@ class StepFunctionsConstruct(Construct):
                 "end_char": sfn.JsonPath.number_at("$.end_char"),
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
                 "session_id": sfn.JsonPath.string_at("$.session_id"),
-                "timestamp": sfn.JsonPath.string_at("$.timestamp")
+                "timestamp": sfn.JsonPath.string_at("$.timestamp"),
+                "terms_profile": sfn.JsonPath.string_at("$.terms_profile")  # Pass terms_profile for query generation
             })
         )
         analyze_structure.add_retry(

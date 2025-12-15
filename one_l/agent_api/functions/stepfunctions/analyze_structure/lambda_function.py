@@ -17,6 +17,50 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
+def _get_terms_profile_context(terms_profile: str) -> str:
+    """Generate context for query generation based on selected terms profile."""
+    terms_profile_map = {
+        'general_terms': {
+            'name': 'General Terms and Conditions',
+            'description': 'the General Terms and Conditions document (form_commonwealth-terms-and-conditions.pdf)',
+            'focus': 'general legal and commercial terms applicable to all Massachusetts state contracts'
+        },
+        'it_terms_updated': {
+            'name': 'Updated IT Terms and Conditions',
+            'description': 'the Updated IT Terms and Conditions document',
+            'focus': 'IT-specific terms and conditions, software licensing, technology services, and IT-related legal requirements'
+        },
+        'it_terms_old': {
+            'name': 'Old IT Terms and Conditions',
+            'description': 'the Old IT Terms and Conditions document',
+            'focus': 'legacy IT-specific terms and conditions and historical IT-related legal requirements'
+        }
+    }
+    
+    profile_info = terms_profile_map.get(terms_profile, {})
+    if not profile_info:
+        return ""
+    
+    return f"""### TERMS PROFILE CONTEXT
+<instructions>
+**IMPORTANT: A specific Terms and Conditions profile has been selected for this analysis.**
+
+Selected Profile: **{profile_info['name']}**
+
+**Query Generation Focus:**
+- Your queries should PRIMARILY target {profile_info['description']}
+- Emphasize {profile_info['focus']} in your query construction
+- When generating queries for major legal/commercial sections, ensure they strongly match the selected Terms and Conditions document
+- While you may still reference other Massachusetts documents (ISP, IS Standards, Exhibits, RFR) when relevant, prioritize matching the selected Terms and Conditions profile
+- Include specific terminology and phrases that appear in {profile_info['name']} to create strong semantic matches
+
+**Example Query Enhancement:**
+- Instead of: "indemnity liability Massachusetts Commonwealth"
+- Use: "indemnity liability {profile_info['name']} Massachusetts Commonwealth Terms and Conditions" (when targeting legal sections)
+
+This ensures the knowledge base retrieval finds the most relevant content from the selected Terms and Conditions document.
+</instructions>"""
+
 # Import progress tracker
 try:
     from shared.progress_tracker import update_progress
@@ -38,6 +82,7 @@ def lambda_handler(event, context):
             - start_char (optional)
             - end_char (optional)
             - job_id, timestamp (for progress tracking)
+            - terms_profile (optional, for query generation focus)
         
     Returns:
         Dict with structure_s3_key, queries_count, has_results (always stores in S3)
@@ -52,6 +97,7 @@ def lambda_handler(event, context):
         total_chunks = event.get('total_chunks', 1)
         start_char = event.get('start_char', 0)
         end_char = event.get('end_char', 0)
+        terms_profile = event.get('terms_profile')  # Get terms profile for query generation
         
         # Determine which S3 key to use
         s3_key = chunk_s3_key or document_s3_key
@@ -89,6 +135,11 @@ def lambda_handler(event, context):
             # chunk_num/total_chunks not provided (backward compatibility)
             prompt_text = STRUCTURE_ANALYSIS_PROMPT
         
+        # Add terms profile context to focus query generation on selected terms profile
+        if terms_profile:
+            terms_profile_context = _get_terms_profile_context(terms_profile)
+            prompt_text = f"{prompt_text}\n\n{terms_profile_context}"
+        
         # Prepare messages with document
         messages = [
             {
@@ -112,9 +163,9 @@ def lambda_handler(event, context):
         
         # Call Claude with structure analysis prompt
         if is_chunk:
-            logger.info(f"Calling Claude for chunk {chunk_num + 1} structure analysis")
+            logger.info(f"Calling Claude for chunk {chunk_num + 1} structure analysis (terms_profile: {terms_profile})")
         else:
-            logger.info("Calling Claude for document structure analysis")
+            logger.info(f"Calling Claude for document structure analysis (terms_profile: {terms_profile})")
         
         response = model._call_claude_with_tools(messages)
         
