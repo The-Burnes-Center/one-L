@@ -2510,172 +2510,101 @@ const SessionWorkspace = ({ session }) => {
           to { transform: rotate(360deg); }
         }
       `}</style>
-      <div className="card" style={{
-        background: 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
-        border: '1px solid #e2e8f0',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-        borderRadius: '16px',
-        overflow: 'hidden'
-      }}>
-        <div style={{ 
-          paddingBottom: '8px',
-          borderBottom: '2px solid #e2e8f0',
-          marginBottom: '24px'
-        }}>
-          <h2 style={{ 
-            margin: '0 0 8px 0',
-            fontSize: '28px',
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text'
-          }}>Review Settings</h2>
-          <p style={{ 
-            margin: 0,
-            fontSize: '15px',
-            color: '#64748b',
-            fontWeight: 400
-          }}>Select contract standards and generate analysis.</p>
-        </div>
-        <div
-          style={{
-            margin: '0',
-            padding: '24px',
-            background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-            borderRadius: '12px',
-            border: '2px solid #bae6fd',
-            boxShadow: '0 2px 8px rgba(37, 99, 235, 0.08)',
-            position: 'relative',
-            overflow: 'hidden'
-          }}
-        >
-          {/* Decorative accent */}
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: '4px',
-            background: 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #93c5fd 100%)'
-          }} />
-          
-          <div>
-            <label
-              htmlFor="terms-profile-select"
-              style={{
-                display: 'block',
-                fontWeight: 600,
-                fontSize: '16px',
-                color: '#1e293b',
-                marginBottom: '8px'
-              }}
-            >
-              Select Terms &amp; Conditions Profile
-            </label>
-            <div style={{ 
-              fontSize: '14px', 
-              color: '#475569', 
-              marginBottom: '16px', 
-              lineHeight: 1.6
-            }}>
-              Choose the contract standard the AI should follow before generating redlines.
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-              <select
-                id="terms-profile-select"
-                value={normalizedTermsProfile}
-                onChange={(e) => handleTermsProfileSelection(e.target.value)}
-                disabled={generating}
-                style={{
-                  flex: '1',
-                  minWidth: '280px',
-                  maxWidth: '400px',
-                  padding: '14px 16px',
-                  fontSize: '15px',
-                  fontWeight: 500,
-                  color: '#1e293b',
-                  backgroundColor: '#ffffff',
-                  border: '2px solid #cbd5e1',
-                  borderRadius: '8px',
-                  cursor: generating ? 'not-allowed' : 'pointer',
-                  outline: 'none',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                  opacity: generating ? 0.6 : 1,
-                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
-                  appearance: 'none',
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath fill='%23475569' d='M7 10L2 5h10z'/%3E%3C/svg%3E")`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right 16px center',
-                  paddingRight: '44px',
-                  fontFamily: 'inherit'
-                }}
-                onFocus={(e) => {
-                  e.target.style.borderColor = '#3b82f6';
-                  e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1), 0 2px 4px rgba(0, 0, 0, 0.08)';
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#cbd5e1';
-                  e.target.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.08)';
-                }}
-                onMouseEnter={(e) => {
-                  if (!generating) {
-                    e.target.style.borderColor = '#94a3b8';
-                    e.target.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!e.target.matches(':focus')) {
-                    e.target.style.borderColor = '#cbd5e1';
-                    e.target.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.08)';
-                  }
-                }}
-              >
-                {termsProfileOptions.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              {activeTermsProfileOption && (
-                <div
-                  style={{
-                    flex: '1',
-                    minWidth: '280px',
-                    maxWidth: '400px',
-                    fontSize: '14px',
-                    color: '#1e293b',
-                    padding: '14px 16px',
-                    backgroundColor: '#f8fafc',
-                    borderRadius: '8px',
-                    border: '1px solid #e2e8f0',
-                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
-                    <span style={{ fontWeight: 600, color: '#475569', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Selected: </span>
-                    <span style={{ fontWeight: 600, color: '#1e293b', marginLeft: '6px' }}>{activeTermsProfileOption.label}</span>
-                  </div>
-                  {activeTermsProfileOption.description && (
-                    <div style={{ 
-                      marginTop: '6px', 
-                      fontSize: '13px', 
-                      color: '#64748b',
-                      lineHeight: 1.5
-                    }}>
-                      {activeTermsProfileOption.description}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+      <div className="card" style={{ marginTop: '24px' }}>
+        <h2>Review Settings</h2>
+        
+        <div className="form-group" style={{ marginTop: '16px' }}>
+          <label
+            htmlFor="terms-profile-select"
+            className="form-label"
+            style={{
+              display: 'block',
+              fontWeight: 600,
+              fontSize: '14px',
+              color: '#1e293b',
+              marginBottom: '8px'
+            }}
+          >
+            Terms &amp; Conditions Profile
+          </label>
+          <div style={{ 
+            fontSize: '13px', 
+            color: '#64748b', 
+            marginBottom: '12px', 
+            lineHeight: 1.5
+          }}>
+            Choose the contract standard the AI should follow before generating redlines.
           </div>
-          {termsProfileError && (
-            <div className="alert alert-error" style={{ marginTop: '16px', borderRadius: '10px' }}>
-              {termsProfileError}
+          <select
+            id="terms-profile-select"
+            value={normalizedTermsProfile}
+            onChange={(e) => handleTermsProfileSelection(e.target.value)}
+            disabled={generating}
+            style={{
+              width: '100%',
+              maxWidth: '500px',
+              padding: '12px 16px',
+              fontSize: '15px',
+              fontWeight: 500,
+              color: '#1e293b',
+              backgroundColor: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              cursor: generating ? 'not-allowed' : 'pointer',
+              outline: 'none',
+              transition: 'all 0.2s ease',
+              opacity: generating ? 0.6 : 1,
+              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+              appearance: 'none',
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23475569' d='M6 8.5L2 4.5h8z'/%3E%3C/svg%3E")`,
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right 12px center',
+              paddingRight: '40px',
+              fontFamily: 'inherit'
+            }}
+            onFocus={(e) => {
+              e.target.style.borderColor = '#3b82f6';
+              e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = '#cbd5e1';
+              e.target.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.05)';
+            }}
+            onMouseEnter={(e) => {
+              if (!generating) {
+                e.target.style.borderColor = '#94a3b8';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!e.target.matches(':focus')) {
+                e.target.style.borderColor = '#cbd5e1';
+              }
+            }}
+          >
+            {termsProfileOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {activeTermsProfileOption?.description && (
+            <div style={{ 
+              marginTop: '8px',
+              fontSize: '13px', 
+              color: '#64748b',
+              lineHeight: 1.5,
+              fontStyle: 'italic',
+              maxWidth: '500px'
+            }}>
+              {activeTermsProfileOption.description}
             </div>
           )}
-        </div>
+            {termsProfileError && (
+              <div className="alert alert-error" style={{ marginTop: '16px', borderRadius: '10px' }}>
+                {termsProfileError}
+              </div>
+            )}
+          </div>
         
         {/* Generate Button */}
         <div style={{ marginTop: '28px' }}>
@@ -2743,13 +2672,8 @@ const SessionWorkspace = ({ session }) => {
               marginTop: '12px', 
               fontSize: '13px', 
               color: '#64748b',
-              textAlign: 'center',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px'
+              textAlign: 'center'
             }}>
-              <span>📄</span>
               Upload both vendor submission and reference documents to enable analysis
             </p>
           )}
