@@ -1785,6 +1785,11 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                 if not cell_text:
                     continue
                 
+                # Normalize cell text for matching (same normalization as vendor_quote)
+                cell_quote_normalized = normalize_quotes(cell_text)
+                cell_quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(cell_quote_normalized))
+                cell_fully_normalized = normalize_for_matching(cell_text).lower()
+                
                 # Check all matching tiers for table cells
                 if vendor_quote in cell_text:
                     logger.info(f"MATCH_FOUND: TIER 1 (exact) in table {table_idx}, row {row_idx}, cell {cell_idx}")
@@ -1796,7 +1801,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                         'match_type': 'exact'
                     }
                 
-                cell_quote_normalized = normalize_quotes(cell_text)
                 if quote_normalized in cell_quote_normalized:
                     logger.info(f"MATCH_FOUND: TIER 2 (quote_normalized) in table {table_idx}, row {row_idx}, cell {cell_idx}")
                     return {
@@ -1807,7 +1811,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                         'match_type': 'quote_normalized'
                     }
                 
-                cell_quote_ws_normalized = normalize_whitespace(normalize_subsection_markers(cell_quote_normalized))
                 if quote_ws_normalized in cell_quote_ws_normalized:
                     logger.info(f"MATCH_FOUND: TIER 3 (quote_whitespace_normalized) in table {table_idx}, row {row_idx}, cell {cell_idx}")
                     return {
@@ -1828,7 +1831,6 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                         'match_type': 'quote_whitespace_normalized_case_insensitive'
                     }
                 
-                cell_fully_normalized = normalize_for_matching(cell_text).lower()
                 if fully_normalized.lower() in cell_fully_normalized:
                     logger.info(f"MATCH_FOUND: TIER 4 (fully_normalized) in table {table_idx}, row {row_idx}, cell {cell_idx}")
                     return {
@@ -1838,6 +1840,39 @@ def _find_text_match(doc, vendor_quote: str) -> Optional[Dict[str, Any]]:
                         'cell_idx': cell_idx,
                         'match_type': 'fully_normalized'
                     }
+                
+                # TIER 4b: Check if vendor_quote is a prefix/substring of cell text (for table exceptions)
+                # This handles cases where Claude extracts partial text or text with formatting differences
+                if len(vendor_quote) > 50:  # Only for reasonably long quotes
+                    # Check if vendor quote is prefix of cell or cell is prefix of vendor quote (bidirectional)
+                    if cell_quote_ws_normalized.startswith(quote_ws_normalized) or quote_ws_normalized.startswith(cell_quote_ws_normalized):
+                        logger.info(f"MATCH_FOUND: TIER 4b (prefix/substring) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                        return {
+                            'type': 'table_cell',
+                            'table_idx': table_idx,
+                            'row_idx': row_idx,
+                            'cell_idx': cell_idx,
+                            'match_type': 'prefix_substring'
+                        }
+                    elif cell_fully_normalized.startswith(fully_normalized.lower()) or fully_normalized.lower().startswith(cell_fully_normalized):
+                        logger.info(f"MATCH_FOUND: TIER 4c (fully_normalized prefix/substring) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                        return {
+                            'type': 'table_cell',
+                            'table_idx': table_idx,
+                            'row_idx': row_idx,
+                            'cell_idx': cell_idx,
+                            'match_type': 'fully_normalized_prefix_substring'
+                        }
+                    # Also check if vendor quote appears as substring within cell (not just prefix)
+                    elif quote_ws_normalized in cell_quote_ws_normalized or cell_quote_ws_normalized in quote_ws_normalized:
+                        logger.info(f"MATCH_FOUND: TIER 4d (substring within cell) in table {table_idx}, row {row_idx}, cell {cell_idx}")
+                        return {
+                            'type': 'table_cell',
+                            'table_idx': table_idx,
+                            'row_idx': row_idx,
+                            'cell_idx': cell_idx,
+                            'match_type': 'substring_within_cell'
+                        }
     
     # Search through all paragraphs (fallback if not found in tables)
     paragraphs_checked = 0
