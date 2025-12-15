@@ -32,7 +32,7 @@ def get_kb_id_by_name(name: str) -> str:
         logger.error(f"Error resolving KB ID for name {name}: {e}")
     return None
 
-def retrieve_single_query(query_data, knowledge_base_id, region):
+def retrieve_single_query(query_data, knowledge_base_id, region, terms_profile=None):
     """
     Retrieve a single KB query.
     
@@ -40,6 +40,7 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
         query_data: Dict with query, query_id, max_results, section
         knowledge_base_id: Knowledge Base ID
         region: AWS region
+        terms_profile: Optional terms profile ('general_terms', 'it_terms_updated', 'it_terms_old') for filtering
         
     Returns:
         KBQueryResult dict
@@ -52,13 +53,14 @@ def retrieve_single_query(query_data, knowledge_base_id, region):
     
     try:
         section = query_data.get('section')
-        logger.info(f"KB_QUERY_START: query_id={query_id}, section='{section}', query_length={len(query)}, max_results={max_results}, query_preview='{query[:80]}...'")
+        logger.info(f"KB_QUERY_START: query_id={query_id}, section='{section}', query_length={len(query)}, max_results={max_results}, terms_profile={terms_profile}, query_preview='{query[:80]}...'")
         
         result = retrieve_from_knowledge_base(
             query=query,
             max_results=max_results,
             knowledge_base_id=knowledge_base_id,
-            region=region
+            region=region,
+            terms_profile=terms_profile
         )
         
         # Extract results from response
@@ -178,6 +180,7 @@ def lambda_handler(event, context):
         session_id = event.get('session_id', 'unknown')
         bucket_name = event.get('bucket_name') or os.environ.get('AGENT_PROCESSING_BUCKET')
         chunk_num = event.get('chunk_num', 0)  # Get chunk number to avoid overwrites
+        terms_profile = event.get('terms_profile')  # Get terms profile for filtering
         
         if not queries:
             raise ValueError("queries array is required")
@@ -188,7 +191,7 @@ def lambda_handler(event, context):
         if not bucket_name:
             raise ValueError("bucket_name is required for S3 storage")
         
-        logger.info(f"Retrieving {len(queries)} KB queries for job {job_id}, chunk {chunk_num}")
+        logger.info(f"Retrieving {len(queries)} KB queries for job {job_id}, chunk {chunk_num}, terms_profile={terms_profile}")
         
         # Retrieve all queries in parallel using ThreadPoolExecutor
         # Use max_workers=20 to match previous parallel map concurrency
@@ -199,7 +202,7 @@ def lambda_handler(event, context):
         with ThreadPoolExecutor(max_workers=20) as executor:
             # Submit all queries
             future_to_query = {
-                executor.submit(retrieve_single_query, query_data, knowledge_base_id, region): query_data
+                executor.submit(retrieve_single_query, query_data, knowledge_base_id, region, terms_profile): query_data
                 for query_data in queries
             }
             

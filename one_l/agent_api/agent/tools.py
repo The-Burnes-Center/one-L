@@ -153,8 +153,14 @@ def _chunk_content_intelligently(text: str, max_size: int = MAX_CHUNK_SIZE) -> L
     
     return chunks
 
-def _filter_and_prioritize_results(results: List[Dict], max_results: int) -> List[Dict]:
-    """Filter results by relevance and prioritize for optimal context usage."""
+def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_profile: str = None) -> List[Dict]:
+    """Filter results by relevance and prioritize for optimal context usage.
+    
+    Args:
+        results: List of retrieval results
+        max_results: Maximum number of results to return
+        terms_profile: Optional terms profile ('general_terms', 'it_terms_updated', 'it_terms_old') for filtering
+    """
     import os
     
     # Filter by minimum relevance score
@@ -162,6 +168,78 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int) -> Lis
         r for r in results 
         if r.get('score', 0) >= MIN_RELEVANCE_SCORE
     ]
+    
+    # Filter by terms profile if specified
+    if not terms_profile:
+        logger.debug(f"TERMS_FILTER: No terms_profile provided, skipping filtering (terms_profile={terms_profile})")
+    
+    if terms_profile:
+        logger.info(f"TERMS_FILTER: Applying filter for terms_profile={terms_profile}, total_results={len(filtered_results)}")
+        
+        # Map terms_profile to bucket name patterns
+        # Patterns should match both bucket names (with stack prefix) and document filenames
+        terms_bucket_patterns = {
+            'general_terms': [
+                'general-terms',  # Bucket name segment
+                'general_terms',  # Alternative format
+                'onel-prod-general-terms',  # Full bucket name (stack prefix)
+                'form_commonwealth-terms-and-conditions'  # Document filename pattern
+            ],
+            'it_terms_updated': [
+                'it-terms-updated',  # Bucket name segment
+                'it_terms_updated',  # Alternative format
+                'onel-prod-it-terms-updated',  # Full bucket name (stack prefix)
+                'Updated IT Terms'  # Document filename pattern
+            ],
+            'it_terms_old': [
+                'it-terms-old',  # Bucket name segment
+                'it_terms_old',  # Alternative format
+                'onel-prod-it-terms-old'  # Full bucket name (stack prefix)
+            ]
+        }
+        
+        # Get allowed patterns for selected terms profile
+        allowed_patterns = terms_bucket_patterns.get(terms_profile, [])
+        
+        # Get excluded patterns (other terms buckets)
+        excluded_patterns = []
+        for profile, patterns in terms_bucket_patterns.items():
+            if profile != terms_profile:
+                excluded_patterns.extend(patterns)
+        
+        logger.info(f"TERMS_FILTER: Selected profile '{terms_profile}' allows patterns: {allowed_patterns}")
+        logger.info(f"TERMS_FILTER: Excluding patterns from other profiles: {excluded_patterns}")
+        
+        # Filter out documents from non-selected terms buckets
+        if excluded_patterns:
+            filtered_by_terms = []
+            excluded_count = 0
+            for r in filtered_results:
+                source = r.get('source', '').lower()
+                metadata_source = r.get('metadata', {}).get('source', '').lower()
+                
+                # Also check S3 URI from location for bucket name
+                location = r.get('location', {})
+                s3_location = location.get('s3Location', {})
+                s3_uri = s3_location.get('uri', '').lower()
+                s3_key = s3_location.get('key', '').lower()
+                
+                # Combine all sources for pattern matching
+                combined_source = f"{source} {metadata_source} {s3_uri} {s3_key}"
+                
+                # Check if this document belongs to an excluded terms bucket
+                is_excluded = any(pattern.lower() in combined_source for pattern in excluded_patterns)
+                
+                if not is_excluded:
+                    filtered_by_terms.append(r)
+                else:
+                    excluded_count += 1
+                    logger.debug(f"TERMS_FILTER: Excluding document - source: {source}, s3_uri: {s3_uri}, excluded_patterns: {excluded_patterns}")
+            
+            if excluded_count > 0:
+                logger.info(f"TERMS_FILTER: Excluded {excluded_count} documents from non-selected terms buckets (selected: {terms_profile})")
+            
+            filtered_results = filtered_by_terms
     
     # Sort by score (descending), then prioritize IT Terms documents, then by document name (ascending) for deterministic ordering
     def sort_key(result: Dict) -> tuple:
@@ -342,7 +420,8 @@ def retrieve_from_knowledge_base(
     query: str, 
     max_results: int = 50,
     knowledge_base_id: str = None,
-    region: str = None
+    region: str = None,
+    terms_profile: str = None
 ) -> Dict[str, Any]:
     """
     Intelligently retrieve relevant documents from the knowledge base with optimization.
@@ -458,14 +537,15 @@ def retrieve_from_knowledge_base(
                 "text": content.get('text', ''),
                 "score": result.get('score', 0),
                 "source": source,
-                "metadata": metadata
+                "metadata": metadata,
+                "location": location  # Include location to check S3 URI for bucket name
             })
         
         # Enhanced logging: Track which reference documents were found
         logger.info(f"KNOWLEDGE_BASE_QUERY: '{query[:100]}...' found {len(raw_results)} results from {len(source_documents)} source documents: {list(source_documents)}")
         
         # Apply intelligent filtering and prioritization
-        filtered_results = _filter_and_prioritize_results(raw_results, max_results)
+        filtered_results = _filter_and_prioritize_results(raw_results, max_results, terms_profile=terms_profile)
         
         # Process results with chunking and deduplication
         optimized_results = []
