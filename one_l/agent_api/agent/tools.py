@@ -169,34 +169,33 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
         if r.get('score', 0) >= MIN_RELEVANCE_SCORE
     ]
     
+    # Map terms_profile to bucket name patterns (defined early for use in sorting)
+    terms_bucket_patterns = {
+        'general_terms': [
+            'general-terms',  # Bucket name segment
+            'general_terms',  # Alternative format
+            'onel-prod-general-terms',  # Full bucket name (stack prefix)
+            'form_commonwealth-terms-and-conditions'  # Document filename pattern
+        ],
+        'it_terms_updated': [
+            'it-terms-updated',  # Bucket name segment
+            'it_terms_updated',  # Alternative format
+            'onel-prod-it-terms-updated',  # Full bucket name (stack prefix)
+            'Updated IT Terms'  # Document filename pattern
+        ],
+        'it_terms_old': [
+            'it-terms-old',  # Bucket name segment
+            'it_terms_old',  # Alternative format
+            'onel-prod-it-terms-old'  # Full bucket name (stack prefix)
+        ]
+    }
+    
     # Filter by terms profile if specified
     if not terms_profile:
         logger.debug(f"TERMS_FILTER: No terms_profile provided, skipping filtering (terms_profile={terms_profile})")
     
     if terms_profile:
         logger.info(f"TERMS_FILTER: Applying filter for terms_profile={terms_profile}, total_results={len(filtered_results)}")
-        
-        # Map terms_profile to bucket name patterns
-        # Patterns should match both bucket names (with stack prefix) and document filenames
-        terms_bucket_patterns = {
-            'general_terms': [
-                'general-terms',  # Bucket name segment
-                'general_terms',  # Alternative format
-                'onel-prod-general-terms',  # Full bucket name (stack prefix)
-                'form_commonwealth-terms-and-conditions'  # Document filename pattern
-            ],
-            'it_terms_updated': [
-                'it-terms-updated',  # Bucket name segment
-                'it_terms_updated',  # Alternative format
-                'onel-prod-it-terms-updated',  # Full bucket name (stack prefix)
-                'Updated IT Terms'  # Document filename pattern
-            ],
-            'it_terms_old': [
-                'it-terms-old',  # Bucket name segment
-                'it_terms_old',  # Alternative format
-                'onel-prod-it-terms-old'  # Full bucket name (stack prefix)
-            ]
-        }
         
         # Get allowed patterns for selected terms profile
         allowed_patterns = terms_bucket_patterns.get(terms_profile, [])
@@ -241,7 +240,7 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
             
             filtered_results = filtered_by_terms
     
-    # Sort by score (descending), then prioritize IT Terms documents, then by document name (ascending) for deterministic ordering
+    # Sort by score (descending), then prioritize selected terms documents, then by document name (ascending) for deterministic ordering
     def sort_key(result: Dict) -> tuple:
         score = result.get('score', 0)
         # Extract filename from source for consistent sorting
@@ -249,15 +248,88 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
         # Extract just the filename if source is a path
         filename = os.path.basename(source) if source else ''
         filename_lower = filename.lower()
-        # Check if document contains "IT Terms" or "IT Terms and Conditions" (prioritize these)
-        # Handle variations: spaces, underscores, hyphens
-        normalized_filename = filename_lower.replace('_', ' ').replace('-', ' ')
-        is_it_terms = 'it terms' in normalized_filename
-        # Return tuple: (negative score for descending, priority flag inverted so True=0/False=1, filename)
-        # This ensures IT Terms docs come first when scores are equal
-        return (-score, 0 if is_it_terms else 1, filename_lower)
+        
+        # Check if this document matches the selected terms profile
+        is_selected_terms = False
+        if terms_profile:
+            location = result.get('location', {})
+            s3_location = location.get('s3Location', {})
+            s3_uri = s3_location.get('uri', '').lower()
+            s3_key = s3_location.get('key', '').lower()
+            combined_source = f"{source} {filename_lower} {s3_uri} {s3_key}"
+            
+            # Check if this document matches the selected terms profile patterns
+            allowed_patterns = terms_bucket_patterns.get(terms_profile, [])
+            is_selected_terms = any(pattern.lower() in combined_source for pattern in allowed_patterns)
+        
+        # Boost score for selected terms documents to ensure they appear prominently
+        # Add a small boost (0.1) to selected terms documents so they rank higher
+        # This ensures selected terms docs appear even if other docs have slightly higher scores
+        boost_amount = 0.1 if is_selected_terms else 0.0
+        boosted_score = score + boost_amount
+        
+        # Store boosted score in result for logging later
+        result['_original_score'] = score
+        result['_boosted_score'] = boosted_score
+        result['_is_selected_terms'] = is_selected_terms
+        
+        # Return tuple: (negative boosted score for descending, filename for deterministic ordering)
+        # The boost ensures selected terms docs come first unless other docs have significantly higher scores
+        return (-boosted_score, filename_lower)
     
     sorted_results = sorted(filtered_results, key=sort_key)
+    
+    # Log score boosting and document ranking for debugging
+    if terms_profile and sorted_results:
+        # Count boosted documents
+        boosted_count = sum(1 for r in sorted_results if r.get('_is_selected_terms', False))
+        logger.info(f"SCORE_BOOST_SUMMARY: {boosted_count} documents boosted for selected profile '{terms_profile}' out of {len(sorted_results)} total documents")
+        
+        # Log each boosted document
+        for result in sorted_results:
+            if result.get('_is_selected_terms', False):
+                original_score = result.get('_original_score', result.get('score', 0))
+                boosted_score = result.get('_boosted_score', original_score)
+                result_source = result.get('source', 'unknown')
+                result_location = result.get('location', {})
+                result_s3_uri = result_location.get('s3Location', {}).get('uri', '')
+                logger.info(f"SCORE_BOOST: '{result_source}' boosted from {original_score:.4f} to {boosted_score:.4f} (S3: {result_s3_uri[:80] if result_s3_uri else 'N/A'})")
+        
+        # Log top documents with their scores and ranking
+        top_n = min(15, len(sorted_results))
+        logger.info(f"DOCUMENT_RANKING: Top {top_n} documents after sorting (selected profile: {terms_profile}):")
+        for idx, result in enumerate(sorted_results[:top_n], 1):
+            result_source = result.get('source', 'unknown')
+            original_score = result.get('_original_score', result.get('score', 0))
+            boosted_score = result.get('_boosted_score', original_score)
+            is_selected = result.get('_is_selected_terms', False)
+            result_location = result.get('location', {})
+            result_s3_uri = result_location.get('s3Location', {}).get('uri', '')
+            
+            # Extract bucket name from S3 URI for clarity
+            bucket_name = 'unknown'
+            if result_s3_uri:
+                try:
+                    # Extract bucket from s3://bucket-name/path
+                    bucket_name = result_s3_uri.split('/')[2] if '/' in result_s3_uri else result_s3_uri
+                except:
+                    bucket_name = 'parse_error'
+            
+            boost_indicator = "⭐ BOOSTED" if is_selected else ""
+            logger.info(f"  {idx}. Score: {original_score:.4f} → {boosted_score:.4f} {boost_indicator} | Source: {result_source[:50]} | Bucket: {bucket_name[:40]}")
+        
+        # Log high-scoring non-selected documents to understand why they rank high
+        high_scoring_others = [r for r in sorted_results[:top_n] 
+                              if not r.get('_is_selected_terms', False) and r.get('score', 0) > 0.7]
+        if high_scoring_others:
+            logger.info(f"HIGH_SCORE_ANALYSIS: {len(high_scoring_others)} non-selected documents with scores > 0.7:")
+            for result in high_scoring_others[:5]:  # Log top 5 high-scoring others
+                result_source = result.get('source', 'unknown')
+                result_score = result.get('score', 0)
+                result_location = result.get('location', {})
+                result_s3_uri = result_location.get('s3Location', {}).get('uri', '')
+                bucket_name = result_s3_uri.split('/')[2] if result_s3_uri and '/' in result_s3_uri else 'unknown'
+                logger.info(f"  - Score: {result_score:.4f} | Source: {result_source[:50]} | Bucket: {bucket_name[:40]}")
     
     # Limit results for optimal performance
     return sorted_results[:min(max_results, OPTIMAL_RESULTS_PER_QUERY)]
