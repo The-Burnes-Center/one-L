@@ -99,10 +99,11 @@ Each query MUST:
 - Be distinct from other queries
 - Contain 50-100+ unique terms
 - Incorporate major legal concepts when they appear
+- Keep queries concise (200-400 characters) - extract key concepts, not full vendor text
 
 Build queries based on:
 - Major document section titles/headings - include exact title text from vendor document
-- Vendor language that may conflict with Massachusetts requirements
+- Key legal concepts from vendor sections
 - Massachusetts requirements being modified
 - Technical vs. legal/governance terms
 - Financial/payment vs. operational requirements
