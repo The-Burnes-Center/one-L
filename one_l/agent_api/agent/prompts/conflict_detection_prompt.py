@@ -124,22 +124,16 @@ STEP 1: **CRITICAL: Systematically check each pre-generated query in order**
    - Skip queries with no results, but check all queries that have results
 
 STEP 2: For each conflict you identify:
-   - Cite the EXACT document name from that query's results in source_doc field
-   - Do NOT use "N/A" if a query result contains a relevant document
+   - **MANDATORY**: Cite the EXACT document name from KB results in source_doc field - copy it exactly as shown
+   - **CRITICAL**: If ANY KB result relates to the conflict (even tangentially), cite that document - do NOT use "N/A"
+   - Only use "N/A – Not tied to a specific Massachusetts clause" if you've checked ALL queries and NO documents are relevant
 
 STEP 3: **CRITICAL: After checking all queries, scan remaining vendor text for red flag patterns NOT already identified**
    - Scan CHARACTER-BY-CHARACTER for red flag patterns in <red_flags> section
    - Focus on patterns missed by KB queries
-   - Use "N/A – Not tied to a specific Massachusetts clause" for source_doc
    - Prioritize: external references, auto-renewal, non-MA governing law, effort standards, discretionary language
 
-STEP 4:. Complete ALL fields in the JSON structure for each conflict
-
-STEP 5:. For source document citations:
-   - Use documents from "Knowledge Base Results" section when available
-   - Use "N/A – Not tied to a specific Massachusetts clause" ONLY when:
-     * Conflict is based on general red flag language patterns (e.g., "best efforts", "as is")
-     * AND you have verified no query results contain a relevant document for that conflict type
+STEP 4: Complete ALL fields in the JSON structure for each conflict
 </analysis_process>
 
 <vendor_quote_rules>
@@ -186,7 +180,7 @@ If no conflicts are found: `{{"explanation": "Explanation why no conflicts were 
 ## Critical Reminders
 - Systematically check each query in "Knowledge Base Results" sequentially
 - Use requirements from query results, not general knowledge
-- Cite documents from query results when identifying conflicts
+- **CRITICAL**: If ANY document in KB results relates to a conflict, cite it - do NOT default to "N/A"
 - Before using "N/A", verify you've checked all relevant queries
 - Output ONLY the raw JSON object without any additional text or formatting
 

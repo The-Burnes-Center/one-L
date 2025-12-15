@@ -131,7 +131,18 @@ def lambda_handler(event, context):
         # Format KB results as context
         kb_context = ""
         if kb_results:
+            # First, collect all unique document names for a summary
+            all_doc_names = set()
+            for kb_result in kb_results:
+                if isinstance(kb_result, dict):
+                    for result in kb_result.get('results', []):
+                        if isinstance(result, dict):
+                            doc_name = result.get('source', 'Unknown')
+                            if doc_name != 'Unknown':
+                                all_doc_names.add(doc_name)
+            
             kb_context = "\n\nKnowledge Base Results:\n"
+            
             for idx, kb_result in enumerate(kb_results):
                 if isinstance(kb_result, dict):
                     results = kb_result.get('results', [])
@@ -155,6 +166,7 @@ def lambda_handler(event, context):
                             document_name = result.get('source', 'Unknown')
                             # Extract content from 'text' field
                             content_text = result.get('text', '')
+                            # Make document name prominent
                             kb_context += f"    Document: {document_name}\n"
                             if content_text:
                                 kb_context += f"    Content: {content_text[:500]}...\n"
