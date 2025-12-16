@@ -195,7 +195,7 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
         logger.debug(f"TERMS_FILTER: No terms_profile provided, skipping filtering (terms_profile={terms_profile})")
     
     if terms_profile:
-        logger.info(f"TERMS_FILTER: Applying filter for terms_profile={terms_profile}, total_results={len(filtered_results)}")
+        logger.info(f"TERMS_FILTER_START: Applying filter for terms_profile={terms_profile}, total_results={len(filtered_results)}")
         
         # Get allowed patterns for selected terms profile
         allowed_patterns = terms_bucket_patterns.get(terms_profile, [])
@@ -206,39 +206,114 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
             if profile != terms_profile:
                 excluded_patterns.extend(patterns)
         
-        logger.info(f"TERMS_FILTER: Selected profile '{terms_profile}' allows patterns: {allowed_patterns}")
-        logger.info(f"TERMS_FILTER: Excluding patterns from other profiles: {excluded_patterns}")
+        logger.info(f"TERMS_FILTER_INFO: Selected profile '{terms_profile}' allows patterns: {allowed_patterns}")
+        logger.info(f"TERMS_FILTER_INFO: Excluding patterns from other profiles: {excluded_patterns}")
+        
+        # Log document sources before filtering for debugging
+        if filtered_results:
+            source_buckets = {}
+            for r in filtered_results[:10]:  # Log first 10 for brevity
+                location = r.get('location', {})
+                s3_location = location.get('s3Location', {})
+                s3_uri = s3_location.get('uri', '')
+                source = r.get('source', '')
+                bucket_name = 'unknown'
+                if s3_uri:
+                    # Extract bucket name from S3 URI (s3://bucket-name/...)
+                    if 's3://' in s3_uri:
+                        bucket_name = s3_uri.split('/')[2] if len(s3_uri.split('/')) > 2 else 'unknown'
+                elif 'general-terms' in source.lower() or 'general_terms' in source.lower():
+                    bucket_name = 'general-terms'
+                elif 'it-terms-updated' in source.lower() or 'it_terms_updated' in source.lower():
+                    bucket_name = 'it-terms-updated'
+                elif 'it-terms-old' in source.lower() or 'it_terms_old' in source.lower():
+                    bucket_name = 'it-terms-old'
+                
+                source_buckets[bucket_name] = source_buckets.get(bucket_name, 0) + 1
+            
+            logger.info(f"TERMS_FILTER_INFO: Document sources before filtering (sample): {source_buckets}")
         
         # Filter out documents from non-selected terms buckets
+        # Use same priority-based matching as boost logic to avoid false exclusions
         if excluded_patterns:
             filtered_by_terms = []
             excluded_count = 0
+            excluded_sources = {}
+            included_sources = {}
+            
             for r in filtered_results:
-                source = r.get('source', '').lower()
-                metadata_source = r.get('metadata', {}).get('source', '').lower()
-                
-                # Also check S3 URI from location for bucket name
                 location = r.get('location', {})
                 s3_location = location.get('s3Location', {})
                 s3_uri = s3_location.get('uri', '').lower()
                 s3_key = s3_location.get('key', '').lower()
                 
-                # Combine all sources for pattern matching
-                combined_source = f"{source} {metadata_source} {s3_uri} {s3_key}"
+                # Extract bucket name from S3 URI (format: s3://bucket-name/path/to/file.pdf)
+                bucket_name_from_uri = ''
+                if s3_uri and s3_uri.startswith('s3://'):
+                    try:
+                        bucket_name_from_uri = s3_uri.split('/')[2] if len(s3_uri.split('/')) > 2 else ''
+                    except:
+                        bucket_name_from_uri = ''
                 
                 # Check if this document belongs to an excluded terms bucket
-                is_excluded = any(pattern.lower() in combined_source for pattern in excluded_patterns)
+                # Priority 1: Check S3 bucket name (most reliable)
+                is_excluded = False
+                if bucket_name_from_uri:
+                    is_excluded = any(pattern.lower() in bucket_name_from_uri for pattern in excluded_patterns)
+                
+                # Priority 2: Check S3 key path if bucket didn't match
+                if not is_excluded and s3_key:
+                    is_excluded = any(pattern.lower() in s3_key for pattern in excluded_patterns)
+                
+                # Priority 3: Check specific filename patterns (only for exact matches)
+                if not is_excluded:
+                    source = r.get('source', '').lower()
+                    filename_lower = os.path.basename(source) if source else ''
+                    specific_filename_patterns = [
+                        'form_commonwealth-terms-and-conditions',
+                        'updated it terms'
+                    ]
+                    for pattern in excluded_patterns:
+                        if pattern.lower() in specific_filename_patterns:
+                            if pattern.lower() in filename_lower:
+                                is_excluded = True
+                                break
                 
                 if not is_excluded:
                     filtered_by_terms.append(r)
+                    # Track included sources using bucket name
+                    bucket_key = 'unknown'
+                    if 'general-terms' in bucket_name_from_uri or 'general_terms' in bucket_name_from_uri:
+                        bucket_key = 'general-terms'
+                    elif 'it-terms-updated' in bucket_name_from_uri or 'it_terms_updated' in bucket_name_from_uri:
+                        bucket_key = 'it-terms-updated'
+                    elif 'it-terms-old' in bucket_name_from_uri or 'it_terms_old' in bucket_name_from_uri:
+                        bucket_key = 'it-terms-old'
+                    elif bucket_name_from_uri:
+                        bucket_key = bucket_name_from_uri  # Use actual bucket name if not a terms bucket
+                    included_sources[bucket_key] = included_sources.get(bucket_key, 0) + 1
                 else:
                     excluded_count += 1
-                    logger.debug(f"TERMS_FILTER: Excluding document - source: {source}, s3_uri: {s3_uri}, excluded_patterns: {excluded_patterns}")
+                    # Track excluded sources using bucket name
+                    bucket_key = 'unknown'
+                    if 'general-terms' in bucket_name_from_uri or 'general_terms' in bucket_name_from_uri:
+                        bucket_key = 'general-terms'
+                    elif 'it-terms-updated' in bucket_name_from_uri or 'it_terms_updated' in bucket_name_from_uri:
+                        bucket_key = 'it-terms-updated'
+                    elif 'it-terms-old' in bucket_name_from_uri or 'it_terms_old' in bucket_name_from_uri:
+                        bucket_key = 'it-terms-old'
+                    excluded_sources[bucket_key] = excluded_sources.get(bucket_key, 0) + 1
+                    source = r.get('source', '')
+                    logger.debug(f"TERMS_FILTER_EXCLUDE: Excluding document - source: {source[:80]}, bucket: {bucket_name_from_uri}, s3_uri: {s3_uri[:80] if s3_uri else 'N/A'}")
             
-            if excluded_count > 0:
-                logger.info(f"TERMS_FILTER: Excluded {excluded_count} documents from non-selected terms buckets (selected: {terms_profile})")
+            logger.info(f"TERMS_FILTER_RESULT: Excluded {excluded_count} documents from non-selected terms buckets")
+            logger.info(f"TERMS_FILTER_RESULT: Excluded sources breakdown: {excluded_sources}")
+            logger.info(f"TERMS_FILTER_RESULT: Included sources breakdown: {included_sources}")
+            logger.info(f"TERMS_FILTER_RESULT: After filtering: {len(filtered_by_terms)} documents remain (selected: {terms_profile})")
             
             filtered_results = filtered_by_terms
+        else:
+            logger.info(f"TERMS_FILTER_RESULT: No excluded patterns, keeping all {len(filtered_results)} documents")
     
     # Sort by score (descending), then prioritize selected terms documents, then by document name (ascending) for deterministic ordering
     def sort_key(result: Dict) -> tuple:
@@ -250,17 +325,62 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
         filename_lower = filename.lower()
         
         # Check if this document matches the selected terms profile
+        # Prioritize S3 bucket/path matching over filename to avoid false matches
+        # (e.g., "reference standard contract terms and conditions.pdf" should NOT match)
         is_selected_terms = False
         if terms_profile:
             location = result.get('location', {})
             s3_location = location.get('s3Location', {})
             s3_uri = s3_location.get('uri', '').lower()
             s3_key = s3_location.get('key', '').lower()
-            combined_source = f"{source} {filename_lower} {s3_uri} {s3_key}"
             
-            # Check if this document matches the selected terms profile patterns
+            # Extract bucket name from S3 URI (format: s3://bucket-name/path/to/file.pdf)
+            bucket_name_from_uri = ''
+            if s3_uri and s3_uri.startswith('s3://'):
+                try:
+                    # Extract bucket name (everything between s3:// and first /)
+                    bucket_name_from_uri = s3_uri.split('/')[2] if len(s3_uri.split('/')) > 2 else ''
+                except:
+                    bucket_name_from_uri = ''
+            
+            # Get allowed patterns for the selected terms profile
             allowed_patterns = terms_bucket_patterns.get(terms_profile, [])
-            is_selected_terms = any(pattern.lower() in combined_source for pattern in allowed_patterns)
+            
+            # Priority 1: Check S3 bucket name (most reliable indicator)
+            # Bucket names like "onel-prod-general-terms" should match "general-terms" pattern
+            if bucket_name_from_uri:
+                bucket_match = any(pattern.lower() in bucket_name_from_uri for pattern in allowed_patterns)
+                if bucket_match:
+                    is_selected_terms = True
+                    logger.debug(f"TERMS_MATCH: Matched via bucket name '{bucket_name_from_uri}' with pattern from {terms_profile}")
+            
+            # Priority 2: Check S3 key path (if bucket check didn't match)
+            # Paths like "general-terms/document.pdf" should match
+            if not is_selected_terms and s3_key:
+                key_match = any(pattern.lower() in s3_key for pattern in allowed_patterns)
+                if key_match:
+                    is_selected_terms = True
+                    logger.debug(f"TERMS_MATCH: Matched via S3 key path '{s3_key[:80]}' with pattern from {terms_profile}")
+            
+            # Priority 3: Check specific known filenames (only for exact matches)
+            # This is for documents like "form_commonwealth-terms-and-conditions.pdf"
+            if not is_selected_terms:
+                # Only check specific filename patterns, not generic "terms" patterns
+                specific_filename_patterns = [
+                    'form_commonwealth-terms-and-conditions',  # General terms specific file
+                    'updated it terms'  # IT terms updated specific file
+                ]
+                for pattern in allowed_patterns:
+                    if pattern.lower() in specific_filename_patterns:
+                        # Only match if the pattern appears as a complete word/phrase in the filename
+                        if pattern.lower() in filename_lower:
+                            is_selected_terms = True
+                            logger.debug(f"TERMS_MATCH: Matched via specific filename pattern '{pattern}' in '{filename_lower}'")
+                            break
+            
+            # Log if document was NOT matched (for debugging)
+            if not is_selected_terms and terms_profile:
+                logger.debug(f"TERMS_NO_MATCH: Document '{filename_lower[:80]}' from bucket '{bucket_name_from_uri}' did not match patterns for {terms_profile}")
         
         # Boost score for selected terms documents to ensure they appear prominently
         # Add a small boost (0.1) to selected terms documents so they rank higher
@@ -283,17 +403,22 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
     if terms_profile and sorted_results:
         # Count boosted documents
         boosted_count = sum(1 for r in sorted_results if r.get('_is_selected_terms', False))
+        non_boosted_count = len(sorted_results) - boosted_count
         logger.info(f"SCORE_BOOST_SUMMARY: {boosted_count} documents boosted for selected profile '{terms_profile}' out of {len(sorted_results)} total documents")
+        logger.info(f"SCORE_BOOST_SUMMARY: {non_boosted_count} documents NOT boosted (may be from other sources or don't match selected profile)")
         
         # Log each boosted document
-        for result in sorted_results:
-            if result.get('_is_selected_terms', False):
-                original_score = result.get('_original_score', result.get('score', 0))
-                boosted_score = result.get('_boosted_score', original_score)
-                result_source = result.get('source', 'unknown')
-                result_location = result.get('location', {})
-                result_s3_uri = result_location.get('s3Location', {}).get('uri', '')
-                logger.info(f"SCORE_BOOST: '{result_source}' boosted from {original_score:.4f} to {boosted_score:.4f} (S3: {result_s3_uri[:80] if result_s3_uri else 'N/A'})")
+        if boosted_count > 0:
+            logger.info(f"SCORE_BOOST_DETAILS: Documents that received boost for '{terms_profile}':")
+            for result in sorted_results:
+                if result.get('_is_selected_terms', False):
+                    original_score = result.get('_original_score', result.get('score', 0))
+                    boosted_score = result.get('_boosted_score', original_score)
+                    result_source = result.get('source', 'unknown')
+                    result_location = result.get('location', {})
+                    result_s3_uri = result_location.get('s3Location', {}).get('uri', '')
+                    boost_amount = boosted_score - original_score
+                    logger.info(f"SCORE_BOOST: '{result_source[:100]}' boosted from {original_score:.4f} to {boosted_score:.4f} (+{boost_amount:.4f}) (S3: {result_s3_uri[:80] if result_s3_uri else 'N/A'})")
         
         # Log top documents with their scores and ranking
         top_n = min(15, len(sorted_results))
@@ -303,6 +428,7 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
             original_score = result.get('_original_score', result.get('score', 0))
             boosted_score = result.get('_boosted_score', original_score)
             is_selected = result.get('_is_selected_terms', False)
+            boost_indicator = "[BOOSTED]" if is_selected else "[NOT BOOSTED]"
             result_location = result.get('location', {})
             result_s3_uri = result_location.get('s3Location', {}).get('uri', '')
             

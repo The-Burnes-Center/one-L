@@ -332,9 +332,11 @@ def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all", term
         # If syncing a specific terms bucket, first remove documents from other terms buckets
         cleanup_results = []
         if terms_bucket and data_source_filter == "terms":
-            logger.info(f"Syncing terms bucket {terms_bucket} - cleaning up other terms buckets first")
+            logger.info(f"SYNC_CLEANUP_START: Syncing terms bucket '{terms_bucket}' - will clean up other terms buckets first")
+            logger.info(f"SYNC_CLEANUP_INFO: Selected bucket patterns: {terms_bucket_patterns.get(terms_bucket, [])}")
             
             # Find all terms bucket data sources
+            all_terms_sources = []
             for ds in data_sources_response['dataSourceSummaries']:
                 ds_name = ds['name'].lower()
                 # Check if this is a terms bucket data source
@@ -345,23 +347,44 @@ def start_sync_job(knowledge_base_id: str, data_source_filter: str = "all", term
                 )
                 
                 if is_terms_source:
-                    # Check if this is NOT the bucket we're syncing
-                    selected_patterns = terms_bucket_patterns.get(terms_bucket, [])
-                    is_selected_bucket = any(pattern in ds_name for pattern in selected_patterns)
-                    
-                    if not is_selected_bucket:
-                        # This is another terms bucket - delete its documents
-                        logger.info(f"Removing documents from other terms bucket: {ds['name']}")
-                        cleanup_result = delete_documents_from_data_source(
-                            knowledge_base_id,
-                            ds['dataSourceId'],
-                            ds['name']
-                        )
-                        cleanup_results.append({
-                            'data_source_name': ds['name'],
-                            'data_source_id': ds['dataSourceId'],
-                            'cleanup_result': cleanup_result
-                        })
+                    all_terms_sources.append(ds)
+            
+            logger.info(f"SYNC_CLEANUP_INFO: Found {len(all_terms_sources)} terms bucket data sources: {[ds['name'] for ds in all_terms_sources]}")
+            
+            for ds in all_terms_sources:
+                ds_name = ds['name'].lower()
+                # Check if this is NOT the bucket we're syncing
+                selected_patterns = terms_bucket_patterns.get(terms_bucket, [])
+                is_selected_bucket = any(pattern in ds_name for pattern in selected_patterns)
+                
+                if not is_selected_bucket:
+                    # This is another terms bucket - delete its documents
+                    logger.info(f"SYNC_CLEANUP_DELETE: Removing documents from other terms bucket: {ds['name']} (data_source_id: {ds['dataSourceId']})")
+                    logger.info(f"SYNC_CLEANUP_DELETE: This bucket will be deleted because it doesn't match selected patterns: {selected_patterns}")
+                    cleanup_result = delete_documents_from_data_source(
+                        knowledge_base_id,
+                        ds['dataSourceId'],
+                        ds['name']
+                    )
+                    deleted_count = cleanup_result.get('deleted_count', 0) if isinstance(cleanup_result, dict) else 0
+                    logger.info(f"SYNC_CLEANUP_DELETE: Deleted {deleted_count} documents from {ds['name']}")
+                    cleanup_results.append({
+                        'data_source_name': ds['name'],
+                        'data_source_id': ds['dataSourceId'],
+                        'cleanup_result': cleanup_result
+                    })
+                else:
+                    logger.info(f"SYNC_CLEANUP_KEEP: Keeping documents in selected bucket: {ds['name']} (matches patterns: {selected_patterns})")
+            
+            if cleanup_results:
+                total_deleted = sum(
+                    r['cleanup_result'].get('deleted_count', 0) 
+                    for r in cleanup_results 
+                    if isinstance(r.get('cleanup_result'), dict) and r['cleanup_result'].get('success', False)
+                )
+                logger.info(f"SYNC_CLEANUP_COMPLETE: Cleanup finished. Deleted {total_deleted} total documents from {len(cleanup_results)} other terms buckets")
+            else:
+                logger.info(f"SYNC_CLEANUP_COMPLETE: No cleanup needed - no other terms buckets found or all buckets match selected bucket")
         
         # Filter data sources based on request
         data_sources_to_sync = []

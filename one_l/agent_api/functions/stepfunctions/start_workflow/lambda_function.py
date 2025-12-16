@@ -47,6 +47,12 @@ def lambda_handler(event, context):
         user_id = body.get('user_id')
         terms_profile = body.get('terms_profile', 'it_terms_updated')
         
+        # Log terms profile being used
+        logger.info(f"WORKFLOW_START: Starting workflow for session {session_id}")
+        logger.info(f"WORKFLOW_START: Terms profile from request: {body.get('terms_profile', 'NOT_PROVIDED')}")
+        logger.info(f"WORKFLOW_START: Terms profile being used: {terms_profile}")
+        logger.info(f"WORKFLOW_START: This terms_profile will be passed to all KB queries and filtering")
+        
         # Validate required fields
         if not document_s3_key:
             return {
@@ -247,7 +253,7 @@ def lambda_handler(event, context):
                         'user_id': user_id,
                         'document_s3_key': document_s3_key,
                         'bucket_type': bucket_type,
-                        'terms_profile': terms_profile,
+                        'terms_profile': terms_profile,  # This will filter/prioritize KB queries
                         'status': 'starting',
                         'stage': 'starting',
                         'progress': 0,

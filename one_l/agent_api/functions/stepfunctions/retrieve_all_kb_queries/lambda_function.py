@@ -191,7 +191,9 @@ def lambda_handler(event, context):
         if not bucket_name:
             raise ValueError("bucket_name is required for S3 storage")
         
-        logger.info(f"Retrieving {len(queries)} KB queries for job {job_id}, chunk {chunk_num}, terms_profile={terms_profile}")
+        logger.info(f"KB_RETRIEVE_START: Retrieving {len(queries)} KB queries for job {job_id}, chunk {chunk_num}")
+        logger.info(f"KB_RETRIEVE_INFO: Terms profile being used for filtering: {terms_profile}")
+        logger.info(f"KB_RETRIEVE_INFO: This terms_profile will filter out documents from other terms buckets and boost matching documents")
         
         # Retrieve all queries in parallel using ThreadPoolExecutor
         # Use max_workers=20 to match previous parallel map concurrency
