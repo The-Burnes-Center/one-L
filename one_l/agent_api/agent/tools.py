@@ -306,9 +306,21 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
                 # Only exclude if it doesn't match allowed patterns AND matches excluded patterns
                 is_excluded = False
                 if not matches_allowed:
+                    bucket_lower = bucket_name_from_uri.lower() if bucket_name_from_uri else ''
                     # Priority 1: Check S3 bucket name (most reliable)
-                    if bucket_name_from_uri:
-                        is_excluded = any(pattern.lower() in bucket_name_from_uri for pattern in excluded_patterns)
+                    if bucket_lower:
+                        for pattern in excluded_patterns:
+                            pattern_lower = pattern.lower()
+                            # For full bucket name patterns (starting with 'onel-prod-'), use exact match
+                            # For partial patterns (like 'it-terms-old'), use substring match
+                            if pattern_lower.startswith('onel-prod-'):
+                                if bucket_lower == pattern_lower:
+                                    is_excluded = True
+                                    break
+                            else:
+                                if pattern_lower in bucket_lower:
+                                    is_excluded = True
+                                    break
                     
                     # Priority 2: Check S3 key path if bucket didn't match
                     if not is_excluded and s3_key:
