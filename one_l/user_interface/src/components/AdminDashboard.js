@@ -5,54 +5,17 @@
 
 import React from 'react';
 import KnowledgeUpload from './KnowledgeUpload';
-import MetricsDashboard from './MetricsDashboard';
 
-const AdminDashboard = ({ activeTab, onTabChange }) => {
-  // Remove local state since it's now managed by App component
-
-  const sections = [
-    {
-      id: 'data',
-      label: 'Data',
-      component: KnowledgeUpload
-    },
-    {
-      id: 'metrics',
-      label: 'Metrics',
-      component: MetricsDashboard
-    }
-  ];
-
-  const renderActiveSection = () => {
-    const activeTabConfig = sections.find(section => section.id === activeTab);
-    if (activeTabConfig) {
-      const Component = activeTabConfig.component;
-      return <Component />;
-    }
-    return null;
-  };
-
+const AdminDashboard = () => {
   return (
     <div className="admin-dashboard">
       <div className="dashboard-header">
-        <h1>Admin Dashboard</h1>
-        <p>Manage knowledge base data and system configuration</p>
-      </div>
-
-      <div className="dashboard-tabs">
-        {sections.map(section => (
-          <button
-            key={section.id}
-            className={`dashboard-tab ${activeTab === section.id ? 'active' : ''}`}
-            onClick={() => onTabChange(section.id)}
-          >
-            {section.label}
-          </button>
-        ))}
+        <h1>Knowledge Base Management</h1>
+        <p>Upload documents and manage knowledge base contents</p>
       </div>
 
       <div className="dashboard-content">
-        {renderActiveSection()}
+        <KnowledgeUpload />
       </div>
     </div>
   );

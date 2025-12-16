@@ -7,6 +7,11 @@ import uuid
 from typing import Dict, Any
 from decimal import Decimal
 from botocore.exceptions import ClientError
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    # Fallback for Python < 3.9
+    from backports.zoneinfo import ZoneInfo
 
 # Set up logging
 logger = logging.getLogger()
@@ -41,6 +46,43 @@ def convert_decimals(obj):
         return [convert_decimals(item) for item in obj]
     return obj
 
+def get_timezone_abbreviation(local_time: datetime, user_timezone: str = None) -> str:
+    """Get timezone abbreviation from datetime object"""
+    # Try tzname() first - usually returns abbreviations like EST, EDT, PST, PDT
+    tz_abbr = local_time.tzname()
+    
+    # If tzname() returns None or empty, try strftime('%Z')
+    if not tz_abbr:
+        tz_abbr = local_time.strftime('%Z')
+    
+    # If still empty or too long (full name instead of abbreviation), try to abbreviate
+    if not tz_abbr or tz_abbr == '' or len(tz_abbr) > 5:
+        # Common timezone abbreviation mappings
+        tz_mapping = {
+            'Eastern Standard Time': 'EST',
+            'Eastern Daylight Time': 'EDT',
+            'Central Standard Time': 'CST',
+            'Central Daylight Time': 'CDT',
+            'Mountain Standard Time': 'MST',
+            'Mountain Daylight Time': 'MDT',
+            'Pacific Standard Time': 'PST',
+            'Pacific Daylight Time': 'PDT',
+            'Atlantic Standard Time': 'AST',
+            'Atlantic Daylight Time': 'ADT',
+        }
+        tz_abbr = tz_mapping.get(tz_abbr, tz_abbr)
+    
+    # If still empty, extract from timezone name (e.g., "America/New_York" -> "ET")
+    if not tz_abbr or tz_abbr == '':
+        if user_timezone:
+            tz_parts = user_timezone.split('/')
+            # Use last part of timezone name as fallback
+            tz_abbr = tz_parts[-1].replace('_', ' ')
+        else:
+            tz_abbr = 'ET'  # Default fallback
+    
+    return tz_abbr
+
 def create_cors_response(status_code: int, body: dict) -> dict:
     """Create a response with CORS headers"""
     # Convert any Decimal types to native Python types for JSON serialization
@@ -57,7 +99,7 @@ def create_cors_response(status_code: int, body: dict) -> dict:
         'body': json.dumps(body)
     }
 
-def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, Any]:
+def create_session(user_id: str, cognito_session_id: str = None, user_timezone: str = None) -> Dict[str, Any]:
     """Create a new session for a user"""
     try:
         session_id = str(uuid.uuid4())
@@ -83,13 +125,31 @@ def create_session(user_id: str, cognito_session_id: str = None) -> Dict[str, An
             )
         
         # Store session metadata
+        # Convert current time to user's timezone for display
+        try:
+            if user_timezone:
+                tz = ZoneInfo(user_timezone)
+            else:
+                # Fallback to EST if no timezone provided
+                tz = ZoneInfo('America/New_York')
+            
+            local_time = datetime.now(tz)
+            # Get timezone abbreviation (e.g., EST, PST, EDT)
+            tz_abbr = get_timezone_abbreviation(local_time, user_timezone)
+            
+            time_str = f"{local_time.strftime('%b %d, %Y %I:%M %p')} {tz_abbr}"
+        except Exception as e:
+            logger.warning(f"Error formatting timezone {user_timezone}: {e}, falling back to UTC")
+            utc_time = datetime.now(timezone.utc)
+            time_str = f"{utc_time.strftime('%b %d, %Y %I:%M %p')} UTC"
+        
         session_data = {
             'session_id': session_id,
             'user_id': user_id,
             'cognito_session_id': cognito_session_id,
             'created_at': timestamp,
             'updated_at': timestamp,
-            'title': f"New Session - {datetime.now().strftime('%b %d, %Y %I:%M %p')}",
+            'title': f"New Session - {time_str}",
             'status': 'active',
             'document_count': 0,
             'has_results': False,  # Track if session has processed documents
@@ -1553,13 +1613,14 @@ def lambda_handler(event, context):
         # Extract user information for other endpoints
         user_id = body.get('user_id') or query_parameters.get('user_id')
         cognito_session_id = body.get('cognito_session_id') or query_parameters.get('cognito_session_id')
+        user_timezone = body.get('timezone') or query_parameters.get('timezone')
         
         if not user_id:
             return create_cors_response(400, {'error': 'user_id is required'})
         
         # Route based on HTTP method and action
         if http_method == 'POST' and action == 'create':
-            result = create_session(user_id, cognito_session_id)
+            result = create_session(user_id, cognito_session_id, user_timezone)
             return create_cors_response(200 if result['success'] else 500, result)
             
         elif http_method == 'GET' and action == 'list':

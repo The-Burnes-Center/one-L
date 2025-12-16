@@ -3134,7 +3134,6 @@ const AppContent = () => {
   const navigate = useNavigate();
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configError, setConfigError] = useState('');
-  const [activeTab, setActiveTab] = useState('data');
   
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -3273,7 +3272,7 @@ const AppContent = () => {
         <Route path="/admin/knowledgebase" element={
           isAdmin ? (
             <div className="main-content">
-              <AdminDashboard activeTab={activeTab} onTabChange={setActiveTab} />
+              <AdminDashboard />
             </div>
           ) : (
             <Navigate to="/" replace />

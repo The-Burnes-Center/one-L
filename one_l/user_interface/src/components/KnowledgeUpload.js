@@ -233,76 +233,87 @@ const KnowledgeUpload = () => {
   };
 
   return (
-    <div className="card">
-      <h2>Knowledge Base Data Upload</h2>
-      <p>Upload documents to the knowledge base for AI processing and retrieval. These files will be embedded and indexed for search.</p>
-      
-      <div className="form-group">
-        <label className="form-label">
-          Select Knowledge Base Files
-        </label>
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileSelect}
-          multiple
-          accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
-          className="form-control"
-          disabled={uploading}
-        />
-        <small className="form-text">
-          Supported formats: TXT, PDF, DOC, DOCX, JPG, PNG, GIF. Maximum size: 10MB per file.
-        </small>
-      </div>
-
-      {selectedFiles.length > 0 && (
-        <div className="form-group">
-          <label className="form-label">Selected Files ({selectedFiles.length})</label>
-          <div className="file-list">
-            {selectedFiles.map((file, index) => (
-              <div key={index} className="file-item">
-                <div className="file-info">
-                  <span className="file-name">{file.name}</span>
-                  <span className="file-size">({formatFileSize(file.size)})</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveFile(index)}
-                  className="btn-remove"
-                  disabled={uploading}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
+    <div>
+      {/* Upload Section */}
+      <div className="card" style={{ marginBottom: '2rem' }}>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ marginBottom: '0.5rem' }}>Upload Documents</h2>
+          <p style={{ color: '#666', margin: 0 }}>
+            Upload documents to the knowledge base for AI processing and retrieval. Files will be embedded and indexed for search.
+          </p>
         </div>
-      )}
-
-      <div className="form-group">
-        <button
-          onClick={handleUpload}
-          disabled={uploading || selectedFiles.length === 0}
-          className="btn btn-primary"
-        >
-          {uploading ? 'Uploading...' : 'Upload to Knowledge Base'}
-        </button>
-      </div>
-
-      {message && (
-        <div className={`alert ${messageType === 'error' ? 'alert-error' : 'alert-success'}`}>
-          {message}
-        </div>
-      )}
-
-      {/* Terms & Conditions Bucket Management */}
-      <div className="card" style={{ marginTop: '2rem' }}>
-        <h2>Terms & Conditions Bucket Management</h2>
-        <p>Select which Terms & Conditions bucket to sync to the knowledge base. Each bucket can contain different versions of terms and conditions documents.</p>
         
-        <div className="form-group">
+        <div className="form-group" style={{ marginBottom: '1rem' }}>
           <label className="form-label">
-            Select Terms & Conditions Bucket
+            Select Files
+          </label>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            multiple
+            accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif"
+            className="form-control"
+            disabled={uploading}
+          />
+          <small className="form-text">
+            Supported formats: TXT, PDF, DOC, DOCX, JPG, PNG, GIF. Maximum size: 10MB per file.
+          </small>
+        </div>
+
+        {selectedFiles.length > 0 && (
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Selected Files ({selectedFiles.length})</label>
+            <div className="file-list">
+              {selectedFiles.map((file, index) => (
+                <div key={index} className="file-item">
+                  <div className="file-info">
+                    <span className="file-name">{file.name}</span>
+                    <span className="file-size">({formatFileSize(file.size)})</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveFile(index)}
+                    className="btn-remove"
+                    disabled={uploading}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="form-group">
+          <button
+            onClick={handleUpload}
+            disabled={uploading || selectedFiles.length === 0}
+            className="btn btn-primary"
+          >
+            {uploading ? 'Uploading...' : 'Upload to Knowledge Base'}
+          </button>
+        </div>
+
+        {message && (
+          <div className={`alert ${messageType === 'error' ? 'alert-error' : 'alert-success'}`} style={{ marginTop: '1rem' }}>
+            {message}
+          </div>
+        )}
+      </div>
+
+      {/* Terms & Conditions Sync Section */}
+      <div className="card" style={{ marginBottom: '2rem' }}>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ marginBottom: '0.5rem' }}>Sync Terms & Conditions</h2>
+          <p style={{ color: '#666', margin: 0 }}>
+            Select which Terms & Conditions bucket to sync to the knowledge base. Each bucket can contain different versions of terms and conditions documents.
+          </p>
+        </div>
+        
+        <div className="form-group" style={{ marginBottom: '1rem' }}>
+          <label className="form-label">
+            Select Bucket
           </label>
           <select
             className="form-control"
@@ -370,17 +381,30 @@ const KnowledgeUpload = () => {
         </div>
       </div>
 
-      <div className="knowledge-list-section">
-        <div className="section-header">
+      {/* Knowledge Base Contents Section */}
+      <div className="card">
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'flex-start',
+          marginBottom: '1.5rem',
+          flexWrap: 'wrap',
+          gap: '1rem'
+        }}>
           <div>
-            <h3>Knowledge Base Contents</h3>
-            <p className="section-subtitle">
+            <h2 style={{ marginBottom: '0.5rem' }}>Knowledge Base Contents</h2>
+            <p style={{ color: '#666', margin: 0 }}>
               Browse existing documents stored in the knowledge bucket.
             </p>
           </div>
-          <div className="section-actions">
-            <div className="filter-control">
-              <label className="form-label" htmlFor="kb-prefix-filter">
+          <div style={{ 
+            display: 'flex', 
+            gap: '0.75rem', 
+            alignItems: 'flex-end',
+            flexWrap: 'wrap'
+          }}>
+            <div style={{ minWidth: '150px' }}>
+              <label className="form-label" htmlFor="kb-prefix-filter" style={{ marginBottom: '0.25rem', display: 'block' }}>
                 Filter
               </label>
               <select
@@ -393,6 +417,7 @@ const KnowledgeUpload = () => {
                   setPrefixFilter(newPrefix);
                 }}
                 disabled={filesLoading}
+                style={{ width: '100%' }}
               >
                 <option value="">All files</option>
                 <option value="admin-uploads/">Admin uploads</option>
@@ -409,28 +434,44 @@ const KnowledgeUpload = () => {
           </div>
         </div>
 
-        <div className="section-meta">
-          <div className="meta-item">
-            <span className="meta-label">Bucket</span>
-            <span className="meta-value">{renderMetaValue(filesMeta.bucketName)}</span>
-          </div>
-          <div className="meta-item">
-            <span className="meta-label">Showing</span>
-            <span className="meta-value">
+        <div style={{ 
+          display: 'flex', 
+          gap: '1.5rem', 
+          marginBottom: '1.5rem',
+          paddingBottom: '1rem',
+          borderBottom: '1px solid #e0e0e0',
+          flexWrap: 'wrap'
+        }}>
+          {filesMeta.bucketName && (
+            <div>
+              <span style={{ color: '#666', fontSize: '0.875rem', display: 'block', marginBottom: '0.25rem' }}>Bucket</span>
+              <span style={{ fontWeight: '500', color: '#333' }}>{renderMetaValue(filesMeta.bucketName)}</span>
+            </div>
+          )}
+          <div>
+            <span style={{ color: '#666', fontSize: '0.875rem', display: 'block', marginBottom: '0.25rem' }}>Showing</span>
+            <span style={{ fontWeight: '500', color: '#333' }}>
               {knowledgeFiles.length} file{knowledgeFiles.length === 1 ? '' : 's'}
               {hasMore ? '+' : ''}
             </span>
           </div>
           {filesMeta.prefix && (
-            <div className="meta-item">
-              <span className="meta-label">Prefix</span>
-              <span className="meta-badge">{filesMeta.prefix}</span>
+            <div>
+              <span style={{ color: '#666', fontSize: '0.875rem', display: 'block', marginBottom: '0.25rem' }}>Prefix</span>
+              <span style={{ 
+                fontWeight: '500', 
+                color: '#333',
+                backgroundColor: '#f0f0f0',
+                padding: '0.25rem 0.5rem',
+                borderRadius: '4px',
+                fontSize: '0.875rem'
+              }}>{filesMeta.prefix}</span>
             </div>
           )}
           {lastRefreshed && (
-            <div className="meta-item">
-              <span className="meta-label">Updated</span>
-              <span className="meta-value">
+            <div>
+              <span style={{ color: '#666', fontSize: '0.875rem', display: 'block', marginBottom: '0.25rem' }}>Updated</span>
+              <span style={{ fontWeight: '500', color: '#333' }}>
                 {lastRefreshed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
               </span>
             </div>
@@ -438,36 +479,42 @@ const KnowledgeUpload = () => {
         </div>
 
         {filesError && (
-          <div className="alert alert-error">
+          <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
             {filesError}
           </div>
         )}
 
         {!filesError && knowledgeFiles.length === 0 && !filesLoading && (
-          <div className="knowledge-empty">
-            <strong>No knowledge base documents found.</strong>
-            <p>Upload files or adjust the filter to see existing documents.</p>
+          <div style={{ 
+            padding: '3rem 1rem', 
+            textAlign: 'center',
+            color: '#666'
+          }}>
+            <p style={{ margin: 0, fontWeight: '500', marginBottom: '0.5rem' }}>No knowledge base documents found.</p>
+            <p style={{ margin: 0, fontSize: '0.875rem' }}>Upload files or adjust the filter to see existing documents.</p>
           </div>
         )}
 
         {knowledgeFiles.length > 0 && (
-          <div className={`knowledge-files-table ${filesLoading ? 'is-loading' : ''}`}>
-            <div className="table-header">
-              <span>File Name</span>
-              <span>Size</span>
-              <span>Last Modified</span>
-            </div>
-            <div className="table-body">
-              {knowledgeFiles.map((file) => {
-                const fileName = file?.s3_key ? file.s3_key.split('/').pop() : 'Unknown file';
-                return (
-                  <div key={file.s3_key} className="table-row">
-                    <span title={file.s3_key}>{fileName || file.s3_key}</span>
-                    <span>{typeof file.size === 'number' ? formatFileSize(file.size) : '—'}</span>
-                    <span>{formatTimestamp(file.last_modified)}</span>
-                  </div>
-                );
-              })}
+          <div style={{ position: 'relative' }}>
+            <div className={`knowledge-files-table ${filesLoading ? 'is-loading' : ''}`}>
+              <div className="table-header">
+                <span>File Name</span>
+                <span>Size</span>
+                <span>Last Modified</span>
+              </div>
+              <div className="table-body">
+                {knowledgeFiles.map((file) => {
+                  const fileName = file?.s3_key ? file.s3_key.split('/').pop() : 'Unknown file';
+                  return (
+                    <div key={file.s3_key} className="table-row">
+                      <span title={file.s3_key}>{fileName || file.s3_key}</span>
+                      <span>{typeof file.size === 'number' ? formatFileSize(file.size) : '—'}</span>
+                      <span>{formatTimestamp(file.last_modified)}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
             {filesLoading && (
               <div className="table-loading-overlay">
@@ -479,7 +526,7 @@ const KnowledgeUpload = () => {
         )}
 
         {listContinuationToken && (
-          <div className="form-group">
+          <div className="form-group" style={{ marginTop: '1.5rem', textAlign: 'center' }}>
             <button
               type="button"
               className="btn btn-outline"

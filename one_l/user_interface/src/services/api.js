@@ -606,14 +606,16 @@ const sessionAPI = {
    */
   createSession: async (userId, cognitoSessionId = null) => {
     try {
-
+      // Detect user's timezone
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       
       const response = await apiCall('/knowledge_management/sessions?action=create', {
         method: 'POST',
         body: JSON.stringify({
           user_id: userId,
           cognito_session_id: cognitoSessionId,
-          action: 'create'
+          action: 'create',
+          timezone: userTimezone
         })
       });
       
