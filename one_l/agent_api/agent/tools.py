@@ -255,29 +255,54 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
                     except:
                         bucket_name_from_uri = ''
                 
-                # Check if this document belongs to an excluded terms bucket
-                # Priority 1: Check S3 bucket name (most reliable)
-                is_excluded = False
+                # FIRST: Check if this document matches the ALLOWED patterns (selected terms bucket)
+                # If it matches allowed patterns, it should NEVER be excluded
+                matches_allowed = False
                 if bucket_name_from_uri:
-                    is_excluded = any(pattern.lower() in bucket_name_from_uri for pattern in excluded_patterns)
+                    matches_allowed = any(pattern.lower() in bucket_name_from_uri for pattern in allowed_patterns)
                 
                 # Priority 2: Check S3 key path if bucket didn't match
-                if not is_excluded and s3_key:
-                    is_excluded = any(pattern.lower() in s3_key for pattern in excluded_patterns)
+                if not matches_allowed and s3_key:
+                    matches_allowed = any(pattern.lower() in s3_key for pattern in allowed_patterns)
                 
                 # Priority 3: Check specific filename patterns (only for exact matches)
-                if not is_excluded:
+                if not matches_allowed:
                     source = r.get('source', '').lower()
                     filename_lower = os.path.basename(source) if source else ''
                     specific_filename_patterns = [
                         'form_commonwealth-terms-and-conditions',
                         'updated it terms'
                     ]
-                    for pattern in excluded_patterns:
+                    for pattern in allowed_patterns:
                         if pattern.lower() in specific_filename_patterns:
                             if pattern.lower() in filename_lower:
-                                is_excluded = True
+                                matches_allowed = True
                                 break
+                
+                # Only exclude if it doesn't match allowed patterns AND matches excluded patterns
+                is_excluded = False
+                if not matches_allowed:
+                    # Priority 1: Check S3 bucket name (most reliable)
+                    if bucket_name_from_uri:
+                        is_excluded = any(pattern.lower() in bucket_name_from_uri for pattern in excluded_patterns)
+                    
+                    # Priority 2: Check S3 key path if bucket didn't match
+                    if not is_excluded and s3_key:
+                        is_excluded = any(pattern.lower() in s3_key for pattern in excluded_patterns)
+                    
+                    # Priority 3: Check specific filename patterns (only for exact matches)
+                    if not is_excluded:
+                        source = r.get('source', '').lower()
+                        filename_lower = os.path.basename(source) if source else ''
+                        specific_filename_patterns = [
+                            'form_commonwealth-terms-and-conditions',
+                            'updated it terms'
+                        ]
+                        for pattern in excluded_patterns:
+                            if pattern.lower() in specific_filename_patterns:
+                                if pattern.lower() in filename_lower:
+                                    is_excluded = True
+                                    break
                 
                 if not is_excluded:
                     filtered_by_terms.append(r)
