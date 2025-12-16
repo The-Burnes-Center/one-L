@@ -255,15 +255,39 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
                     except:
                         bucket_name_from_uri = ''
                 
+                # Log first few documents for debugging
+                if len(filtered_by_terms) < 3:
+                    logger.debug(f"TERMS_MATCH_DEBUG: Document - bucket_from_uri: '{bucket_name_from_uri}', s3_uri: '{s3_uri[:100] if s3_uri else 'N/A'}', s3_key: '{s3_key[:80] if s3_key else 'N/A'}'")
+                
                 # FIRST: Check if this document matches the ALLOWED patterns (selected terms bucket)
                 # If it matches allowed patterns, it should NEVER be excluded
                 matches_allowed = False
                 if bucket_name_from_uri:
-                    matches_allowed = any(pattern.lower() in bucket_name_from_uri for pattern in allowed_patterns)
+                    bucket_lower = bucket_name_from_uri.lower()
+                    for pattern in allowed_patterns:
+                        pattern_lower = pattern.lower()
+                        # For full bucket name patterns (starting with 'onel-prod-'), use exact match
+                        # For partial patterns (like 'it-terms-old'), use substring match
+                        if pattern_lower.startswith('onel-prod-'):
+                            if bucket_lower == pattern_lower:
+                                matches_allowed = True
+                                if len(filtered_by_terms) < 3:
+                                    logger.debug(f"TERMS_MATCH_DEBUG: Bucket '{bucket_name_from_uri}' EXACT MATCHED allowed pattern '{pattern}'")
+                                break
+                        else:
+                            if pattern_lower in bucket_lower:
+                                matches_allowed = True
+                                if len(filtered_by_terms) < 3:
+                                    logger.debug(f"TERMS_MATCH_DEBUG: Bucket '{bucket_name_from_uri}' SUBSTRING MATCHED allowed pattern '{pattern}'")
+                                break
+                    if not matches_allowed and len(filtered_by_terms) < 3:
+                        logger.debug(f"TERMS_MATCH_DEBUG: Bucket '{bucket_name_from_uri}' did not match any allowed patterns {allowed_patterns}")
                 
                 # Priority 2: Check S3 key path if bucket didn't match
                 if not matches_allowed and s3_key:
                     matches_allowed = any(pattern.lower() in s3_key for pattern in allowed_patterns)
+                    if matches_allowed:
+                        logger.debug(f"TERMS_MATCH_DEBUG: S3 key '{s3_key[:80]}' MATCHED allowed patterns {allowed_patterns}")
                 
                 # Priority 3: Check specific filename patterns (only for exact matches)
                 if not matches_allowed:
@@ -374,7 +398,20 @@ def _filter_and_prioritize_results(results: List[Dict], max_results: int, terms_
             # Priority 1: Check S3 bucket name (most reliable indicator)
             # Bucket names like "onel-prod-general-terms" should match "general-terms" pattern
             if bucket_name_from_uri:
-                bucket_match = any(pattern.lower() in bucket_name_from_uri for pattern in allowed_patterns)
+                bucket_lower = bucket_name_from_uri.lower()
+                bucket_match = False
+                for pattern in allowed_patterns:
+                    pattern_lower = pattern.lower()
+                    # For full bucket name patterns (starting with 'onel-prod-'), use exact match
+                    # For partial patterns (like 'it-terms-old'), use substring match
+                    if pattern_lower.startswith('onel-prod-'):
+                        if bucket_lower == pattern_lower:
+                            bucket_match = True
+                            break
+                    else:
+                        if pattern_lower in bucket_lower:
+                            bucket_match = True
+                            break
                 if bucket_match:
                     is_selected_terms = True
                     logger.debug(f"TERMS_MATCH: Matched via bucket name '{bucket_name_from_uri}' with pattern from {terms_profile}")
