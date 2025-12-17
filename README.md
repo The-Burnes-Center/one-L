@@ -93,7 +93,7 @@ pip install -r requirements.txt
 # Configure constants (REQUIRED before deployment)
 # Edit constants.py to set your stack name and Cognito domain
 # Dev branch: STACK_NAME = "OneL-DV2"
-# Prod branch: STACK_NAME = "OneL-v2"
+# Prod branch: STACK_NAME = "OneL-Prod"
 
 # Deploy the infrastructure (creates Step Functions state machine + all Lambda functions)
 cdk bootstrap  # One-time setup per AWS account/region
@@ -122,15 +122,15 @@ The system automatically generates runtime configuration post-deployment. No man
 
 | Module                          | Description                                                               |
 |---------------------------------|---------------------------------------------------------------------------|
-| **`one_l_stack.py`**           | Main CDK stack orchestrating all AWS resources with dependency management |
-| **`functions/stepfunctions/stepfunctions.py`** | **Step Functions construct** - Creates state machine and all 12 Lambda functions for workflow orchestration |
-| **`functions/stepfunctions/*/lambda_function.py`** | **12 Lambda functions** - Each handles a specific stage (Initialize, Split, Analyze, Retrieve, Identify, Merge, Redline, Save, Cleanup, HandleError, StartWorkflow, JobStatus) |
-| **`agent_api/agent/model.py`** | Claude 4 Sonnet integration with sophisticated legal prompting        |
-| **`agent_api/agent/tools.py`** | Document redlining and DynamoDB operations for analysis results         |
-| **`agent_api/agent/prompts/`** | AI prompts and output models for conflict detection and analysis         |
-| **`functions/knowledge_management/`** | S3 operations, Knowledge Base sync, and session management      |
-| **`functions/websocket/`**     | Real-time communication handlers for Step Functions progress tracking                   |
-| **`user_interface/src/`**      | React frontend with session management and real-time Step Functions updates            |
+| **`one_l/one_l_stack.py`**           | Main CDK stack orchestrating all AWS resources with dependency management |
+| **`one_l/agent_api/functions/stepfunctions/stepfunctions.py`** | **Step Functions construct** - Creates state machine and all 12 Lambda functions for workflow orchestration |
+| **`one_l/agent_api/functions/stepfunctions/*/lambda_function.py`** | **12 Lambda functions** - Each handles a specific stage (Initialize, Split, Analyze, Retrieve, Identify, Merge, Redline, Save, Cleanup, HandleError, StartWorkflow, JobStatus) |
+| **`one_l/agent_api/agent/model.py`** | Claude 4 Sonnet integration with sophisticated legal prompting        |
+| **`one_l/agent_api/agent/tools.py`** | Document redlining and DynamoDB operations for analysis results         |
+| **`one_l/agent_api/agent/prompts/`** | AI prompts and output models for conflict detection and analysis         |
+| **`one_l/agent_api/functions/knowledge_management/`** | S3 operations, Knowledge Base sync, and session management      |
+| **`one_l/agent_api/functions/websocket/`**     | Real-time communication handlers for Step Functions progress tracking                   |
+| **`one_l/user_interface/src/`**      | React frontend with session management and real-time Step Functions updates            |
 
 ---
 
@@ -139,7 +139,7 @@ The system automatically generates runtime configuration post-deployment. No man
 The system employs a sophisticated multi-stage AI analysis workflow orchestrated by AWS Step Functions:
 
 1. 📄 **Document Ingestion** → Upload vendor submissions and reference documents with session-based organization  
-2. 🔍 **Knowledge Base Sync** → Vector embedding and indexing using Titan Text v2 for reference documents  
+2. 🔍 **Knowledge Base Sync** → Vector embedding and indexing using Titan Embed Text v2 for reference documents  
 3. 🚀 **Workflow Initiation** → StartWorkflow Lambda triggers Step Functions state machine  
 4. 📑 **Document Splitting** → Chunks large documents for parallel processing  
 5. 🧠 **Structure Analysis** → Analyzes document structure and generates adaptive KB queries  
@@ -201,7 +201,7 @@ MIT License – see `LICENSE` for details.
 
 ## 👥 Authors & Acknowledgements
 
-- Built by [Ritik Bompilwar](https://www.linkedin.com/in/ritik-bompilwar) and Divya Hegde
+- Built by [Ritik Bompilwar](https://www.linkedin.com/in/ritik-bompilwar), Divya Hegde, Ashley La Rotonda, and Neha Tummala
 - Developed for AI4Impact initiative  
 - Powered by AWS serverless technologies
 
