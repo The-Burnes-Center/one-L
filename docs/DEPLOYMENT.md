@@ -47,6 +47,8 @@ One-L uses a **single production stack** (`OneL-Prod`) deployed from the `main` 
    STACK_NAME = "OneL-Prod"  # Change to your unique stack name
    COGNITO_DOMAIN_NAME = "one-l-auth-prod"  # Must be globally unique
    ```
+   
+   **Also update `.github/workflows/deploy-production.yml`**: If using GitHub Actions for automated deployment, update all instances of `STACK_NAME: "OneL-Prod"` to match your stack name.
 
 5. **Run in terminal**: `aws configure` and add your access key and secret key from AWS Security Credentials > Access Keys. If you don't have one, create a new one and accept default settings. Region: `us-east-1`, Output: `json`
    
