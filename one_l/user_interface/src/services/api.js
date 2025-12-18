@@ -639,26 +639,26 @@ const sessionAPI = {
   /**
    * Get admin metrics (system-wide statistics)
    */
-  getAdminMetrics: async () => {
-    try {
-      const response = await apiCall('/knowledge_management/sessions?action=metrics');
-      
-      // Handle Lambda response structure (may be wrapped in body)
-      if (response.body) {
-        try {
-          return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-        } catch (e) {
-          console.error('Error parsing getAdminMetrics response body:', e);
-          return response;
-        }
-      }
-      
-      return response;
-    } catch (error) {
-      console.error('Error in getAdminMetrics API call:', error);
-      throw error;
-    }
-  },
+  // getAdminMetrics: async () => {
+  //   try {
+  //     const response = await apiCall('/knowledge_management/sessions?action=metrics');
+  //     
+  //     // Handle Lambda response structure (may be wrapped in body)
+  //     if (response.body) {
+  //       try {
+  //         return typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+  //       } catch (e) {
+  //         console.error('Error parsing getAdminMetrics response body:', e);
+  //         return response;
+  //       }
+  //     }
+  //     
+  //     return response;
+  //   } catch (error) {
+  //     console.error('Error in getAdminMetrics API call:', error);
+  //     throw error;
+  //   }
+  // },
 
   /**
    * Get all sessions for a user

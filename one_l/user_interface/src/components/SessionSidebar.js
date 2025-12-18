@@ -1155,7 +1155,7 @@ const SessionSidebar = ({
               >
                 Knowledge Base
               </button>
-              <button
+              {/* <button
                 onClick={() => onAdminSectionChange && onAdminSectionChange('metrics')}
                 style={{
                   width: '100%',
@@ -1175,7 +1175,7 @@ const SessionSidebar = ({
                 }}
               >
                 Metrics
-              </button>
+              </button> */}
             </div>
           )}
         </div>

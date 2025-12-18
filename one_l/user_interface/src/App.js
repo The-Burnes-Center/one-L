@@ -8,7 +8,7 @@ import FileUpload from './components/FileUpload';
 import VendorSubmission from './components/VendorSubmission';
 import SessionSidebar from './components/SessionSidebar';
 import AdminDashboard from './components/AdminDashboard';
-import MetricsDashboard from './components/MetricsDashboard';
+// import MetricsDashboard from './components/MetricsDashboard';
 import UserHeader from './components/UserHeader';
 import { isConfigValid, loadConfig } from './utils/config';
 import { agentAPI, sessionAPI, knowledgeManagementAPI } from './services/api';
@@ -3221,9 +3221,11 @@ const AppContent = () => {
     }
     if (section === 'admin') {
       navigate('/admin/knowledgebase');
-    } else if (section === 'metrics') {
-      navigate('/admin/metrics');
-    } else {
+    } 
+    // else if (section === 'metrics') {
+    //   navigate('/admin/metrics');
+    // } 
+    else {
       // Go back to main page by creating a new session
       try {
         const userId = authService.getUserId();
@@ -3278,7 +3280,7 @@ const AppContent = () => {
             <Navigate to="/" replace />
           )
         } />
-        <Route path="/admin/metrics" element={
+        {/* <Route path="/admin/metrics" element={
           isAdmin ? (
             <div className="main-content">
               <MetricsDashboard />
@@ -3286,7 +3288,7 @@ const AppContent = () => {
           ) : (
             <Navigate to="/" replace />
           )
-        } />
+        } /> */}
         <Route path="/:sessionId" element={<SessionView />} />
         <Route path="/" element={<AutoSessionRedirect />} />
       </Routes>
