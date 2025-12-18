@@ -31,7 +31,8 @@ The system provides a React-based interface with session management, real-time p
 
 <img width="1821" height="522" alt="image" src="https://github.com/user-attachments/assets/a49e5d5a-123f-45c3-80c8-9cf5b3e72377" />
 
-https://miro.com/app/board/uXjVGZMQaKU=/?share_link_id=894884519514
+[![Open Miro Board](https://img.shields.io/badge/View%20Miro%20Board-Click%20Here-blue?style=for-the-badge)](https://miro.com/welcomeonboard/Zkk4OSswVzlPN2x0dmtzbytBNnhHd2NPWXhOMjliUStFVS94K0VDa0pqUGZFV1ZQRm1UTDYybXVUblFuTld1NlVwTWY5cjJ5ZnNER3JtTE53eExXajV6ZUNqaDlXaGZHS0M5bmlyR3VHQ1kwSEZFUkhicnhwTlR1aHhjM2thbTlBS2NFMDFkcUNFSnM0d3FEN050ekl3PT0hdjE=?share_link_id=919403615626)
+
 
 > **Note**: The architecture diagram shows the complete system flow. The document analysis process is orchestrated by **AWS Step Functions**, which coordinates all Lambda functions in a multi-stage workflow.
 
