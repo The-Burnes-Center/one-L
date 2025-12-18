@@ -29,7 +29,7 @@ The system provides a React-based interface with session management, real-time p
 
 ## 🧱 Architecture
 
-![System Architecture](./docs/architecture-diagram.png)
+<img width="1295" height="495" alt="image" src="https://github.com/user-attachments/assets/f1b5747d-d116-4bc1-98f1-719513a92c44" />
 
 > **Note**: The architecture diagram shows the complete system flow. The document analysis process is orchestrated by **AWS Step Functions**, which coordinates all Lambda functions in a multi-stage workflow.
 
