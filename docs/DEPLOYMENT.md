@@ -140,7 +140,7 @@ To give admin role to a user, navigate to the user → **Edit attributes** → *
 
 ### Setting up Auto deployment from Github Actions
 
-GitHub Actions workflow is already configured in the repository. Automated deployment is set up in `.github/workflows/deploy.yml`. When you push code to the `main` branch, the workflow will automatically deploy the stack. Ensure that `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are configured as secrets in your GitHub repository settings.
+GitHub Actions workflow is already configured in the repository. Automated deployment is set up in `.github/workflows/deploy-production.yml`. When you push code to the `main` branch, the workflow will automatically deploy the stack. Ensure that `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are configured as secrets in your GitHub repository settings.
 
 ## Monitoring and Verification
 

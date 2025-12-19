@@ -3104,7 +3104,7 @@ def _get_function_names() -> Dict[str, str]:
     if current_function and 'stepfunctions-generateredline' in current_function:
         # Extract stack name dynamically from function name
         # Example: OneL-DV2-stepfunctions-generateredline -> OneL-DV2
-        #          OneL-v2-stepfunctions-generateredline -> OneL-v2
+        #          OneL-Prod-stepfunctions-generateredline -> OneL-Prod
         stack_name = current_function.replace('-stepfunctions-generateredline', '')
         
         return {

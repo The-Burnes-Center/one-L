@@ -7,7 +7,7 @@ import os
 # Stack name for CDK deployment
 # Set STACK_NAME environment variable in GitHub Actions:
 #   - Dev: "OneL-DV2"
-#   - Production/Main: "OneL-v2"
+#   - Production/Main: "OneL-Prod"
 STACK_NAME = os.environ.get("STACK_NAME", "OneL-DV2")
 
 # Cognito domain name for authentication
