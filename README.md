@@ -95,7 +95,6 @@ pip install -r requirements.txt
 
 # Configure constants (REQUIRED before deployment)
 # Edit constants.py to set your stack name and Cognito domain
-# Dev branch: STACK_NAME = "OneL-DV2"
 # Prod branch: STACK_NAME = "OneL-Prod"
 
 # Deploy the infrastructure (creates Step Functions state machine + all Lambda functions)
